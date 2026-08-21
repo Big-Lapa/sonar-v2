@@ -9,7 +9,9 @@ import java.util.Optional;
 public interface OrderCommandRepository extends JpaRepository<OrderCommandEntity, Long> {
     Optional<OrderCommandEntity> findByCommandId(String commandId);
 
-    /** Used by {@link com.sonar.trading.signal.PendingSubmitRecoveryService}
-     *  to find crash-survivor PENDING_SUBMIT commands older than the staleness threshold. */
+    /** Crash-survivor PENDING commands older than a staleness threshold (stage-4 stop-watchdog territory). */
     List<OrderCommandEntity> findByStatusAndCreatedAtBefore(String status, long createdAtBefore);
+
+    /** Rebuilds the confirm report for a proposal already CONFIRMED by a prior/concurrent call. */
+    List<OrderCommandEntity> findByProposalId(String proposalId);
 }

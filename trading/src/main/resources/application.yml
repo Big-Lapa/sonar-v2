@@ -29,3 +29,9 @@ management:
 trading:
   ops:
     token: ${ADMIN_TOKEN:}
+  exchange: LIVE
+  bingx:
+    api-key: ${BINGX_API_KEY:}
+    api-secret: ${BINGX_API_SECRET:}
+  tp-sl:
+    working-type: MARK_PRICE
