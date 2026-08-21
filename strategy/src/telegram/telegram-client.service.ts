@@ -56,4 +56,17 @@ export class TelegramClientService {
       this.logger.warn(`answerCallbackQuery failed: ${e.message}`);
     }
   }
+
+  /** Node 22's built-in FormData/fetch (undici) — no extra multipart dependency needed. */
+  async sendPhoto(chatId: number | string, photoPng: Buffer, caption?: string): Promise<void> {
+    const token = process.env.TELEGRAM_BOT_TOKEN ?? '';
+    const form = new FormData();
+    form.append('chat_id', String(chatId));
+    if (caption) form.append('caption', caption);
+    form.append('photo', new Blob([new Uint8Array(photoPng)], { type: 'image/png' }), 'chart.png');
+    const resp = await fetch(`https://api.telegram.org/bot${token}/sendPhoto`, { method: 'POST', body: form });
+    if (!resp.ok) {
+      throw new Error(`sendPhoto failed: ${resp.status} ${await resp.text()}`);
+    }
+  }
 }

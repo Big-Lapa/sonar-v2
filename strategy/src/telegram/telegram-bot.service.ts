@@ -210,11 +210,10 @@ export class TelegramBotService implements OnModuleInit {
   }
 
   /**
-   * 7/§ tv-bridge: "мостик недоступен -> strategy пишет «TradingView недоступен» и работает
-   * дальше — торговый контур от него не зависит никогда". tv-bridge itself is stage 8 (a
-   * separate Windows process, not built yet), so this always hits the fallback right now —
-   * that's the correct current behavior, not a bug: the button exists and degrades gracefully
-   * exactly as specified, instead of not existing at all.
+   * 7 (tv-bridge, Windows host process): draws the proposal's actual SL/TP on the chart and
+   * sends a screenshot. "Мостик недоступен -> strategy пишет «TradingView недоступен» и работает
+   * дальше — торговый контур от него не зависит никогда": any bridge failure degrades to that
+   * one message, never touches the trading path.
    */
   private async showInTv(chatId: number, proposalId: string): Promise<void> {
     const bridgeUrl = process.env.TV_BRIDGE_URL;
@@ -223,10 +222,27 @@ export class TelegramBotService implements OnModuleInit {
       return;
     }
     try {
-      const axios = (await import('axios')).default;
-      await axios.get(`${bridgeUrl}/watchlist`, { timeout: 3000 });
-      await this.telegram.sendMessage(chatId, 'TradingView: отрисовка ещё не реализована (этап 8)');
-    } catch {
+      const proposal = await this.tradingApi.getProposal(proposalId);
+      const levels = [
+        { price: parseFloat(proposal.slPrice), label: 'SL', kind: 'support' },
+        { price: parseFloat(proposal.tpPrice), label: 'TP', kind: 'resistance' },
+        { price: parseFloat(proposal.entryPrice), label: 'Entry', kind: 'hvn' },
+      ];
+      const drawResp = await fetch(`${bridgeUrl}/draw`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ symbol: proposal.symbol, levels }),
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (!drawResp.ok) throw new Error(`draw failed: ${drawResp.status} ${await drawResp.text()}`);
+
+      const shotResp = await fetch(`${bridgeUrl}/screenshot`, { signal: AbortSignal.timeout(15_000) });
+      if (!shotResp.ok) throw new Error(`screenshot failed: ${shotResp.status}`);
+      const png = Buffer.from(await shotResp.arrayBuffer());
+
+      await this.telegram.sendPhoto(chatId, png, `${proposal.symbol}: SL ${proposal.slPrice} · TP ${proposal.tpPrice}`);
+    } catch (e: any) {
+      this.logger.warn(`showInTv failed: ${e.message}`);
       await this.telegram.sendMessage(chatId, 'TradingView недоступен');
     }
   }
