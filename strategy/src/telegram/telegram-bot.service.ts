@@ -194,18 +194,25 @@ export class TelegramBotService implements OnModuleInit {
     await this.telegram.answerCallbackQuery(cb.id);
 
     const [action, payload] = String(cb.data ?? '').split(':');
-    if (action === 'prompt_accept') {
-      await this.runSearch(chatId, cb.message.message_id);
-    } else if (action === 'prompt_reject') {
-      await this.tradingApi.setState('IDLE', null, null);
-      await this.telegram.editMessageText(chatId, cb.message.message_id, 'поиск отклонён');
-    } else if (action === 'proposal_open') {
-      await this.confirmProposal(chatId, payload, cb.message.message_id);
-    } else if (action === 'proposal_reject') {
-      await this.tradingApi.rejectProposal(payload);
-      await this.telegram.editMessageText(chatId, cb.message.message_id, '❌ отклонено');
-    } else if (action === 'proposal_tv') {
-      await this.showInTv(chatId, payload);
+    try {
+      if (action === 'prompt_accept') {
+        await this.runSearch(chatId, cb.message.message_id);
+      } else if (action === 'prompt_reject') {
+        await this.tradingApi.setState('IDLE', null, null);
+        await this.telegram.editMessageText(chatId, cb.message.message_id, 'поиск отклонён');
+      } else if (action === 'proposal_open') {
+        await this.confirmProposal(chatId, payload, cb.message.message_id);
+      } else if (action === 'proposal_reject') {
+        await this.tradingApi.rejectProposal(payload);
+        await this.telegram.editMessageText(chatId, cb.message.message_id, '❌ отклонено');
+      } else if (action === 'proposal_tv') {
+        await this.showInTv(chatId, payload);
+      }
+    } catch (e: any) {
+      // Safety net: a button tap must never die silently — the operator has no other signal
+      // that anything happened at all (this exact failure mode caught live 2026-08-21).
+      this.logger.error(`callback ${action} failed: ${e.message}`);
+      await this.telegram.sendMessage(chatId, `ошибка обработки кнопки: ${e.message}`);
     }
   }
 
@@ -258,9 +265,18 @@ export class TelegramBotService implements OnModuleInit {
       await this.telegram.sendMessage(chatId, 'предложение устарело — детерминированный пересчёт без LLM (не реализован в этой сессии, отклони и запусти /search заново)');
       return;
     }
-    const result = await this.tradingApi.confirmProposal(proposalId);
-    if (result.status === 'ABORTED') {
-      await this.telegram.editMessageText(chatId, messageId, `⛔ отменено: ${result.abortReason}`);
+    let result;
+    try {
+      result = await this.tradingApi.confirmProposal(proposalId);
+    } catch (e: any) {
+      // trading answers ABORTED with HTTP 409 (price drift / exchange unreachable) — axios
+      // throws on that by default, so the body has to be read off the error, not a normal
+      // response. Bug caught live 2026-08-21: this used to be unhandled and the whole callback
+      // died silently — the operator tapped Открыть and nothing happened, no message at all.
+      const body = e?.response?.data;
+      const reason = body?.abortReason ?? e.message;
+      this.logger.warn(`confirmProposal ${proposalId} aborted: ${reason}`);
+      await this.telegram.editMessageText(chatId, messageId, `⛔ отменено: ${reason}`);
       return;
     }
     await this.telegram.editMessageText(chatId, messageId, formatExecutionReport(result.accounts));

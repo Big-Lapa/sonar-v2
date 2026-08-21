@@ -105,6 +105,7 @@ public class ProposalExecutionService {
 
         String driftReason = checkPriceDrift(proposal.getSymbol(), entry);
         if (driftReason != null) {
+            log.warn("[{}] confirm aborted: {}", proposalId, driftReason);
             return new ConfirmOutcome.Aborted(driftReason);
         }
 
