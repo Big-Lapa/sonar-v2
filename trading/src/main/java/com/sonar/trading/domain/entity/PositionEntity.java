@@ -75,6 +75,10 @@ public class PositionEntity {
     @Column(name = "planned_risk_amount", length = 30)
     private String plannedRiskAmount;
 
+    /** Set by the minute poller (4.7) when DB quantity diverges from the exchange's. */
+    @Column(name = "qty_mismatch", nullable = false)
+    private boolean qtyMismatch = false;
+
     protected PositionEntity() {}
 
     public static PositionEntity newFlat(String accountId, String exchange, String symbol) {
@@ -127,4 +131,6 @@ public class PositionEntity {
     public void setTpPrice(String tpPrice) { this.tpPrice = tpPrice; }
     public String getPlannedRiskAmount() { return plannedRiskAmount; }
     public void setPlannedRiskAmount(String plannedRiskAmount) { this.plannedRiskAmount = plannedRiskAmount; }
+    public boolean isQtyMismatch() { return qtyMismatch; }
+    public void setQtyMismatch(boolean qtyMismatch) { this.qtyMismatch = qtyMismatch; }
 }

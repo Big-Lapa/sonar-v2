@@ -16,10 +16,6 @@ import com.sonar.trading.domain.repository.ProposalRepository;
 import com.sonar.trading.domain.repository.SignalInboxRepository;
 import com.sonar.trading.exchange.bingx.BingxFuturesClient;
 import com.sonar.trading.exchange.bingx.BingxOrderMapper;
-import com.sonar.trading.exchange.bingx.BingxOrderSide;
-import com.sonar.trading.exchange.bingx.BingxOrderType;
-import com.sonar.trading.exchange.bingx.BingxPlaceOrderRequest;
-import com.sonar.trading.exchange.bingx.BingxPositionSide;
 import com.sonar.trading.exchange.dto.AdapterOrderRequest;
 import com.sonar.trading.exchange.dto.AdapterOrderResult;
 import com.sonar.trading.exchange.dto.TpSlAttachment;
@@ -28,7 +24,6 @@ import com.sonar.trading.exchange.model.AdapterOrderState;
 import com.sonar.trading.exchange.model.AdapterOrderType;
 import com.sonar.trading.exchange.model.OrderIntent;
 import com.sonar.trading.exchange.spi.ExecutionAdapter;
-import com.sonar.trading.execution.gateway.ExecutionGateway;
 import com.sonar.trading.risk.AccountLegPreview;
 import com.sonar.trading.risk.ProposalPreviewService;
 import org.slf4j.Logger;
@@ -64,16 +59,16 @@ public class ProposalExecutionService {
     private final FillRepository fillRepository;
     private final SignalInboxRepository signalInboxRepository;
     private final ExecutionAdapter liveExecutionAdapter; // "liveExecutionAdapter" bean — BingX only
-    private final ExecutionGateway executionGateway;      // for the standalone stop remediation order
-    private final BingxFuturesClient bingxFuturesClient;  // read-only: price + open-orders verification
+    private final BingxFuturesClient bingxFuturesClient;  // read-only: price check (drift gate)
+    private final StopGuard stopGuard;
     private final ProposalClaimer claimer;
 
     public ProposalExecutionService(ProposalRepository proposals, AccountRegistry accountRegistry,
                                     ProposalPreviewService previewService, PositionRepository positionRepository,
                                     OrderCommandRepository orderCommandRepository, OrderRepository orderRepository,
                                     FillRepository fillRepository, SignalInboxRepository signalInboxRepository,
-                                    ExecutionAdapter liveExecutionAdapter, ExecutionGateway executionGateway,
-                                    BingxFuturesClient bingxFuturesClient, ProposalClaimer claimer) {
+                                    ExecutionAdapter liveExecutionAdapter, BingxFuturesClient bingxFuturesClient,
+                                    StopGuard stopGuard, ProposalClaimer claimer) {
         this.proposals = proposals;
         this.accountRegistry = accountRegistry;
         this.previewService = previewService;
@@ -83,8 +78,8 @@ public class ProposalExecutionService {
         this.fillRepository = fillRepository;
         this.signalInboxRepository = signalInboxRepository;
         this.liveExecutionAdapter = liveExecutionAdapter;
-        this.executionGateway = executionGateway;
         this.bingxFuturesClient = bingxFuturesClient;
+        this.stopGuard = stopGuard;
         this.claimer = claimer;
     }
 
@@ -246,54 +241,12 @@ public class ProposalExecutionService {
         position.setPlannedRiskAmount(leg.riskUsd() != null ? leg.riskUsd().toPlainString() : null);
         positionRepository.save(position);
 
-        boolean stopVerified = verifyAndRepairStop(proposal.getSymbol(), filledQty, sl);
+        // 4.6 step 5 / 3rd invariant: BingX attaches TP/SL atomically, but we verify it actually
+        // landed rather than trusting the attach silently succeeded.
+        boolean stopVerified = stopGuard.verifyAndRepair(proposal.getSymbol(), filledQty, sl);
 
         markInboxDone(idempotencyKey, accountId);
         return ExecutionLegResult.filled(accountId, filledQty, avgPrice, sl, tp, leg.riskUsd(), stopVerified);
-    }
-
-    /**
-     * 4.6 step 5 / 3rd invariant: BingX attaches TP/SL atomically to the entry order, but we
-     * verify it actually landed rather than trusting the attach silently succeeded. One
-     * remediation attempt (a standalone reduce-only STOP_MARKET) if it's missing; a still-missing
-     * stop after that is surfaced in the report — full Telegram escalation is stage 4/6.
-     */
-    private boolean verifyAndRepairStop(String symbol, BigDecimal qty, BigDecimal slPrice) {
-        String bingxSymbol = BingxOrderMapper.toBingxSymbol(symbol);
-        try {
-            if (hasStopOrder(bingxSymbol)) {
-                return true;
-            }
-            log.error("[STOP-MISSING] no conditional stop found for {} after entry — placing remediation order",
-                    bingxSymbol);
-            BingxPlaceOrderRequest remediation = new BingxPlaceOrderRequest(bingxSymbol, BingxOrderSide.SELL,
-                    BingxPositionSide.BOTH, BingxOrderType.STOP_MARKET, qty.stripTrailingZeros().toPlainString(),
-                    null, null, "stop-repair-" + UUID.randomUUID(), null, null,
-                    slPrice.stripTrailingZeros().toPlainString(), true);
-            executionGateway.placeOrder(remediation, OrderIntent.CLOSE_REDUCE);
-            return hasStopOrder(bingxSymbol);
-        } catch (RuntimeException e) {
-            log.error("[STOP-MISSING] remediation failed for {}: {}", bingxSymbol, e.toString());
-            return false;
-        }
-    }
-
-    @SuppressWarnings("unchecked")
-    private boolean hasStopOrder(String bingxSymbol) {
-        Map<String, Object> resp = bingxFuturesClient.getOpenOrders(bingxSymbol);
-        Object data = resp.get("data");
-        List<Map<String, Object>> orders;
-        if (data instanceof List<?> list) {
-            orders = (List<Map<String, Object>>) list;
-        } else if (data instanceof Map<?, ?> m && m.get("orders") instanceof List<?> list) {
-            orders = (List<Map<String, Object>>) list;
-        } else {
-            return false;
-        }
-        return orders.stream().anyMatch(o -> {
-            String type = String.valueOf(o.getOrDefault("type", "")).toUpperCase();
-            return type.contains("STOP");
-        });
     }
 
     private void markInboxDone(String idempotencyKey, String accountId) {
