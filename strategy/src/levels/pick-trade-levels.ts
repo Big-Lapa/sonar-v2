@@ -24,9 +24,15 @@ export type PickResult = { ok: true; levels: TradeLevels } | { ok: false; reason
 /**
  * 4.3.3 (level selection) + 4.4 (setup gates). LONG only:
  *   sl = nearest support/LVN below entry that clears the minimum distance gate
- *   tp = nearest HVN/resistance above entry
+ *   tp = nearest HVN/resistance above entry that ALSO clears the same minimum distance gate
  * Gates: distSL >= max(minSlDistancePct, roundTripCost * minSlCostMult); distSL <= maxSlDistancePct;
  * RR = (tp-entry)/(entry-sl) >= minRr.
+ *
+ * The TP-side minimum distance isn't in the original spec text (4.3.3 only gates SL's minimum),
+ * but live testing surfaced why it has to be symmetric: on a low-volatility symbol (TRXUSDT) the
+ * "nearest resistance above entry" was a swing high sitting fractions of a percent away, giving
+ * R:R ≈ 0.03 — a target so close it isn't a target. Confirmed with the user 2026-08-21 rather than
+ * silently reinterpreting the spec.
  */
 export function pickLongLevels(
   entry: number,
@@ -60,9 +66,9 @@ export function pickLongLevels(
     .filter((c) => c.price > entry)
     .sort((a, b) => a.price - b.price); // nearest to entry first
 
-  const tpPick = tpCandidates[0];
+  const tpPick = tpCandidates.find((c) => (c.price - entry) / entry >= minSlDist);
   if (!tpPick) {
-    return { ok: false, reason: 'нет HVN/swing-сопротивления выше entry' };
+    return { ok: false, reason: `нет HVN/swing-сопротивления выше entry дальше минимальной дистанции ${(minSlDist * 100).toFixed(2)}%` };
   }
 
   const rr = (tpPick.price - entry) / (entry - slPick.price);
