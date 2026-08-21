@@ -14,15 +14,21 @@ import java.math.RoundingMode;
  * notional = qty × entry
  * if notional > maxPositionNotional:  qty = maxPositionNotional / entry
  * if notional > equity × maxLeverage: qty = equity × maxLeverage / entry
- * qty = QuantityNormalizer.clamp(qty)
+ * qty = QuantityNormalizer.clamp(qty)   // bumps UP to exchange minQty/minNotional if needed
  * actualRisk = qty × |entry − sl|
- * if actualRisk > riskUsd × 1.05: REJECT — minNotional pushed the risk past the limit
  * </pre>
+ *
+ * <p>Decided with the user 2026-08-21: a far SL naturally computes a small risk-based qty, and
+ * when the exchange's minQty/minNotional floor is above that, we now open at the exchange
+ * minimum and accept actualRisk > planned riskUsd — rather than rejecting a perfectly tradeable
+ * setup just because the exchange floor doesn't fit the risk plan exactly. The ONE thing we still
+ * refuse is the exchange floor pushing the position past the account's OWN caps
+ * (max_position_notional / max_leverage) — that's not a rounding nuisance, it's the same
+ * account-level limit the earlier notional/leverage clamps in this method exist to enforce.
  */
 @Component
 public class RiskBasedPositionSizer {
 
-    private static final BigDecimal REJECT_TOLERANCE = new BigDecimal("1.05");
     private static final int SCALE = 10;
 
     private final QuantityNormalizer normalizer;
@@ -62,13 +68,15 @@ public class RiskBasedPositionSizer {
             return new SizingResult.Rejected("не прошёл биржевые минималки: " + e.getMessage());
         }
 
-        BigDecimal actualRisk = normalizedQty.multiply(slDistance);
-        if (actualRisk.compareTo(riskUsd.multiply(REJECT_TOLERANCE)) > 0) {
+        BigDecimal normalizedNotional = normalizedQty.multiply(entry);
+        BigDecimal notionalCap = profile.maxPositionNotional().min(maxLeverageNotional);
+        if (normalizedNotional.compareTo(notionalCap) > 0) {
             return new SizingResult.Rejected(
-                    "minNotional вытолкнул риск за лимит: план $" + riskUsd.setScale(2, RoundingMode.HALF_UP)
-                            + ", факт $" + actualRisk.setScale(2, RoundingMode.HALF_UP));
+                    "биржевой минимум лота (" + normalizedQty + ", notional $" + normalizedNotional.setScale(2, RoundingMode.HALF_UP)
+                            + ") превышает лимит аккаунта $" + notionalCap.setScale(2, RoundingMode.HALF_UP));
         }
 
-        return new SizingResult.Approved(normalizedQty, normalizedQty.multiply(entry), actualRisk);
+        BigDecimal actualRisk = normalizedQty.multiply(slDistance);
+        return new SizingResult.Approved(normalizedQty, normalizedNotional, actualRisk);
     }
 }

@@ -8,7 +8,6 @@ import org.mockito.Mockito;
 import java.math.BigDecimal;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 
@@ -33,27 +32,33 @@ class QuantityNormalizerTest {
         assertThat(result).isEqualByComparingTo("7.91");
     }
 
+    /** 2026-08-21: below minQty now bumps UP to the exchange floor instead of rejecting — a far
+     *  SL naturally computes a small risk-based qty, and that's a tradeable position, just at a
+     *  higher actual $ risk than planned. See {@link RiskBasedPositionSizer} for the account-cap
+     *  boundary that still applies on top of this. */
     @Test
-    void rejectsBelowMinQty() {
+    void bumpsUpToMinQtyInsteadOfRejecting() {
         SymbolRules rules = new SymbolRules(
                 new BigDecimal("0.001"), new BigDecimal("1"), new BigDecimal("5"), new BigDecimal("0.01"));
         QuantityNormalizer normalizer = new QuantityNormalizer(cacheWith(rules));
 
-        assertThatThrownBy(() -> normalizer.normalize("BINANCE", "SOLUSDT",
-                new BigDecimal("0.5"), new BigDecimal("100")))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("minQty");
+        BigDecimal result = normalizer.normalize("BINANCE", "SOLUSDT",
+                new BigDecimal("0.5"), new BigDecimal("100"));
+
+        assertThat(result).isEqualByComparingTo("1");
     }
 
     @Test
-    void rejectsBelowMinNotional() {
+    void bumpsUpToMinNotionalInsteadOfRejecting() {
         SymbolRules rules = new SymbolRules(
                 new BigDecimal("0.001"), new BigDecimal("0.001"), new BigDecimal("50"), new BigDecimal("0.01"));
         QuantityNormalizer normalizer = new QuantityNormalizer(cacheWith(rules));
 
-        assertThatThrownBy(() -> normalizer.normalize("BINANCE", "SOLUSDT",
-                new BigDecimal("0.1"), new BigDecimal("100"))) // notional = 10 < minNotional 50
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("minNotional");
+        // notional 0.1*100=10 < minNotional 50 -> needs qty >= 0.5 to clear 50 at price 100
+        BigDecimal result = normalizer.normalize("BINANCE", "SOLUSDT",
+                new BigDecimal("0.1"), new BigDecimal("100"));
+
+        assertThat(result).isEqualByComparingTo("0.5");
+        assertThat(result.multiply(new BigDecimal("100"))).isGreaterThanOrEqualTo(new BigDecimal("50"));
     }
 }

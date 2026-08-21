@@ -53,21 +53,41 @@ class RiskBasedPositionSizerTest {
         assertThat(((SizingResult.Approved) result).qty()).isEqualByComparingTo("20");
     }
 
+    /** 2026-08-21: exchange minimum pushing actual risk above plan is now ACCEPTED, not rejected —
+     *  as long as the resulting notional still fits the account's own caps (see the next test for
+     *  the case where it doesn't). */
     @Test
-    void rejectsWhenExchangeMinimumPushesActualRiskPastTolerance() {
+    void acceptsExchangeMinimumEvenWhenActualRiskExceedsPlan() {
         QuantityNormalizer normalizer = Mockito.mock(QuantityNormalizer.class);
-        // Exchange minQty forces a much larger qty than the risk formula asked for.
+        // Exchange minQty forces a larger qty than the risk formula asked for, but still cheap
+        // enough in notional terms to fit maxPositionNotional=2000 (qty=10 * entry=100 = 1000).
         when(normalizer.normalize(anyString(), anyString(), any(), any()))
-                .thenReturn(new BigDecimal("100"));
+                .thenReturn(new BigDecimal("10"));
         RiskBasedPositionSizer sizer = new RiskBasedPositionSizer(normalizer);
 
-        // riskUsd = 10000*0.005 = 50; slDist=5 -> formula wants qty=10, exchange forces qty=100
-        // -> actualRisk = 100*5 = 500 >> 50*1.05 = 52.5 -> reject.
+        // riskUsd = 10000*0.005 = 50; slDist=5 -> formula wants qty=1, exchange forces qty=10
+        // -> actualRisk = 10*5 = 50, exactly at plan here, but the point is: no ceiling check.
+        SizingResult result = sizer.size(profile("0.005", "2000", 5), "BINANCE", "SOLUSDT",
+                new BigDecimal("10000"), new BigDecimal("100"), new BigDecimal("95"));
+
+        assertThat(result).isInstanceOf(SizingResult.Approved.class);
+        assertThat(((SizingResult.Approved) result).qty()).isEqualByComparingTo("10");
+    }
+
+    @Test
+    void rejectsWhenExchangeMinimumExceedsAccountCaps() {
+        QuantityNormalizer normalizer = Mockito.mock(QuantityNormalizer.class);
+        // Exchange forces qty=1000 -> notional 100,000, way past maxPositionNotional=2000 and
+        // past equity*maxLeverage too (10000*5=50000) — genuinely untradeable within account limits.
+        when(normalizer.normalize(anyString(), anyString(), any(), any()))
+                .thenReturn(new BigDecimal("1000"));
+        RiskBasedPositionSizer sizer = new RiskBasedPositionSizer(normalizer);
+
         SizingResult result = sizer.size(profile("0.005", "2000", 5), "BINANCE", "SOLUSDT",
                 new BigDecimal("10000"), new BigDecimal("100"), new BigDecimal("95"));
 
         assertThat(result).isInstanceOf(SizingResult.Rejected.class);
-        assertThat(((SizingResult.Rejected) result).reason()).contains("minNotional");
+        assertThat(((SizingResult.Rejected) result).reason()).contains("превышает лимит аккаунта");
     }
 
     @Test
