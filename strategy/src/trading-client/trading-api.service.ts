@@ -28,6 +28,40 @@ export interface AccountSlot {
   openSymbols: string[];
 }
 
+export interface AccountSummary {
+  id: string;
+  exchange: string;
+  tradable: boolean;
+}
+
+export interface BalanceResponse {
+  accountId: string;
+  asset: string | null;
+  balance: string | null;
+  equity: string | null;
+  unrealizedPnl: string | null;
+  fetchedAt: number;
+  stale: boolean;
+  error: string | null;
+}
+
+export interface ExchangePosition {
+  symbol: string;
+  side: string;
+  qty: string;
+  avgPrice: string;
+  markPrice: string;
+  unrealizedPnl: string;
+  leverage: number | null;
+  liquidationPrice: string | null;
+}
+
+export interface LivePositionsResponse {
+  accountId: string;
+  positions: ExchangePosition[];
+  error: string | null;
+}
+
 export interface StrategyState {
   phase: 'IDLE' | 'PROMPT_PENDING' | 'SEARCHING' | 'PROPOSALS_PENDING';
   promptMessageId: number | null;
@@ -175,6 +209,21 @@ export class TradingApiService {
 
   async getOpenPositions(account?: string, symbol?: string): Promise<Position[]> {
     const resp = await this.client.get('/api/v1/trade/positions', { params: { account, symbol } });
+    return resp.data;
+  }
+
+  async getAccounts(): Promise<AccountSummary[]> {
+    const resp = await this.client.get('/api/v1/accounts');
+    return resp.data;
+  }
+
+  async getBalance(accountId: string): Promise<BalanceResponse> {
+    const resp = await this.client.get(`/api/v1/accounts/${accountId}/balance`, { params: { refresh: true } });
+    return resp.data;
+  }
+
+  async getLivePositions(accountId: string): Promise<LivePositionsResponse> {
+    const resp = await this.client.get(`/api/v1/accounts/${accountId}/live-positions`);
     return resp.data;
   }
 

@@ -108,12 +108,74 @@ export class TelegramBotService implements OnModuleInit {
         case '/unpause':
           await this.cmdUnpause(chatId, args[0]);
           break;
+        case '/help':
+        case '/start':
+          await this.cmdHelp(chatId);
+          break;
+        case '/status':
+          await this.cmdStatus(chatId);
+          break;
+        case '/positions':
+          await this.cmdPositions(chatId, args[0]);
+          break;
         default:
-          break; // /status, /positions, /analyze — not implemented this stage (see summary)
+          // Same failure mode as the confirm-proposal bug (2026-08-21): an unhandled command
+          // must never just go quiet — the operator has no other way to tell "not implemented"
+          // apart from "nothing happened, is the bot even alive".
+          await this.telegram.sendMessage(chatId, `неизвестная команда ${cmd}. /help — список команд`);
       }
     } catch (e: any) {
       await this.telegram.sendMessage(chatId, `ошибка: ${e.message}`);
     }
+  }
+
+  private async cmdHelp(chatId: number): Promise<void> {
+    const lines = [
+      'Команды:',
+      '/search — запустить поиск кандидатов вручную (иначе приходит по расписанию/закрытию позиции)',
+      '/closeall <account> — закрыть все позиции аккаунта (нужен PIN)',
+      '/be <symbol> — стоп в безубыток',
+      '/move <symbol> sl|tp <price> — переставить SL или TP',
+      '/ban <symbol> — добавить символ в чёрный список',
+      '/unpause <account> — снять auto-pause',
+      '/status — баланс по каждому аккаунту',
+      '/positions <account> — открытые позиции с PnL в моменте',
+      '',
+      'Не реализовано пока: /analyze',
+    ];
+    await this.telegram.sendMessage(chatId, lines.join('\n'));
+  }
+
+  private async cmdStatus(chatId: number): Promise<void> {
+    const accounts = await this.tradingApi.getAccounts();
+    const lines = await Promise.all(
+      accounts.map(async (a) => {
+        const b = await this.tradingApi.getBalance(a.id);
+        if (b.error) return `${a.id}: ${b.error}`;
+        return `${a.id}: equity ${b.equity ?? b.balance} ${b.asset ?? ''} (unrealPnL ${b.unrealizedPnl ?? '—'})`;
+      }),
+    );
+    await this.telegram.sendMessage(chatId, lines.join('\n'));
+  }
+
+  private async cmdPositions(chatId: number, account?: string): Promise<void> {
+    if (!account) {
+      await this.telegram.sendMessage(chatId, 'использование: /positions <account>');
+      return;
+    }
+    const result = await this.tradingApi.getLivePositions(account);
+    if (result.error) {
+      await this.telegram.sendMessage(chatId, `${account}: ${result.error}`);
+      return;
+    }
+    if (result.positions.length === 0) {
+      await this.telegram.sendMessage(chatId, `${account}: нет открытых позиций`);
+      return;
+    }
+    const lines = result.positions.map(
+      (p) => `${p.symbol} ${p.side} ${p.qty} @ ${p.avgPrice} · mark ${p.markPrice} · PnL ${p.unrealizedPnl}`,
+    );
+    await this.telegram.sendMessage(chatId, `${account}:\n${lines.join('\n')}`);
   }
 
   private async cmdSearch(chatId: number): Promise<void> {
