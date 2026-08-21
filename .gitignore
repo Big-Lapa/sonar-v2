@@ -1,0 +1,26 @@
+.env
+.deploy-backups/
+
+# Java / Maven
+target/
+*.class
+*.log
+.mvn/wrapper/maven-wrapper.jar
+
+# Node
+node_modules/
+dist/
+npm-debug.log*
+
+# klines cache
+**/klines-cache/
+**/*.klinecache
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
