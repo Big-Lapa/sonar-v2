@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Sonar v2 Admin</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="app.css?v=2026-08-21">
+</head>
+<body>
+<div class="appbar">
+  <h1>Sonar v2 Admin <small>trading · token-gated</small></h1>
+  <span class="spacer"></span>
+  <a href="#" id="btn-token">токен</a>
+  <span id="status">connecting…</span>
+</div>
+
+<div class="panel full" id="sec-risk">
+  <h2>Риск</h2>
+  <div class="form-row">
+    <label>Аккаунт</label>
+    <select id="risk-account"></select>
+  </div>
+  <div id="risk-form"></div>
+  <div class="form-row">
+    <button class="primary" id="risk-save">Save</button>
+    <span id="risk-status" class="muted"></span>
+  </div>
+</div>
+
+<div class="panel full" id="sec-strategy">
+  <h2>Стратегия</h2>
+  <div id="strategy-form"></div>
+  <div class="form-row">
+    <button class="primary" id="strategy-save">Save</button>
+    <span id="strategy-status" class="muted"></span>
+  </div>
+  <h2 style="margin-top:14px">Чёрный список</h2>
+  <div class="form-row">
+    <input id="bl-symbol" class="num" placeholder="SYMBOL" style="width:140px">
+    <input id="bl-reason" placeholder="причина" style="width:220px">
+    <button id="bl-add">Добавить</button>
+  </div>
+  <table id="bl-table"><thead><tr><th>Symbol</th><th>Причина</th><th></th></tr></thead><tbody></tbody></table>
+</div>
+
+<div class="panel full" id="sec-positions">
+  <h2>Позиции</h2>
+  <div id="positions"></div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = (s, el) => (el || document).querySelector(s);
+const $$ = (s, el) => Array.from((el || document).querySelectorAll(s));
+
+function getToken() { return localStorage.getItem('adminToken') || ''; }
+function setToken(t) { localStorage.setItem('adminToken', t); }
+
+$('#btn-token').onclick = (e) => {
+  e.preventDefault();
+  const t = prompt('ADMIN_TOKEN', getToken());
+  if (t !== null) { setToken(t); location.reload(); }
+};
+
+function toast(msg, ok) {
+  const el = $('#toast');
+  el.textContent = msg;
+  el.className = 'toast ' + (ok ? 'ok' : 'err');
+  el.style.display = 'block';
+  setTimeout(() => el.style.display = 'none', 4000);
+}
+
+async function api(path, opts) {
+  opts = opts || {};
+  opts.headers = Object.assign({ 'X-Admin-Token': getToken(), 'Content-Type': 'application/json' }, opts.headers || {});
+  const resp = await fetch(path, opts);
+  if (!resp.ok) {
+    const text = await resp.text().catch(() => resp.statusText);
+    throw new Error(`${resp.status}: ${text}`);
+  }
+  const ct = resp.headers.get('content-type') || '';
+  return ct.includes('application/json') ? resp.json() : null;
+}
+
+// ---- Риск ----
+
+const RISK_FIELDS = [
+  ['riskPctPerTrade', 'Риск на сделку (доля эквити)'],
+  ['maxPortfolioRiskPct', 'Макс. портфельный риск (доля)'],
+  ['maxPositionNotional', 'Макс. notional ($)'],
+  ['maxDailyRealizedLossPct', 'Дневной лимит убытка (доля)'],
+  ['maxEquityDrawdownPct', 'Лимит просадки от пика (доля)'],
+  ['maxOpenPositions', 'Макс. открытых позиций'],
+  ['maxLeverage', 'Макс. плечо (клэмп sizing)'],
+  ['tradable', 'Торгует (чекбокс)'],
+];
+
+let riskEntity = null;
+
+async function loadAccounts() {
+  const accounts = await api('/api/v1/accounts');
+  const sel = $('#risk-account');
+  sel.innerHTML = accounts.map(a => `<option value="${a.id}">${a.id} (${a.exchange})</option>`).join('');
+  sel.onchange = loadRisk;
+  await loadRisk();
+  await loadPositions(accounts);
+}
+
+async function loadRisk() {
+  const id = $('#risk-account').value;
+  if (!id) return;
+  riskEntity = await api(`/api/v1/accounts/${id}/risk`);
+  const form = $('#risk-form');
+  form.innerHTML = RISK_FIELDS.map(([key, label]) => {
+    if (key === 'tradable') {
+      return `<div class="form-row"><label>${label}</label><input type="checkbox" id="f-${key}" ${riskEntity[key] ? 'checked' : ''}></div>`;
+    }
+    return `<div class="form-row"><label>${label}</label><input class="num" id="f-${key}" value="${riskEntity[key]}"></div>`;
+  }).join('');
+  $('#risk-status').textContent = `version ${riskEntity.version}`;
+}
+
+$('#risk-save').onclick = async () => {
+  const id = $('#risk-account').value;
+  const body = { version: riskEntity.version };
+  for (const [key] of RISK_FIELDS) {
+    const el = $(`#f-${key}`);
+    body[key] = key === 'tradable' ? el.checked
+      : (key === 'maxOpenPositions' || key === 'maxLeverage') ? parseInt(el.value, 10) : el.value;
+  }
+  try {
+    riskEntity = await api(`/api/v1/accounts/${id}/risk`, { method: 'PUT', body: JSON.stringify(body) });
+    $('#risk-status').textContent = `сохранено, version ${riskEntity.version}`;
+    toast('Риск-профиль сохранён — действует на следующую сделку без рестарта', true);
+  } catch (e) {
+    toast('Ошибка сохранения: ' + e.message, false);
+  }
+};
+
+// ---- Стратегия ----
+
+const STRATEGY_FIELDS = [
+  ['minSlDistancePct', 'Мин. дистанция SL (доля)'],
+  ['minSlCostMult', 'Мин. дистанция SL × cost'],
+  ['maxSlDistancePct', 'Макс. дистанция SL (доля)'],
+  ['minRr', 'Мин. R:R'],
+  ['min24hVolumeUsd', 'Мин. 24ч объём ($)'],
+  ['maxMove24hPct', 'Макс. движение 24ч (доля)'],
+  ['maxMove7dPct', 'Макс. движение 7д (доля)'],
+  ['maxCandidates', 'Макс. кандидатов от LLM'],
+  ['llmModel', 'LLM модель'],
+  ['alwaysDrawTv', 'Всегда рисовать в TV (чекбокс)'],
+  ['proposalTtlMs', 'TTL предложения (мс)'],
+  ['holdReminderDays', 'Напоминание об удержании (дней)'],
+  ['searchCronHours', 'Часы крона (UTC, "*" или "9,13,17")'],
+];
+
+let settingsEntity = null;
+
+async function loadStrategy() {
+  settingsEntity = await api('/api/v1/strategy/settings');
+  const form = $('#strategy-form');
+  form.innerHTML = STRATEGY_FIELDS.map(([key, label]) => {
+    if (key === 'alwaysDrawTv') {
+      return `<div class="form-row"><label>${label}</label><input type="checkbox" id="s-${key}" ${settingsEntity[key] ? 'checked' : ''}></div>`;
+    }
+    return `<div class="form-row"><label>${label}</label><input class="num" id="s-${key}" value="${settingsEntity[key]}" style="width:200px"></div>`;
+  }).join('');
+  $('#strategy-status').textContent = `version ${settingsEntity.version}`;
+  await loadBlacklist();
+}
+
+$('#strategy-save').onclick = async () => {
+  const body = { version: settingsEntity.version };
+  for (const [key] of STRATEGY_FIELDS) {
+    const el = $(`#s-${key}`);
+    if (key === 'alwaysDrawTv') { body[key] = el.checked; continue; }
+    if (key === 'maxCandidates' || key === 'holdReminderDays') { body[key] = parseInt(el.value, 10); continue; }
+    if (key === 'proposalTtlMs') { body[key] = parseInt(el.value, 10); continue; }
+    body[key] = el.value;
+  }
+  try {
+    settingsEntity = await api('/api/v1/strategy/settings', { method: 'PUT', body: JSON.stringify(body) });
+    $('#strategy-status').textContent = `сохранено, version ${settingsEntity.version}`;
+    toast('Настройки стратегии сохранены', true);
+  } catch (e) {
+    toast('Ошибка сохранения: ' + e.message, false);
+  }
+};
+
+async function loadBlacklist() {
+  const rows = await api('/api/v1/strategy/blacklist');
+  $('#bl-table tbody').innerHTML = rows.map(r =>
+    `<tr><td>${r.symbol}</td><td class="muted">${r.reason || ''}</td>` +
+    `<td><button data-symbol="${r.symbol}" class="bl-remove">✕</button></td></tr>`
+  ).join('');
+  $$('.bl-remove').forEach(btn => btn.onclick = async () => {
+    await api(`/api/v1/strategy/blacklist/${btn.dataset.symbol}`, { method: 'DELETE' });
+    await loadBlacklist();
+  });
+}
+
+$('#bl-add').onclick = async () => {
+  const symbol = $('#bl-symbol').value.trim().toUpperCase();
+  if (!symbol) return;
+  await api('/api/v1/strategy/blacklist', { method: 'POST', body: JSON.stringify({ symbol, reason: $('#bl-reason').value }) });
+  $('#bl-symbol').value = ''; $('#bl-reason').value = '';
+  await loadBlacklist();
+};
+
+// ---- Позиции (аккордеон, свёрнут по умолчанию, троттл 5с на аккаунт) ----
+
+const lastFetch = {};
+
+async function loadPositions(accounts) {
+  const container = $('#positions');
+  container.innerHTML = accounts.map(a => `
+    <div class="accordion-head" data-account="${a.id}">
+      <span class="arrow">▶</span> <b>${a.id}</b> <span class="muted">(${a.exchange})</span>
+    </div>
+    <div class="accordion-body" id="body-${a.id}"></div>
+  `).join('');
+
+  $$('.accordion-head').forEach(head => {
+    head.onclick = () => {
+      const id = head.dataset.account;
+      const body = $(`#body-${id}`);
+      const opening = !body.classList.contains('open');
+      head.classList.toggle('open', opening);
+      body.classList.toggle('open', opening);
+      if (opening) refreshAccount(id);
+    };
+  });
+}
+
+async function refreshAccount(id) {
+  const body = $(`#body-${id}`);
+  body.innerHTML = 'загрузка…';
+  try {
+    const [balance, positions] = await Promise.all([
+      api(`/api/v1/accounts/${id}/balance?refresh=true`),
+      api(`/api/v1/trade/positions?account=${id}`),
+    ]);
+    lastFetch[id] = Date.now();
+    renderAccountBody(id, balance, positions);
+  } catch (e) {
+    body.innerHTML = `<span class="red">ошибка: ${e.message}</span>`;
+  }
+}
+
+function renderAccountBody(id, balance, positions) {
+  const body = $(`#body-${id}`);
+  const balLine = balance.error
+    ? `<span class="red">${balance.error}</span>`
+    : `equity ${balance.equity ?? balance.balance} ${balance.asset || ''} (unrealPnL ${balance.unrealizedPnl ?? '—'})`;
+  const rows = positions.map(p => `
+    <tr class="${p.qtyMismatch ? 'bad' : ''}">
+      <td>${p.symbol}</td><td>${p.side}</td><td class="num">${p.quantity}</td>
+      <td class="num">${p.entryPrice}</td><td class="num">${p.slPrice ?? '—'}</td><td class="num">${p.tpPrice ?? '—'}</td>
+      <td>${p.qtyMismatch ? '<span class="red">расхождение с биржей</span>' : ''}</td>
+    </tr>`).join('');
+  body.innerHTML = `
+    <div class="form-row">
+      <span>${balLine}</span>
+      <button id="refresh-${id}">↻</button>
+      <span class="muted" id="age-${id}"></span>
+    </div>
+    <table><thead><tr><th>Symbol</th><th>Side</th><th class="num">Qty</th><th class="num">Entry</th>
+      <th class="num">SL</th><th class="num">TP</th><th></th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="7" class="muted">нет открытых позиций</td></tr>'}</tbody></table>`;
+  $(`#refresh-${id}`).onclick = () => refreshAccount(id);
+  tickAge(id);
+}
+
+function tickAge(id) {
+  const el = $(`#age-${id}`);
+  if (!el) return;
+  const sec = Math.round((Date.now() - lastFetch[id]) / 1000);
+  el.textContent = `обновлено ${sec} сек назад`;
+  setTimeout(() => tickAge(id), 1000);
+}
+
+// ---- boot ----
+
+(async () => {
+  if (!getToken()) {
+    const t = prompt('ADMIN_TOKEN');
+    if (t) setToken(t);
+  }
+  try {
+    await loadAccounts();
+    await loadStrategy();
+    $('#status').textContent = 'ok';
+  } catch (e) {
+    $('#status').textContent = 'error';
+    $('#status').className = 'err';
+    toast('Ошибка загрузки: ' + e.message, false);
+  }
+})();
+</script>
+</body>
+</html>
