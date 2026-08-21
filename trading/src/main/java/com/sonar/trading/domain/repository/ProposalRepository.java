@@ -6,7 +6,11 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
+import java.util.List;
+
 public interface ProposalRepository extends JpaRepository<ProposalEntity, String> {
+
+    List<ProposalEntity> findByStatusOrderByCreatedAtAsc(String status);
 
     /**
      * Idempotent claim (4.1/4.8): flips PENDING -> CONFIRMED atomically. Returns the number of

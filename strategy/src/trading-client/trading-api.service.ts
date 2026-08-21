@@ -28,6 +28,63 @@ export interface AccountSlot {
   openSymbols: string[];
 }
 
+export interface StrategyState {
+  phase: 'IDLE' | 'PROMPT_PENDING' | 'SEARCHING' | 'PROPOSALS_PENDING';
+  promptMessageId: number | null;
+  promptSentAt: number | null;
+  pending: Proposal[];
+}
+
+export interface Proposal {
+  proposalId: string;
+  symbol: string;
+  side: string;
+  entryPrice: string;
+  slPrice: string;
+  tpPrice: string;
+  rationale: string;
+  status: string;
+  createdAt: number;
+  decidedAt: number | null;
+  tgMessageId: number | null;
+}
+
+export interface AccountLegPreview {
+  accountId: string;
+  approved: boolean;
+  qty: string | null;
+  riskUsd: string | null;
+  rejectReason: string | null;
+}
+
+export interface Position {
+  id: number;
+  positionId: string;
+  accountId: string;
+  exchange: string;
+  symbol: string;
+  side: string;
+  quantity: string;
+  entryPrice: string;
+  slPrice: string | null;
+  tpPrice: string | null;
+  plannedRiskAmount: string | null;
+  status: string;
+  openedAt: number | null;
+}
+
+export interface ExecutionLegResult {
+  accountId: string;
+  success: boolean;
+  filledQty: string | null;
+  avgPrice: string | null;
+  slPrice: string | null;
+  tpPrice: string | null;
+  riskUsd: string | null;
+  stopVerified: boolean;
+  errorReason: string | null;
+}
+
 /** REST client to `trading` (4.8) — X-Admin-Token on every call. */
 @Injectable()
 export class TradingApiService {
@@ -53,6 +110,79 @@ export class TradingApiService {
 
   async getAccountSlots(): Promise<AccountSlot[]> {
     const resp = await this.client.get('/api/v1/accounts/slots');
+    return resp.data;
+  }
+
+  async getState(): Promise<StrategyState> {
+    const resp = await this.client.get('/api/v1/strategy/state');
+    return resp.data;
+  }
+
+  async setState(phase: string, promptMessageId: number | null, promptSentAt: number | null): Promise<StrategyState> {
+    const resp = await this.client.put('/api/v1/strategy/state', { phase, promptMessageId, promptSentAt });
+    return resp.data;
+  }
+
+  async createProposal(symbol: string, entryPrice: string, slPrice: string, tpPrice: string, rationale: string) {
+    const resp = await this.client.post<{ proposalId: string; accounts: AccountLegPreview[] }>('/api/v1/strategy/proposals', {
+      symbol, entryPrice, slPrice, tpPrice, rationale,
+    });
+    return resp.data;
+  }
+
+  async getProposal(id: string): Promise<Proposal> {
+    const resp = await this.client.get(`/api/v1/strategy/proposals/${id}`);
+    return resp.data;
+  }
+
+  async confirmProposal(id: string) {
+    const resp = await this.client.post<{ proposalId: string; status: string; accounts: ExecutionLegResult[]; abortReason: string | null }>(
+      `/api/v1/strategy/proposals/${id}/confirm`,
+    );
+    return resp.data;
+  }
+
+  async rejectProposal(id: string): Promise<Proposal> {
+    const resp = await this.client.post(`/api/v1/strategy/proposals/${id}/reject`);
+    return resp.data;
+  }
+
+  async closeAll(account: string, symbol?: string) {
+    const resp = await this.client.post<{ ok: boolean; message: string }>('/api/v1/trade/close-all', { account, symbol });
+    return resp.data;
+  }
+
+  async breakeven(positionId: number) {
+    const resp = await this.client.post<{ ok: boolean; message: string }>(`/api/v1/positions/${positionId}/breakeven`);
+    return resp.data;
+  }
+
+  async moveStop(positionId: number, type: 'sl' | 'tp', price: string) {
+    const resp = await this.client.post<{ ok: boolean; message: string }>(`/api/v1/positions/${positionId}/stops`, { type, price });
+    return resp.data;
+  }
+
+  async banSymbol(symbol: string, reason: string): Promise<void> {
+    await this.client.post('/api/v1/strategy/blacklist', { symbol, reason });
+  }
+
+  async clearAutoPause(accountId: string) {
+    const resp = await this.client.post<{ accountId: string; wasPaused: boolean; autoPaused: boolean }>(
+      `/api/v1/accounts/${accountId}/auto-pause/clear`,
+    );
+    return resp.data;
+  }
+
+  async getOpenPositions(account?: string, symbol?: string): Promise<Position[]> {
+    const resp = await this.client.get('/api/v1/trade/positions', { params: { account, symbol } });
+    return resp.data;
+  }
+
+  async getNotifications(after: number) {
+    const resp = await this.client.get<Array<{ id: number; kind: string; accountId: string | null; symbol: string | null; message: string; createdAt: number }>>(
+      '/api/v1/notifications',
+      { params: { after } },
+    );
     return resp.data;
   }
 }

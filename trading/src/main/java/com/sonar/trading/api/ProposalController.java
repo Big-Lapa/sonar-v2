@@ -4,10 +4,8 @@ import com.sonar.trading.domain.entity.ProposalEntity;
 import com.sonar.trading.domain.repository.ProposalRepository;
 import com.sonar.trading.risk.AccountLegPreview;
 import com.sonar.trading.risk.ProposalPreviewService;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -47,5 +45,26 @@ public class ProposalController {
         BigDecimal sl = new BigDecimal(req.slPrice());
         List<AccountLegPreview> legs = previewService.preview(req.symbol(), entry, sl);
         return new ProposalResponse(proposalId, legs);
+    }
+
+    @GetMapping("/{id}")
+    public ResponseEntity<ProposalEntity> get(@PathVariable String id) {
+        return proposals.findById(id).map(ResponseEntity::ok).orElseGet(() -> ResponseEntity.notFound().build());
+    }
+
+    /** Idempotent: PENDING -> REJECTED. Already-decided proposals are left as-is (no error — a
+     *  repeat tap on an already-confirmed/rejected proposal is a normal race, not a failure). */
+    @PostMapping("/{id}/reject")
+    public ResponseEntity<ProposalEntity> reject(@PathVariable String id) {
+        ProposalEntity proposal = proposals.findById(id).orElse(null);
+        if (proposal == null) {
+            return ResponseEntity.notFound().build();
+        }
+        if ("PENDING".equals(proposal.getStatus())) {
+            proposal.setStatus("REJECTED");
+            proposal.setDecidedAt(System.currentTimeMillis());
+            proposals.save(proposal);
+        }
+        return ResponseEntity.ok(proposal);
     }
 }
