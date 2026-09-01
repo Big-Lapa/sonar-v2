@@ -33,5 +33,9 @@ trading:
   bingx:
     api-key: ${BINGX_API_KEY:}
     api-secret: ${BINGX_API_SECRET:}
+  bybit:
+    api-key: ${BYBIT_API_KEY:}
+    api-secret: ${BYBIT_API_SECRET:}
+    trigger-by: MarkPrice
   tp-sl:
     working-type: MARK_PRICE

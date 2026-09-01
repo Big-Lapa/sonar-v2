@@ -1,6 +1,7 @@
 package com.sonar.trading.execution.adapter;
 
 import com.sonar.trading.config.TradingProperties;
+import com.sonar.trading.exchange.bingx.BingxFuturesClient;
 import com.sonar.trading.exchange.bingx.BingxOrderMapper;
 import com.sonar.trading.exchange.bingx.BingxOrderSide;
 import com.sonar.trading.exchange.bingx.BingxOrderType;
@@ -16,13 +17,17 @@ import com.sonar.trading.exchange.model.AdapterOrderState;
 import com.sonar.trading.exchange.model.AdapterOrderType;
 import com.sonar.trading.exchange.model.OrderIntent;
 import com.sonar.trading.exchange.spi.ExecutionAdapter;
-import com.sonar.trading.execution.gateway.ExecutionGateway;
+import com.sonar.trading.execution.gateway.BingxExecutionGateway;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
+import java.util.List;
+import java.util.Map;
+import java.util.Optional;
+import java.util.UUID;
 
 /**
  * Live execution adapter against BingX USDT-M perpetual futures (Swap V2, VST demo) — T13.
@@ -46,12 +51,15 @@ public class LiveExecutionAdapter implements ExecutionAdapter {
 
     private static final Logger log = LoggerFactory.getLogger(LiveExecutionAdapter.class);
 
-    private final ExecutionGateway gateway;
+    private final BingxExecutionGateway gateway;
     private final TradingProperties props;
+    private final BingxFuturesClient bingxFuturesClient;
 
-    public LiveExecutionAdapter(ExecutionGateway gateway, TradingProperties props) {
+    public LiveExecutionAdapter(BingxExecutionGateway gateway, TradingProperties props,
+                                BingxFuturesClient bingxFuturesClient) {
         this.gateway = gateway;
         this.props = props;
+        this.bingxFuturesClient = bingxFuturesClient;
     }
 
     @Override
@@ -153,6 +161,81 @@ public class LiveExecutionAdapter implements ExecutionAdapter {
     @Override
     public String adapterName() {
         return "BINGX";
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public boolean hasOpenStopOrder(String symbol) {
+        String bingxSymbol = BingxOrderMapper.toBingxSymbol(symbol);
+        Map<String, Object> resp = bingxFuturesClient.getOpenOrders(bingxSymbol);
+        return openOrders(resp).stream().anyMatch(o -> matchesType(o, true));
+    }
+
+    @Override
+    @SuppressWarnings("unchecked")
+    public void cancelReduceOnlyOrder(String symbol, boolean stopType) {
+        String bingxSymbol = BingxOrderMapper.toBingxSymbol(symbol);
+        Map<String, Object> resp = bingxFuturesClient.getOpenOrders(bingxSymbol);
+        Optional<Map<String, Object>> existing = openOrders(resp).stream()
+                .filter(o -> matchesType(o, stopType))
+                .findFirst();
+        existing.ifPresent(o -> {
+            String orderId = BingxOrderMapper.extractString(o, "orderId");
+            if (orderId != null) {
+                gateway.cancelOrder(bingxSymbol, orderId, null);
+            }
+        });
+    }
+
+    @Override
+    public void placeReduceOnlyStop(String symbol, BigDecimal qty, BigDecimal stopPrice) {
+        placeStandaloneConditional(symbol, qty, stopPrice, BingxOrderType.STOP_MARKET, "sr");
+    }
+
+    @Override
+    public void placeReduceOnlyTakeProfit(String symbol, BigDecimal qty, BigDecimal price) {
+        placeStandaloneConditional(symbol, qty, price, BingxOrderType.TAKE_PROFIT_MARKET, "mv");
+    }
+
+    private void placeStandaloneConditional(String symbol, BigDecimal qty, BigDecimal price,
+                                            BingxOrderType type, String clientOrderIdPrefix) {
+        String bingxSymbol = BingxOrderMapper.toBingxSymbol(symbol);
+        // SELL/reduceOnly — the platform is currently LONG-only (ProposalExecutionService always
+        // enters BUY); same assumption StopGuard/PositionOpsService made before this SPI existed.
+        BingxPlaceOrderRequest request = new BingxPlaceOrderRequest(bingxSymbol, BingxOrderSide.SELL,
+                BingxPositionSide.BOTH, type, qty.stripTrailingZeros().toPlainString(),
+                null, null, shortClientOrderId(clientOrderIdPrefix), null, null,
+                price.stripTrailingZeros().toPlainString(), true);
+        gateway.placeOrder(request, OrderIntent.CLOSE_REDUCE);
+    }
+
+    @Override
+    public BigDecimal getMarkPrice(String symbol) {
+        String bingxSymbol = BingxOrderMapper.toBingxSymbol(symbol);
+        Map<String, Object> resp = bingxFuturesClient.getPrice(bingxSymbol, null);
+        return BingxOrderMapper.extractDecimal(resp, "price", "data.price");
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<Map<String, Object>> openOrders(Map<String, Object> resp) {
+        Object data = resp.get("data");
+        if (data instanceof List<?> list) {
+            return (List<Map<String, Object>>) list;
+        }
+        if (data instanceof Map<?, ?> m && m.get("orders") instanceof List<?> list) {
+            return (List<Map<String, Object>>) list;
+        }
+        return List.of();
+    }
+
+    private static boolean matchesType(Map<String, Object> order, boolean wantsStop) {
+        String type = String.valueOf(order.getOrDefault("type", "")).toUpperCase(java.util.Locale.ROOT);
+        return wantsStop ? type.contains("STOP") : type.contains("TAKE_PROFIT");
+    }
+
+    /** BingX rejects clientOrderId over 40 chars — a raw UUID (36) plus any prefix already blows it. */
+    private static String shortClientOrderId(String prefix) {
+        return prefix + "-" + UUID.randomUUID().toString().replace("-", "").substring(0, 20);
     }
 
     private static AdapterOrderResult toResult(String coreSymbol, String exchangeOrderId,
