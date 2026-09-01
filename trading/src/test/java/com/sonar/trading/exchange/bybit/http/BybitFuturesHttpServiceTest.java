@@ -90,6 +90,42 @@ class BybitFuturesHttpServiceTest {
         assertThat(body).doesNotContainKey("stopLoss");
     }
 
+    // ---- buildTradingStopBody: position-level TP/SL, the atomic stop-replace path ----
+
+    @Test
+    void tradingStopBodySetsOnlyTheStopLossSideAndKeepsTpslModeFull() {
+        Map<String, Object> body = BybitFuturesHttpService.buildTradingStopBody(
+                "BTCUSDT", "60000", null, BybitTriggerBy.MarkPrice);
+
+        assertThat(body).containsEntry("category", "linear");
+        assertThat(body).containsEntry("symbol", "BTCUSDT");
+        assertThat(body).containsEntry("tpslMode", "Full");
+        assertThat(body).containsEntry("positionIdx", 0);
+        assertThat(body).containsEntry("stopLoss", "60000");
+        assertThat(body).containsEntry("slTriggerBy", "MarkPrice");
+        // Absent, not "0" — moving a stop must not wipe the position's take-profit.
+        assertThat(body).doesNotContainKey("takeProfit");
+        assertThat(body).doesNotContainKey("tpTriggerBy");
+    }
+
+    @Test
+    void tradingStopBodySetsOnlyTheTakeProfitSide() {
+        Map<String, Object> body = BybitFuturesHttpService.buildTradingStopBody(
+                "ETHUSDT", null, "2500", BybitTriggerBy.LastPrice);
+
+        assertThat(body).containsEntry("takeProfit", "2500");
+        assertThat(body).containsEntry("tpTriggerBy", "LastPrice");
+        assertThat(body).doesNotContainKey("stopLoss");
+    }
+
+    @Test
+    void tradingStopBodyCarriesAnExplicitZeroToClearASide() {
+        Map<String, Object> body = BybitFuturesHttpService.buildTradingStopBody(
+                "BTCUSDT", "0", null, BybitTriggerBy.MarkPrice);
+
+        assertThat(body).containsEntry("stopLoss", "0");
+    }
+
     // ---- requireOk: Bybit's "200 + retCode != 0" business-error gotcha ----
 
     @Test

@@ -23,6 +23,17 @@ public interface BybitFuturesClient extends ExchangeRestClient {
      */
     Map<String, Object> closeAllPositions(String symbol);
 
+    /**
+     * Set (or clear) the POSITION-level stop-loss / take-profit — {@code /v5/position/trading-stop},
+     * {@code tpslMode=Full}. This is the same slot TP/SL attached to an entry order land in, so
+     * setting it REPLACES whatever protection the position already carries rather than adding a
+     * second, competing stop the way a standalone conditional order would.
+     *
+     * <p>Each price is tri-state: {@code null} leaves that side untouched, {@code "0"} clears it,
+     * anything else sets it. Idempotent — re-sending the same absolute price is a no-op on the
+     * exchange, which is what makes this call safe for the gateway to retry.
+     */
+    Map<String, Object> setTradingStop(String symbol, String stopLoss, String takeProfit, BybitTriggerBy triggerBy);
     /** All open orders for a symbol, including untriggered conditional TP/SL orders. */
     Map<String, Object> getOpenOrders(String symbol);
 

@@ -27,7 +27,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
-import java.util.UUID;
 
 /**
  * Live execution adapter against Bybit V5 USDT-perpetual (testnet by default) — mirrors
@@ -148,8 +147,21 @@ public class BybitExecutionAdapter implements ExecutionAdapter {
         // fields) become POSITION-level fields on Bybit, not separate orders — they never show up
         // in /v5/order/realtime until they trigger. Without this check, hasOpenStopOrder is a
         // false negative right after every entry and StopGuard places a duplicate standalone stop.
-        Map<String, Object> posResp = bybitFuturesClient.getPositions(bybitSymbol);
-        boolean positionLevelStop = BybitOrderMapper.resultList(posResp).stream().anyMatch(row -> {
+        // Retried, but ONLY while the position isn't visible at all: /v5/position/list can lag the
+        // fill that just created it (same eventual consistency close-all has to wait out), and this
+        // runs immediately after entry. A position that IS visible without a stop is a real answer
+        // — nothing to wait for — so that case falls straight through to the order check.
+        List<Map<String, Object>> rows = List.of();
+        for (int attempt = 0; attempt < 3; attempt++) {
+            if (attempt > 0) {
+                sleep(500);
+            }
+            rows = BybitOrderMapper.resultList(bybitFuturesClient.getPositions(bybitSymbol));
+            if (!rows.isEmpty()) {
+                break;
+            }
+        }
+        boolean positionLevelStop = rows.stream().anyMatch(row -> {
             String sl = BybitOrderMapper.extractString(row, "stopLoss");
             return sl != null && !sl.isBlank() && !"0".equals(sl);
         });
@@ -160,6 +172,16 @@ public class BybitExecutionAdapter implements ExecutionAdapter {
         return BybitOrderMapper.resultList(resp).stream().anyMatch(o -> matchesType(o, true));
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Bybit-specific: deliberately does NOT clear the position-level TP/SL. The following
+     * {@link #placeReduceOnlyStop} overwrites that slot atomically, so clearing it here would only
+     * open a window in which the position has no protection — exactly what this venue's
+     * trading-stop path exists to avoid. What this still cleans up is standalone conditional
+     * orders, which the position-level slot cannot overwrite: leftovers from the older
+     * cancel-then-place path, or orders placed by hand in the Bybit terminal.
+     */
     @Override
     public void cancelReduceOnlyOrder(String symbol, boolean stopType) {
         String bybitSymbol = BybitOrderMapper.toBybitSymbol(symbol);
@@ -175,26 +197,37 @@ public class BybitExecutionAdapter implements ExecutionAdapter {
         });
     }
 
+    /**
+     * {@inheritDoc}
+     *
+     * <p>Bybit-specific: this sets the POSITION-level stop-loss, the same slot the entry order's
+     * attached SL lands in — so it REPLACES the existing stop rather than adding a second one.
+     * That is the whole reason this venue doesn't cancel-then-place: an attached SL is not an
+     * order, so no cancel could ever find it, and placing a standalone conditional alongside it
+     * left the position carrying two stops at different prices with the older one firing first.
+     *
+     * <p>{@code qty} is ignored — {@code tpslMode=Full} always covers the whole position. Both
+     * callers (StopGuard, PositionOpsService) pass the full position size anyway, so no behaviour
+     * is lost; a genuinely partial stop would need {@code tpslMode=Partial}, which this venue's
+     * partial-TP support (absent, see {@link #placeOrder}) doesn't warrant yet.
+     */
     @Override
     public void placeReduceOnlyStop(String symbol, BigDecimal qty, BigDecimal stopPrice) {
-        placeStandaloneConditional(symbol, qty, stopPrice, /* triggerDirection falls */ 2, "sr");
+        setPositionTpSl(symbol, toPlain(stopPrice), null);
     }
 
+    /** {@inheritDoc} <p>Position-level take-profit — see {@link #placeReduceOnlyStop} for why. */
     @Override
     public void placeReduceOnlyTakeProfit(String symbol, BigDecimal qty, BigDecimal price) {
-        // Closing a LONG on take-profit: price must RISE to trigger (triggerDirection=1).
-        placeStandaloneConditional(symbol, qty, price, 1, "mv");
+        setPositionTpSl(symbol, null, toPlain(price));
     }
 
-    private void placeStandaloneConditional(String symbol, BigDecimal qty, BigDecimal price,
-                                            int triggerDirection, String clientOrderIdPrefix) {
+    private void setPositionTpSl(String symbol, String stopLoss, String takeProfit) {
         String bybitSymbol = BybitOrderMapper.toBybitSymbol(symbol);
         BybitTriggerBy triggerBy = BybitTriggerBy.valueOf(props.getBybit().getTriggerBy());
-        // SELL — the platform is currently LONG-only, same assumption as BingX's adapter.
-        BybitPlaceOrderRequest request = BybitPlaceOrderRequest.standaloneTrigger(bybitSymbol, BybitOrderSide.Sell,
-                qty.stripTrailingZeros().toPlainString(), price.stripTrailingZeros().toPlainString(),
-                triggerBy, triggerDirection, shortClientOrderId(clientOrderIdPrefix));
-        gateway.placeOrder(request, OrderIntent.CLOSE_REDUCE);
+        log.info("[LIVE] TRADING-STOP symbol={} sl={} tp={} triggerBy={}",
+                bybitSymbol, stopLoss, takeProfit, triggerBy);
+        gateway.setTradingStop(bybitSymbol, stopLoss, takeProfit, triggerBy);
     }
 
     @Override
@@ -224,12 +257,14 @@ public class BybitExecutionAdapter implements ExecutionAdapter {
     }
 
     /**
-     * A standalone conditional order this adapter placed via {@link #placeStandaloneConditional}
-     * comes back with {@code stopOrderType="Stop"} (generic) — NOT {@code "StopLoss"}/
-     * {@code "TakeProfit"} (those values only appear on TP/SL attached via {@code tpslMode}, a
-     * path this adapter doesn't use). Matching on the {@code stopOrderType} substring therefore
-     * never found the adapter's own remediation/move orders — StopGuard treated every one of them
-     * as missing and stacked a new stop on each poller tick.
+     * Identifies a standalone conditional order — nowadays only leftovers from the older
+     * cancel-then-place path and orders placed by hand in the Bybit terminal, since stops this
+     * adapter sets go to the position-level slot instead.
+     *
+     * <p>Such an order comes back with {@code stopOrderType="Stop"} (generic) — NOT {@code
+     * "StopLoss"}/{@code "TakeProfit"} (those values only appear on TP/SL set via {@code tpslMode}).
+     * Matching on the {@code stopOrderType} substring therefore never found them — StopGuard
+     * treated every one as missing and stacked a new stop on each poller tick.
      *
      * <p>Fix: identify ANY conditional order (non-blank {@code stopOrderType} or {@code
      * triggerPrice}), then classify stop vs. take-profit by {@code triggerDirection} — 2 (price
@@ -259,8 +294,11 @@ public class BybitExecutionAdapter implements ExecutionAdapter {
         return v == null ? null : v.stripTrailingZeros().toPlainString();
     }
 
-    /** Keep client order ids well under Bybit's 36-char orderLinkId limit. */
-    private static String shortClientOrderId(String prefix) {
-        return prefix + "-" + UUID.randomUUID().toString().replace("-", "").substring(0, 20);
+    private static void sleep(long ms) {
+        try {
+            Thread.sleep(ms);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 }

@@ -2,10 +2,12 @@ package com.sonar.trading.execution.adapter;
 
 import com.sonar.trading.config.TradingProperties;
 import com.sonar.trading.exchange.bybit.BybitFuturesClient;
+import com.sonar.trading.exchange.bybit.BybitTriggerBy;
 import com.sonar.trading.execution.gateway.BybitExecutionGateway;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
+import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
 
@@ -59,8 +61,8 @@ class BybitExecutionAdapterTest {
 
     @Test
     void findsOwnStandaloneRemediationStopByTriggerDirection() {
-        // What placeStandaloneConditional's own remediation order actually looks like once
-        // reflected back by /v5/order/realtime: stopOrderType="Stop" (generic), NOT "StopLoss".
+        // A leftover standalone conditional (older cancel-then-place path, or placed by hand in
+        // the terminal) as /v5/order/realtime reflects it: stopOrderType="Stop", NOT "StopLoss".
         BybitFuturesClient client = Mockito.mock(BybitFuturesClient.class);
         when(client.getPositions("BTCUSDT")).thenReturn(Map.of("result", Map.of("list", List.of())));
         when(client.getOpenOrders("BTCUSDT")).thenReturn(Map.of("result", Map.of("list", List.of(
@@ -155,5 +157,94 @@ class BybitExecutionAdapterTest {
         var price = adapter(client).getMarkPrice("BTCUSDT");
 
         assertThat(price).isEqualByComparingTo("60123.5");
+    }
+
+    // ---- Moving a stop goes through position-level trading-stop, never a standalone order ----
+
+    @Test
+    void placeReduceOnlyStopSetsPositionLevelStopLossAndPlacesNoOrder() {
+        BybitFuturesClient client = Mockito.mock(BybitFuturesClient.class);
+        BybitExecutionGateway gateway = Mockito.mock(BybitExecutionGateway.class);
+        BybitExecutionAdapter adapter = new BybitExecutionAdapter(gateway, new TradingProperties(), client);
+
+        adapter.placeReduceOnlyStop("BTCUSDT", new BigDecimal("0.5"), new BigDecimal("60000.0"));
+
+        // takeProfit stays null: the call must not wipe the position's TP as a side effect.
+        verify(gateway).setTradingStop("BTCUSDT", "60000", null, BybitTriggerBy.MarkPrice);
+        // A standalone conditional order alongside the position-level stop is the duplicate-stop
+        // bug this whole path exists to prevent.
+        verify(gateway, never()).placeOrder(any(), any());
+    }
+
+    @Test
+    void placeReduceOnlyTakeProfitSetsPositionLevelTakeProfitOnly() {
+        BybitFuturesClient client = Mockito.mock(BybitFuturesClient.class);
+        BybitExecutionGateway gateway = Mockito.mock(BybitExecutionGateway.class);
+        BybitExecutionAdapter adapter = new BybitExecutionAdapter(gateway, new TradingProperties(), client);
+
+        adapter.placeReduceOnlyTakeProfit("BTCUSDT", new BigDecimal("0.5"), new BigDecimal("70000"));
+
+        verify(gateway).setTradingStop("BTCUSDT", null, "70000", BybitTriggerBy.MarkPrice);
+        verify(gateway, never()).placeOrder(any(), any());
+    }
+
+    @Test
+    void placeReduceOnlyStopUsesConfiguredTriggerBy() {
+        BybitFuturesClient client = Mockito.mock(BybitFuturesClient.class);
+        BybitExecutionGateway gateway = Mockito.mock(BybitExecutionGateway.class);
+        TradingProperties props = new TradingProperties();
+        props.getBybit().setTriggerBy("LastPrice");
+        BybitExecutionAdapter adapter = new BybitExecutionAdapter(gateway, props, client);
+
+        adapter.placeReduceOnlyStop("BTCUSDT", new BigDecimal("0.5"), new BigDecimal("60000"));
+
+        verify(gateway).setTradingStop("BTCUSDT", "60000", null, BybitTriggerBy.LastPrice);
+    }
+
+    @Test
+    void cancelReduceOnlyOrderLeavesPositionLevelStopForThePlaceCallToOverwrite() {
+        // No conditional orders open — the normal state once a stop lives on the position. The
+        // cancel half of a /be must then do nothing at all: clearing the position-level stop here
+        // would reopen the unprotected window that trading-stop's atomic overwrite closes.
+        BybitFuturesClient client = Mockito.mock(BybitFuturesClient.class);
+        when(client.getOpenOrders("BTCUSDT")).thenReturn(Map.of("result", Map.of("list", List.of())));
+        BybitExecutionGateway gateway = Mockito.mock(BybitExecutionGateway.class);
+        BybitExecutionAdapter adapter = new BybitExecutionAdapter(gateway, new TradingProperties(), client);
+
+        adapter.cancelReduceOnlyOrder("BTCUSDT", true);
+
+        verify(gateway, never()).setTradingStop(any(), any(), any(), any());
+        verify(gateway, never()).cancelOrder(any(), any(), any());
+    }
+
+    // ---- hasOpenStopOrder retries only while the position isn't visible yet ----
+
+    @Test
+    void hasOpenStopOrderRetriesWhilePositionListIsEmptyThenSeesTheStop() {
+        // /v5/position/list lagging the fill that just created the position — StopGuard runs
+        // immediately after entry, so without the retry it reads "no stop" on a protected position.
+        BybitFuturesClient client = Mockito.mock(BybitFuturesClient.class);
+        when(client.getPositions("BTCUSDT")).thenReturn(
+                Map.of("result", Map.of("list", List.of())),
+                Map.of("result", Map.of("list", List.of(
+                        Map.of("symbol", "BTCUSDT", "stopLoss", "58000")))));
+
+        boolean result = adapter(client).hasOpenStopOrder("BTCUSDT");
+
+        assertThat(result).isTrue();
+        verify(client, never()).getOpenOrders(any());
+    }
+
+    @Test
+    void hasOpenStopOrderDoesNotRetryAVisiblePositionThatSimplyHasNoStop() {
+        // Position IS visible and carries no stop — a real answer, nothing to wait for. Retrying
+        // here would just delay StopGuard's remediation of a genuinely unprotected position.
+        BybitFuturesClient client = Mockito.mock(BybitFuturesClient.class);
+        when(client.getPositions("BTCUSDT")).thenReturn(Map.of("result", Map.of("list", List.of(
+                Map.of("symbol", "BTCUSDT", "size", "0.5", "stopLoss", "")))));
+        when(client.getOpenOrders("BTCUSDT")).thenReturn(Map.of("result", Map.of("list", List.of())));
+
+        assertThat(adapter(client).hasOpenStopOrder("BTCUSDT")).isFalse();
+        verify(client, Mockito.times(1)).getPositions("BTCUSDT");
     }
 }

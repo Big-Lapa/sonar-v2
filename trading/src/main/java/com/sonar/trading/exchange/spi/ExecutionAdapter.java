@@ -30,6 +30,12 @@ public interface ExecutionAdapter {
      * ({@code stopType=false}) conditional order for the symbol, if any. No-op if none is open —
      * callers that want "replace" call this first, then {@link #placeReduceOnlyStop} /
      * {@link #placeReduceOnlyTakeProfit}.
+     *
+     * <p>How much of the replace this actually performs is venue-dependent. Where protection is a
+     * separate order (BingX), this is the half that removes the old one and the position is briefly
+     * unprotected between the two calls. Where it is position state (Bybit), the place call
+     * overwrites it atomically and this only sweeps up stray conditional orders — so callers must
+     * treat the pair as "replace", never assume the cancel alone left the position unprotected.
      */
     void cancelReduceOnlyOrder(String symbol, boolean stopType);
 

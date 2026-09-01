@@ -128,14 +128,16 @@ public class PositionOpsService {
         } catch (RuntimeException e) {
             log.error("[{}] move {} failed: {}", position.getAccountId(), type, e.toString());
             if (wantsSl) {
-                // cancelReduceOnlyOrder already ran by the time placeReduceOnlyStop can throw — the
-                // old stop may be gone and the new one never landed, leaving the position genuinely
-                // unprotected. position.slPrice also wasn't updated (exception skipped that write),
-                // so the poller's next verifyAndRepair checks a price that's already stale. A loud
-                // notification here, not just OpResult.Failed to the operator who issued the command.
+                // What the position is left carrying depends on the venue: where the stop is a
+                // separate order (BingX) cancelReduceOnlyOrder already removed the old one and the
+                // position is genuinely unprotected; where it is position state (Bybit) the old stop
+                // survives at its old price. Either way position.slPrice wasn't updated (the
+                // exception skipped that write), so what the operator asked for did not happen and
+                // the poller will keep verifying against the pre-move price. Loud either way, not
+                // just an OpResult.Failed to whoever typed the command.
                 notificationRepository.save(new NotificationEntity(NotificationEntity.MISSING_STOP,
                         position.getAccountId(), position.getSymbol(),
-                        "перестановка стопа не удалась, позиция может быть без защиты: " + e.getMessage()));
+                        "перестановка стопа не удалась, проверить защиту позиции: " + e.getMessage()));
             }
             return new OpResult.Failed("ошибка перестановки: " + e.getMessage());
         }

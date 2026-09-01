@@ -202,6 +202,45 @@ public class BybitFuturesHttpService implements BybitFuturesClient {
         return out;
     }
 
+    /**
+     * Position-level TP/SL ({@code /v5/position/trading-stop}, {@code tpslMode=Full}) — the same
+     * slot TP/SL attached to an entry order lands in. Setting it REPLACES the position's existing
+     * protection in one call, which is why moving a stop on Bybit goes through here instead of
+     * cancel-then-place: there is no window in which the position sits unprotected, and no way to
+     * end up with two stops at different prices racing each other.
+     */
+    public Map<String, Object> setTradingStop(String symbol, String stopLoss, String takeProfit,
+                                              com.sonar.trading.exchange.bybit.BybitTriggerBy triggerBy) {
+        return parseJsonToMap(executeSignedJsonPost("/v5/position/trading-stop",
+                buildTradingStopBody(symbol, stopLoss, takeProfit, triggerBy), false));
+    }
+
+    static Map<String, Object> buildTradingStopBody(String symbol, String stopLoss, String takeProfit,
+                                                    com.sonar.trading.exchange.bybit.BybitTriggerBy triggerBy) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("category", CATEGORY);
+        body.put("symbol", symbol);
+        // Full: the stop covers the whole position. Partial TP legs aren't implemented on this
+        // venue (placeOrder logs and ignores them), so there is never a reason to send Partial.
+        body.put("tpslMode", "Full");
+        body.put("positionIdx", 0);
+        // Null leaves a side untouched; "0" clears it. Sending both would let one call move the
+        // stop and wipe the take-profit by accident, so callers pass exactly the side they mean.
+        if (stopLoss != null) {
+            body.put("stopLoss", stopLoss);
+            if (triggerBy != null) {
+                body.put("slTriggerBy", triggerBy.name());
+            }
+        }
+        if (takeProfit != null) {
+            body.put("takeProfit", takeProfit);
+            if (triggerBy != null) {
+                body.put("tpTriggerBy", triggerBy.name());
+            }
+        }
+        return body;
+    }
+
     // ---- Account / market endpoints ----
 
     /** All open orders for a symbol, including untriggered conditional TP/SL orders. */

@@ -2,6 +2,7 @@ package com.sonar.trading.execution.gateway;
 
 import com.sonar.trading.exchange.bybit.BybitFuturesClient;
 import com.sonar.trading.exchange.bybit.BybitPlaceOrderRequest;
+import com.sonar.trading.exchange.bybit.BybitTriggerBy;
 import com.sonar.trading.exchange.model.OrderIntent;
 import com.sonar.trading.health.SystemHealthService;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
@@ -38,6 +39,20 @@ public class BybitExecutionGateway extends ResilientExecutionGateway implements 
     /** Venue-typed — not on {@link ExecutionGateway}, see its class doc. */
     public Map<String, Object> placeOrder(BybitPlaceOrderRequest request, OrderIntent intent) {
         return invoke(intent, "place", true, () -> client.placeOrder(request));
+    }
+
+    /**
+     * Position-level TP/SL. Venue-typed, so it lives here rather than on {@link ExecutionGateway}.
+     *
+     * <p>Runs as CLOSE_REDUCE (risk-reducing → close&gt;open priority, never circuit-gated shut
+     * while entries are). Unlike {@code placeOrder}, this one is genuinely safe to retry: it sets
+     * an absolute price on the position rather than creating an order, so a retried call after an
+     * ambiguous timeout converges on the same state instead of stacking a second stop.
+     */
+    public Map<String, Object> setTradingStop(String symbol, String stopLoss, String takeProfit,
+                                              BybitTriggerBy triggerBy) {
+        return invoke(OrderIntent.CLOSE_REDUCE, "close", true,
+                () -> client.setTradingStop(symbol, stopLoss, takeProfit, triggerBy));
     }
 
     @Override
