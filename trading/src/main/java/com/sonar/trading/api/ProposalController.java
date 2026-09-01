@@ -9,12 +9,16 @@ import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /**
- * 4.8: {@code POST /api/v1/strategy/proposals} — creates a candidate LONG entry and returns the
- * per-account risk preview (qty/riskUsd or a rejection reason) shown in the confirm message.
- * Confirming/executing a proposal is stage 3 — not implemented here.
+ * 4.8: {@code POST /api/v1/strategy/proposals} — creates a candidate LONG entry targeted at ONE
+ * account and returns its risk preview (qty/riskUsd or a rejection reason). Manual multi-exchange
+ * management: {@code accountId} is required — a proposal always executes on exactly the account
+ * the caller picked, never a fan-out across every tradable one (that mode existed only for the
+ * now-retired LLM auto-search path). Confirming/executing a proposal is stage 3 — not implemented
+ * here.
  */
 @RestController
 @RequestMapping("/api/v1/strategy/proposals")
@@ -29,22 +33,26 @@ public class ProposalController {
     }
 
     public record CreateProposalRequest(
-            String symbol, String entryPrice, String slPrice, String tpPrice, String rationale) {}
+            String accountId, String symbol, String entryPrice, String slPrice, String tpPrice, String rationale) {}
 
     public record ProposalResponse(String proposalId, List<AccountLegPreview> accounts) {}
 
     @PostMapping
-    public ProposalResponse create(@RequestBody CreateProposalRequest req) {
+    public ResponseEntity<?> create(@RequestBody CreateProposalRequest req) {
+        if (req.accountId() == null || req.accountId().isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "accountId обязателен — укажи, на каком аккаунте открывать"));
+        }
+
         String proposalId = UUID.randomUUID().toString();
         ProposalEntity entity = ProposalEntity.pending(proposalId, req.symbol(), "LONG",
                 req.entryPrice(), req.slPrice(), req.tpPrice(), req.rationale(),
-                System.currentTimeMillis());
+                System.currentTimeMillis(), req.accountId());
         proposals.save(entity);
 
         BigDecimal entry = new BigDecimal(req.entryPrice());
         BigDecimal sl = new BigDecimal(req.slPrice());
-        List<AccountLegPreview> legs = previewService.preview(req.symbol(), entry, sl);
-        return new ProposalResponse(proposalId, legs);
+        List<AccountLegPreview> legs = previewService.preview(req.symbol(), entry, sl, req.accountId());
+        return ResponseEntity.ok(new ProposalResponse(proposalId, legs));
     }
 
     @GetMapping("/{id}")

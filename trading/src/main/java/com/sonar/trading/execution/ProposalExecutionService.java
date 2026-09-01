@@ -112,7 +112,7 @@ public class ProposalExecutionService {
             return new ConfirmOutcome.AlreadyProcessed(rebuildReport(proposalId));
         }
 
-        List<AccountLegPreview> preview = previewService.preview(proposal.getSymbol(), entry, sl);
+        List<AccountLegPreview> preview = previewService.preview(proposal.getSymbol(), entry, sl, proposal.getAccountId());
         List<ExecutionLegResult> results = new ArrayList<>();
         for (AccountLegPreview leg : preview) {
             results.add(executeLeg(proposal, leg, sl, tp));

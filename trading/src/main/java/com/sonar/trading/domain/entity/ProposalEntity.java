@@ -44,11 +44,16 @@ public class ProposalEntity {
     @Column(name = "tg_message_id")
     private Long tgMessageId;
 
+    /** Manual multi-exchange management: which single account this proposal executes on.
+     *  Null means untargeted/legacy (fans out across every tradable account, pre-manual-mode). */
+    @Column(name = "account_id", length = 100)
+    private String accountId;
+
     protected ProposalEntity() {}
 
     public static ProposalEntity pending(String proposalId, String symbol, String side,
                                           String entryPrice, String slPrice, String tpPrice,
-                                          String rationale, long createdAt) {
+                                          String rationale, long createdAt, String accountId) {
         ProposalEntity p = new ProposalEntity();
         p.proposalId = proposalId;
         p.symbol = symbol;
@@ -59,6 +64,7 @@ public class ProposalEntity {
         p.rationale = rationale;
         p.status = "PENDING";
         p.createdAt = createdAt;
+        p.accountId = accountId;
         return p;
     }
 
@@ -76,4 +82,5 @@ public class ProposalEntity {
     public void setDecidedAt(Long decidedAt) { this.decidedAt = decidedAt; }
     public Long getTgMessageId() { return tgMessageId; }
     public void setTgMessageId(Long tgMessageId) { this.tgMessageId = tgMessageId; }
+    public String getAccountId() { return accountId; }
 }

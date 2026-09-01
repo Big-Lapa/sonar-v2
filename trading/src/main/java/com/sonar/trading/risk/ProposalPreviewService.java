@@ -21,9 +21,10 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Fans a candidate LONG entry out across every tradable account, sized and risk-gated per 4.2 —
- * the "риск по каждому аккаунту" preview shown on proposal creation (4.8, POST
- * /api/v1/strategy/proposals). Does NOT place any order; that's stage 3 (execution).
+ * Sizes and risk-gates a candidate LONG entry for ONE targeted account (manual multi-exchange
+ * management — 4.8, POST /api/v1/strategy/proposals). Does NOT place any order; that's stage 3
+ * (execution). Legacy fan-out across every tradable account (the LLM auto-search path) is kept
+ * as the {@code accountId == null} case for now, but every current caller passes an explicit id.
  *
  * <p>Equity is sourced from {@code daily_baseline} (the minute poller, stage 4, keeps it fresh);
  * an account with no baseline row yet is rejected with an explicit reason rather than guessing.
@@ -55,8 +56,17 @@ public class ProposalPreviewService {
         this.sizer = sizer;
     }
 
+    /**
+     * @param accountId targets exactly this account; null falls back to the legacy fan-out across
+     *                  every account in the registry (kept for now, no current caller uses it).
+     */
     @Transactional(readOnly = true)
-    public List<AccountLegPreview> preview(String symbol, BigDecimal entry, BigDecimal sl) {
+    public List<AccountLegPreview> preview(String symbol, BigDecimal entry, BigDecimal sl, String accountId) {
+        if (accountId != null) {
+            return accountRegistry.byId(accountId)
+                    .<List<AccountLegPreview>>map(account -> List.of(previewOne(account, symbol, entry, sl)))
+                    .orElseGet(() -> List.of(AccountLegPreview.rejected(accountId, "аккаунт не найден в реестре")));
+        }
         List<AccountLegPreview> legs = new ArrayList<>();
         for (AccountProps account : accountRegistry.all()) {
             legs.add(previewOne(account, symbol, entry, sl));
