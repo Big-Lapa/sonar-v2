@@ -1,8 +1,7 @@
 package com.sonar.trading.api;
 
 import com.sonar.trading.config.AccountRegistry;
-import com.sonar.trading.exchange.bingx.BingxFuturesClient;
-import com.sonar.trading.reconciliation.BingxAccountParser;
+import com.sonar.trading.reconciliation.AccountReaderRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -11,13 +10,15 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 6 (admin "Позиции" block): {@code GET /api/v1/accounts/{id}/balance} — live REST to the
  * exchange, not the daily_baseline snapshot. Throttled 5s per account server-side regardless of
  * the client's ↻ button, so a stuck/fast-clicking admin tab can't hammer the exchange.
+ *
+ * <p>Venue-agnostic: resolves the account's {@code AccountReader} by venue instead of a
+ * hardcoded BingX client.
  */
 @RestController
 @RequestMapping("/api/v1/accounts")
@@ -27,12 +28,12 @@ public class AccountBalanceController {
     private static final long THROTTLE_MS = 5_000;
 
     private final AccountRegistry accountRegistry;
-    private final BingxFuturesClient bingxFuturesClient;
+    private final AccountReaderRegistry accountReaders;
     private final ConcurrentHashMap<String, CachedBalance> cache = new ConcurrentHashMap<>();
 
-    public AccountBalanceController(AccountRegistry accountRegistry, BingxFuturesClient bingxFuturesClient) {
+    public AccountBalanceController(AccountRegistry accountRegistry, AccountReaderRegistry accountReaders) {
         this.accountRegistry = accountRegistry;
-        this.bingxFuturesClient = bingxFuturesClient;
+        this.accountReaders = accountReaders;
     }
 
     private record CachedBalance(long fetchedAt, BalanceResponse value) {}
@@ -57,13 +58,13 @@ public class AccountBalanceController {
         if (account.isEmpty()) {
             return new BalanceResponse(id, null, null, null, null, System.currentTimeMillis(), true, "аккаунт не найден");
         }
-        if (!"bingx".equalsIgnoreCase(account.get().exchange())) {
+        var reader = accountReaders.forExchange(account.get().exchange());
+        if (reader.isEmpty()) {
             return new BalanceResponse(id, null, null, null, null, System.currentTimeMillis(), true,
                     "venue '" + account.get().exchange() + "' не подключена в этой версии");
         }
         try {
-            Map<String, Object> resp = bingxFuturesClient.getBalance();
-            var balance = BingxAccountParser.parseBalance(resp, "VST").orElse(null);
+            var balance = reader.get().getBalance().orElse(null);
             if (balance == null) {
                 return new BalanceResponse(id, null, null, null, null, System.currentTimeMillis(), true, "пустой ответ биржи");
             }
