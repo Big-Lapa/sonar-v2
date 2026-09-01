@@ -10,9 +10,8 @@ import com.sonar.trading.domain.repository.AccountRiskRepository;
 import com.sonar.trading.domain.repository.NotificationRepository;
 import com.sonar.trading.domain.repository.PositionRepository;
 import com.sonar.trading.domain.repository.StrategySettingsRepository;
-import com.sonar.trading.exchange.bingx.BingxFuturesClient;
-import com.sonar.trading.exchange.bingx.BingxOrderMapper;
-import com.sonar.trading.reconciliation.BingxAccountParser;
+import com.sonar.trading.reconciliation.AccountReader;
+import com.sonar.trading.reconciliation.AccountReaderRegistry;
 import com.sonar.trading.reconciliation.model.ExchangeBalance;
 import com.sonar.trading.reconciliation.model.ExchangePosition;
 import org.slf4j.Logger;
@@ -31,9 +30,14 @@ import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * 4.7: the ONE periodic poll in the system. Per tradable BingX account: pulls balance +
- * positions, detects closes, verifies stops, flags DB/exchange qty drift, reminds on long holds,
- * and maintains {@code daily_baseline} (4.2 — not a separate scheduler, this tick owns it).
+ * 4.7: the ONE periodic poll in the system. Per tradable account: pulls balance + positions,
+ * detects closes, verifies stops, flags DB/exchange qty drift, reminds on long holds, and
+ * maintains {@code daily_baseline} (4.2 — not a separate scheduler, this tick owns it).
+ *
+ * <p>Venue-agnostic (grilled Q5/full multi-venue routing): resolves the account's
+ * {@link AccountReader} via {@link AccountReaderRegistry} instead of a hardcoded BingX-only
+ * filter — any account whose venue has no wired reader (venue not yet supported) is skipped with
+ * a log line, same posture the old "bingx"-only check had for everything else.
  */
 @Component
 public class MinutePoller {
@@ -43,11 +47,11 @@ public class MinutePoller {
     private static final BigDecimal QTY_EPSILON = new BigDecimal("0.0001");
 
     private final AccountRegistry accountRegistry;
+    private final AccountReaderRegistry accountReaders;
     private final AccountRiskRepository accountRiskRepository;
     private final PositionRepository positionRepository;
     private final StrategySettingsRepository strategySettingsRepository;
     private final NotificationRepository notificationRepository;
-    private final BingxFuturesClient bingxFuturesClient;
     private final StopGuard stopGuard;
     private final PollerTransactions transactions;
 
@@ -56,17 +60,17 @@ public class MinutePoller {
     private final Map<String, BigDecimal> lastSeenEquity = new ConcurrentHashMap<>();
     private final Map<String, LocalDate> lastHoldReminder = new ConcurrentHashMap<>();
 
-    public MinutePoller(AccountRegistry accountRegistry, AccountRiskRepository accountRiskRepository,
-                        PositionRepository positionRepository,
+    public MinutePoller(AccountRegistry accountRegistry, AccountReaderRegistry accountReaders,
+                        AccountRiskRepository accountRiskRepository, PositionRepository positionRepository,
                         StrategySettingsRepository strategySettingsRepository,
-                        NotificationRepository notificationRepository, BingxFuturesClient bingxFuturesClient,
-                        StopGuard stopGuard, PollerTransactions transactions) {
+                        NotificationRepository notificationRepository, StopGuard stopGuard,
+                        PollerTransactions transactions) {
         this.accountRegistry = accountRegistry;
+        this.accountReaders = accountReaders;
         this.accountRiskRepository = accountRiskRepository;
         this.positionRepository = positionRepository;
         this.strategySettingsRepository = strategySettingsRepository;
         this.notificationRepository = notificationRepository;
-        this.bingxFuturesClient = bingxFuturesClient;
         this.stopGuard = stopGuard;
         this.transactions = transactions;
     }
@@ -74,23 +78,24 @@ public class MinutePoller {
     @Scheduled(fixedRate = 60_000)
     public void tick() {
         for (AccountProps account : accountRegistry.all()) {
-            if (!"bingx".equalsIgnoreCase(account.exchange())) {
-                continue; // Binance execution not wired yet (parked, stage 3 scope was BingX-only)
+            Optional<AccountReader> reader = accountReaders.forExchange(account.exchange());
+            if (reader.isEmpty()) {
+                continue; // venue not wired (e.g. Binance — parked in _stage3-pending) or PAPER mode
             }
             AccountRiskEntity risk = accountRiskRepository.findById(account.id()).orElse(null);
             if (risk == null || !risk.isTradable()) {
                 continue;
             }
             try {
-                pollAccount(account.id());
+                pollAccount(account.id(), account.exchange(), reader.get());
             } catch (RuntimeException e) {
                 log.error("[poller] account {} tick failed: {}", account.id(), e.toString());
             }
         }
     }
 
-    private void pollAccount(String accountId) {
-        ExchangeBalance balance = fetchBalance();
+    private void pollAccount(String accountId, String exchange, AccountReader reader) {
+        ExchangeBalance balance = fetchBalance(accountId, reader);
         BigDecimal equity = balance == null ? null
                 : balance.equity() != null ? balance.equity()
                 : (balance.balance() != null && balance.unrealizedPnl() != null
@@ -112,68 +117,39 @@ public class MinutePoller {
         }
 
         if (equity != null && !anomalyDrop) {
-            updateDailyBaseline(accountId, equity);
+            updateDailyBaseline(accountId, equity, reader);
         }
 
-        Map<String, Object> positionsResp = bingxFuturesClient.getPositions(null);
-        List<ExchangePosition> exchangePositions = BingxAccountParser.parsePositions(positionsResp);
+        List<ExchangePosition> exchangePositions = reader.getPositions();
 
         for (PositionEntity dbPosition : positionRepository.findAllOpenByAccountId(accountId)) {
-            reconcilePosition(accountId, dbPosition, exchangePositions);
+            reconcilePosition(accountId, exchange, dbPosition, exchangePositions, reader);
         }
     }
 
-    private ExchangeBalance fetchBalance() {
+    private ExchangeBalance fetchBalance(String accountId, AccountReader reader) {
         try {
-            Map<String, Object> resp = bingxFuturesClient.getBalance();
-            return BingxAccountParser.parseBalance(resp, "VST").orElse(null);
+            return reader.getBalance().orElse(null);
         } catch (RuntimeException e) {
-            log.error("[poller] getBalance failed: {}", e.toString());
+            log.error("[poller] {} getBalance failed: {}", accountId, e.toString());
             return null;
         }
     }
 
-    private void updateDailyBaseline(String accountId, BigDecimal equity) {
+    private void updateDailyBaseline(String accountId, BigDecimal equity, AccountReader reader) {
         LocalDate today = LocalDate.now(ZoneOffset.UTC);
-        BigDecimal realizedToday = sumIncomeSince(accountId, today.atStartOfDay(ZoneOffset.UTC).toInstant());
+        BigDecimal realizedToday = reader.sumIncomeSince(today.atStartOfDay(ZoneOffset.UTC).toInstant());
         transactions.upsertDailyBaseline(accountId, today, equity, realizedToday);
     }
 
-    /** Реализованный PnL = закрытые сделки + комиссии + фандинг (4.2) — recomputed fresh each tick
-     *  from the exchange's own income ledger rather than accumulated incrementally, so a missed
-     *  tick or a double-run can never double-count. */
-    @SuppressWarnings("unchecked")
-    private BigDecimal sumIncomeSince(String accountId, Instant since) {
-        try {
-            Map<String, Object> resp = bingxFuturesClient.getIncome(null, since.toEpochMilli(),
-                    System.currentTimeMillis(), 1000);
-            Object data = resp.get("data");
-            if (!(data instanceof List<?> rows)) {
-                return null;
-            }
-            BigDecimal sum = BigDecimal.ZERO;
-            for (Object o : rows) {
-                if (o instanceof Map<?, ?> row) {
-                    BigDecimal income = BingxOrderMapper.extractDecimal((Map<String, Object>) row, "income");
-                    if (income != null) {
-                        sum = sum.add(income);
-                    }
-                }
-            }
-            return sum;
-        } catch (RuntimeException e) {
-            log.warn("[poller] {} getIncome failed, keeping previous realized_pnl: {}", accountId, e.toString());
-            return null;
-        }
-    }
-
-    private void reconcilePosition(String accountId, PositionEntity dbPosition, List<ExchangePosition> exchangePositions) {
+    private void reconcilePosition(String accountId, String exchange, PositionEntity dbPosition,
+                                   List<ExchangePosition> exchangePositions, AccountReader reader) {
         Optional<ExchangePosition> match = exchangePositions.stream()
                 .filter(p -> p.symbol().equalsIgnoreCase(dbPosition.getSymbol()) && !p.isFlat())
                 .findFirst();
 
         if (match.isEmpty()) {
-            handleClosed(accountId, dbPosition);
+            handleClosed(accountId, dbPosition, reader);
             return;
         }
         ExchangePosition live = match.get();
@@ -188,7 +164,7 @@ public class MinutePoller {
             }
         }
 
-        boolean stopOk = stopGuard.verifyAndRepair(dbPosition.getSymbol(), live.qty(),
+        boolean stopOk = stopGuard.verifyAndRepair(exchange, dbPosition.getSymbol(), live.qty(),
                 dbPosition.getSlPrice() != null ? new BigDecimal(dbPosition.getSlPrice()) : null);
         if (!stopOk) {
             notify(NotificationEntity.MISSING_STOP, accountId, dbPosition.getSymbol(),
@@ -198,9 +174,9 @@ public class MinutePoller {
         checkHoldReminder(accountId, dbPosition);
     }
 
-    private void handleClosed(String accountId, PositionEntity dbPosition) {
+    private void handleClosed(String accountId, PositionEntity dbPosition, AccountReader reader) {
         BigDecimal pnl = dbPosition.getOpenedAt() != null
-                ? sumIncomeSince(accountId, Instant.ofEpochMilli(dbPosition.getOpenedAt()))
+                ? reader.sumIncomeSince(Instant.ofEpochMilli(dbPosition.getOpenedAt()))
                 : null;
         long heldMs = dbPosition.getOpenedAt() != null ? System.currentTimeMillis() - dbPosition.getOpenedAt() : 0;
         Duration held = Duration.ofMillis(heldMs);

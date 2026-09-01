@@ -34,7 +34,7 @@ public class BingxExecutionGateway extends ResilientExecutionGateway implements 
         this.client = client;
     }
 
-    @Override
+    /** Venue-typed — not on {@link ExecutionGateway}, see its class doc. */
     public Map<String, Object> placeOrder(BingxPlaceOrderRequest request, OrderIntent intent) {
         return invoke(intent, "place", true, () -> client.placeOrder(request));
     }

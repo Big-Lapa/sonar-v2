@@ -14,8 +14,6 @@ import com.sonar.trading.domain.repository.OrderRepository;
 import com.sonar.trading.domain.repository.PositionRepository;
 import com.sonar.trading.domain.repository.ProposalRepository;
 import com.sonar.trading.domain.repository.SignalInboxRepository;
-import com.sonar.trading.exchange.bingx.BingxFuturesClient;
-import com.sonar.trading.exchange.bingx.BingxOrderMapper;
 import com.sonar.trading.exchange.dto.AdapterOrderRequest;
 import com.sonar.trading.exchange.dto.AdapterOrderResult;
 import com.sonar.trading.exchange.dto.TpSlAttachment;
@@ -24,6 +22,7 @@ import com.sonar.trading.exchange.model.AdapterOrderState;
 import com.sonar.trading.exchange.model.AdapterOrderType;
 import com.sonar.trading.exchange.model.OrderIntent;
 import com.sonar.trading.exchange.spi.ExecutionAdapter;
+import com.sonar.trading.execution.adapter.ExecutionAdapterRegistry;
 import com.sonar.trading.risk.AccountLegPreview;
 import com.sonar.trading.risk.ProposalPreviewService;
 import org.slf4j.Logger;
@@ -33,16 +32,18 @@ import org.springframework.stereotype.Service;
 import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 
 /**
- * 4.6 execution flow, BingX-only for now (stage 3 — Binance execution is a separate future step,
- * parked in {@code trading/src/_stage3-pending/exchange/binance}). Confirming a proposal fans it
- * out across every tradable BingX account with a free slot: sizing + risk gates recomputed fresh
- * (not trusted from proposal-creation time), MARKET entry with attached absolute TP/SL, then a
- * best-effort stop-verification pass. A partial failure on one account is a normal outcome and
- * never rolls back the others.
+ * 4.6 execution flow — full multi-venue routing (grilled plan): confirming a proposal fans it out
+ * across every tradable account with a free slot, on whichever venue that account is wired to
+ * ({@link ExecutionAdapterRegistry}, resolved per {@link AccountProps#exchange()}), not just
+ * BingX. Binance still isn't wired (parked in {@code _stage3-pending}) — an account on any venue
+ * without a registered adapter fails that one leg with a clear reason, same as before.
+ *
+ * <p>Sizing + risk gates are recomputed fresh per leg (not trusted from proposal-creation time),
+ * MARKET entry with attached absolute TP/SL, then a best-effort stop-verification pass. A partial
+ * failure on one account is a normal outcome and never rolls back the others.
  */
 @Service
 public class ProposalExecutionService {
@@ -58,8 +59,7 @@ public class ProposalExecutionService {
     private final OrderRepository orderRepository;
     private final FillRepository fillRepository;
     private final SignalInboxRepository signalInboxRepository;
-    private final ExecutionAdapter liveExecutionAdapter; // "liveExecutionAdapter" bean — BingX only
-    private final BingxFuturesClient bingxFuturesClient;  // read-only: price check (drift gate)
+    private final ExecutionAdapterRegistry adapters;
     private final StopGuard stopGuard;
     private final ProposalClaimer claimer;
 
@@ -67,8 +67,7 @@ public class ProposalExecutionService {
                                     ProposalPreviewService previewService, PositionRepository positionRepository,
                                     OrderCommandRepository orderCommandRepository, OrderRepository orderRepository,
                                     FillRepository fillRepository, SignalInboxRepository signalInboxRepository,
-                                    ExecutionAdapter liveExecutionAdapter, BingxFuturesClient bingxFuturesClient,
-                                    StopGuard stopGuard, ProposalClaimer claimer) {
+                                    ExecutionAdapterRegistry adapters, StopGuard stopGuard, ProposalClaimer claimer) {
         this.proposals = proposals;
         this.accountRegistry = accountRegistry;
         this.previewService = previewService;
@@ -77,8 +76,7 @@ public class ProposalExecutionService {
         this.orderRepository = orderRepository;
         this.fillRepository = fillRepository;
         this.signalInboxRepository = signalInboxRepository;
-        this.liveExecutionAdapter = liveExecutionAdapter;
-        this.bingxFuturesClient = bingxFuturesClient;
+        this.adapters = adapters;
         this.stopGuard = stopGuard;
         this.claimer = claimer;
     }
@@ -122,11 +120,19 @@ public class ProposalExecutionService {
         return new ConfirmOutcome.Executed(results);
     }
 
+    /**
+     * Coarse sanity gate before any account/venue is even known (preview() runs after this) — uses
+     * whichever adapter happens to be wired ({@link ExecutionAdapterRegistry#any()}), not a
+     * specific venue's price. Fine for a 0.5% threshold on liquid USDT perps (venues converge
+     * tightly); not meant to be execution-precise.
+     */
     private String checkPriceDrift(String symbol, BigDecimal proposalEntry) {
+        ExecutionAdapter adapter = adapters.any().orElse(null);
+        if (adapter == null) {
+            return "нет подключённой биржи для проверки цены — исполнение отменено";
+        }
         try {
-            String bingxSymbol = BingxOrderMapper.toBingxSymbol(symbol);
-            Map<String, Object> resp = bingxFuturesClient.getPrice(bingxSymbol, null);
-            BigDecimal live = BingxOrderMapper.extractDecimal(resp, "price", "data.price");
+            BigDecimal live = adapter.getMarkPrice(symbol);
             if (live == null || live.signum() <= 0) {
                 return "не удалось получить текущую цену " + symbol + " — исполнение отменено";
             }
@@ -160,10 +166,12 @@ public class ProposalExecutionService {
         if (account == null) {
             return ExecutionLegResult.failed(accountId, "аккаунт не найден в реестре");
         }
-        if (!"bingx".equalsIgnoreCase(account.exchange())) {
+        ExecutionAdapter adapter = adapters.forExchange(account.exchange()).orElse(null);
+        if (adapter == null) {
             return ExecutionLegResult.failed(accountId,
-                    "venue '" + account.exchange() + "' не подключена в этой версии (пока только BingX)");
+                    "venue '" + account.exchange() + "' не подключена в этой версии");
         }
+        String exchangeLabel = account.exchange().toUpperCase(java.util.Locale.ROOT);
 
         String idempotencyKey = proposal.getProposalId();
         if (signalInboxRepository.findByIdempotencyKeyAndAccountId(idempotencyKey, accountId).isPresent()) {
@@ -175,10 +183,10 @@ public class ProposalExecutionService {
         String clientOrderId = shortId(proposal.getProposalId()) + "-" + accountId;
         String commandId = UUID.randomUUID().toString();
         orderCommandRepository.save(new OrderCommandEntity(commandId, accountId, proposal.getProposalId(),
-                clientOrderId, "BINGX", proposal.getSymbol(), "LONG", "OPEN", leg.qty(), "MARKET",
+                clientOrderId, exchangeLabel, proposal.getSymbol(), "LONG", "OPEN", leg.qty(), "MARKET",
                 System.currentTimeMillis()));
 
-        OrderEntity order = new OrderEntity(clientOrderId, commandId, accountId, "BINGX", proposal.getSymbol(),
+        OrderEntity order = new OrderEntity(clientOrderId, commandId, accountId, exchangeLabel, proposal.getSymbol(),
                 "LONG", "OPEN", leg.qty(), System.currentTimeMillis());
         order = orderRepository.save(order);
 
@@ -188,7 +196,7 @@ public class ProposalExecutionService {
 
         AdapterOrderResult result;
         try {
-            result = liveExecutionAdapter.placeOrder(request);
+            result = adapter.placeOrder(request);
         } catch (RuntimeException e) {
             log.error("[{}] placeOrder failed for {}: {}", accountId, proposal.getSymbol(), e.toString());
             order.applyResult(null, "REJECTED", null, null, null, "PLACE_FAILED", e.getMessage(),
@@ -207,7 +215,7 @@ public class ProposalExecutionService {
             sleep(1000);
             attempts++;
             try {
-                result = liveExecutionAdapter.getOrderStatus(proposal.getSymbol(), clientOrderId);
+                result = adapter.getOrderStatus(proposal.getSymbol(), clientOrderId);
             } catch (RuntimeException e) {
                 log.warn("[{}] getOrderStatus attempt {} failed: {}", accountId, attempts, e.toString());
             }
@@ -230,7 +238,7 @@ public class ProposalExecutionService {
                 result.fee(), System.currentTimeMillis()));
 
         PositionEntity position = positionRepository.findByAccountIdAndSymbol(accountId, proposal.getSymbol())
-                .orElseGet(() -> PositionEntity.newFlat(accountId, "BINGX", proposal.getSymbol()));
+                .orElseGet(() -> PositionEntity.newFlat(accountId, exchangeLabel, proposal.getSymbol()));
         position.setSide("LONG");
         position.setQuantity(filledQty);
         position.setEntryPrice(avgPrice);
@@ -242,9 +250,9 @@ public class ProposalExecutionService {
         position.setPlannedRiskAmount(leg.riskUsd() != null ? leg.riskUsd().toPlainString() : null);
         positionRepository.save(position);
 
-        // 4.6 step 5 / 3rd invariant: BingX attaches TP/SL atomically, but we verify it actually
-        // landed rather than trusting the attach silently succeeded.
-        boolean stopVerified = stopGuard.verifyAndRepair(proposal.getSymbol(), filledQty, sl);
+        // 4.6 step 5 / 3rd invariant: the venue attaches TP/SL atomically at entry, but we verify
+        // it actually landed rather than trusting the attach silently succeeded.
+        boolean stopVerified = stopGuard.verifyAndRepair(account.exchange(), proposal.getSymbol(), filledQty, sl);
 
         markInboxDone(idempotencyKey, accountId);
         return ExecutionLegResult.filled(accountId, filledQty, avgPrice, sl, tp, leg.riskUsd(), stopVerified);

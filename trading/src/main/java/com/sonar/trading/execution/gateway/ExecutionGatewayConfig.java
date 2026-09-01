@@ -1,6 +1,7 @@
 package com.sonar.trading.execution.gateway;
 
 import com.sonar.trading.exchange.bingx.BingxFuturesClient;
+import com.sonar.trading.exchange.bybit.BybitFuturesClient;
 import com.sonar.trading.health.SystemHealthService;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
@@ -20,9 +21,11 @@ import org.springframework.context.annotation.Configuration;
 import java.time.Duration;
 
 /**
- * Wires the Execution Gateway (T16) and its Resilience4j instances. Active only when
- * {@code trading.exchange=LIVE}; the default PAPER mode never creates these beans, so Phase 1
- * is untouched.
+ * Wires the Execution Gateway (T16) and its Resilience4j instances, one full stack per venue
+ * (multi-venue routing — full mulit-venue, not a switch, per the grilled Bybit-integration plan).
+ * Active only when {@code trading.exchange=LIVE}; the default PAPER mode never creates these
+ * beans, so Phase 1 is untouched. Each venue gets its own named Resilience4j registries (so a
+ * BingX outage never trips Bybit's breaker or vice versa) and its own health accountId.
  */
 @Configuration
 @EnableConfigurationProperties(ExecutionGatewayProperties.class)
@@ -31,8 +34,81 @@ public class ExecutionGatewayConfig {
 
     private static final Logger log = LoggerFactory.getLogger(ExecutionGatewayConfig.class);
 
+    // ---- BingX stack ----
+
     @Bean
-    public Retry executionRetry(ExecutionGatewayProperties props) {
+    public Retry bingxExecutionRetry(ExecutionGatewayProperties props) {
+        return buildRetry("bingx-execution", props);
+    }
+
+    @Bean
+    public RateLimiter bingxExecutionRateLimiter(ExecutionGatewayProperties props) {
+        return buildRateLimiter("bingx-execution", props);
+    }
+
+    @Bean
+    public CircuitBreaker bingxExecutionCircuitBreaker(ExecutionGatewayProperties props) {
+        return buildCircuitBreaker("bingx-execution", props);
+    }
+
+    @Bean
+    public BingxExecutionGateway bingxExecutionGateway(BingxFuturesClient client,
+                                                        Retry bingxExecutionRetry,
+                                                        RateLimiter bingxExecutionRateLimiter,
+                                                        CircuitBreaker bingxExecutionCircuitBreaker,
+                                                        SystemHealthService healthService,
+                                                        MeterRegistry meterRegistry,
+                                                        ExecutionGatewayProperties props) {
+        log.info("Execution Gateway active (LIVE, BINGX): retry={}x rateLimit={}/{}ms breaker={}%@{}",
+                props.getRetry().getMaxAttempts(),
+                props.getRateLimiter().getLimitForPeriod(),
+                props.getRateLimiter().getRefreshPeriodMs(),
+                props.getCircuitBreaker().getFailureRateThreshold(),
+                props.getCircuitBreaker().getSlidingWindowSize());
+        return new BingxExecutionGateway(client, bingxExecutionRetry, bingxExecutionRateLimiter,
+                bingxExecutionCircuitBreaker, healthService, meterRegistry,
+                props.getRateLimiter().getCloseWaitMs(), SystemHealthService.DEFAULT_ACCOUNT);
+    }
+
+    // ---- Bybit stack ----
+
+    @Bean
+    public Retry bybitExecutionRetry(ExecutionGatewayProperties props) {
+        return buildRetry("bybit-execution", props);
+    }
+
+    @Bean
+    public RateLimiter bybitExecutionRateLimiter(ExecutionGatewayProperties props) {
+        return buildRateLimiter("bybit-execution", props);
+    }
+
+    @Bean
+    public CircuitBreaker bybitExecutionCircuitBreaker(ExecutionGatewayProperties props) {
+        return buildCircuitBreaker("bybit-execution", props);
+    }
+
+    @Bean
+    public BybitExecutionGateway bybitExecutionGateway(BybitFuturesClient client,
+                                                        Retry bybitExecutionRetry,
+                                                        RateLimiter bybitExecutionRateLimiter,
+                                                        CircuitBreaker bybitExecutionCircuitBreaker,
+                                                        SystemHealthService healthService,
+                                                        MeterRegistry meterRegistry,
+                                                        ExecutionGatewayProperties props) {
+        log.info("Execution Gateway active (LIVE, BYBIT): retry={}x rateLimit={}/{}ms breaker={}%@{}",
+                props.getRetry().getMaxAttempts(),
+                props.getRateLimiter().getLimitForPeriod(),
+                props.getRateLimiter().getRefreshPeriodMs(),
+                props.getCircuitBreaker().getFailureRateThreshold(),
+                props.getCircuitBreaker().getSlidingWindowSize());
+        return new BybitExecutionGateway(client, bybitExecutionRetry, bybitExecutionRateLimiter,
+                bybitExecutionCircuitBreaker, healthService, meterRegistry,
+                props.getRateLimiter().getCloseWaitMs(), "BYBIT");
+    }
+
+    // ---- Shared builders (same tuning knobs for every venue for now — trading.gateway.*) ----
+
+    private static Retry buildRetry(String name, ExecutionGatewayProperties props) {
         var r = props.getRetry();
         RetryConfig cfg = RetryConfig.custom()
                 .maxAttempts(r.getMaxAttempts())
@@ -41,11 +117,10 @@ public class ExecutionGatewayConfig {
                 .retryOnException(TransientErrorClassifier::isTransient)
                 .failAfterMaxAttempts(true)
                 .build();
-        return Retry.of("bingx-execution", cfg);
+        return Retry.of(name, cfg);
     }
 
-    @Bean
-    public RateLimiter executionRateLimiter(ExecutionGatewayProperties props) {
+    private static RateLimiter buildRateLimiter(String name, ExecutionGatewayProperties props) {
         var rl = props.getRateLimiter();
         // Zero timeout → acquirePermission() is non-blocking; CLOSE/REDUCE waiting is handled in
         // the gateway so entries can fail fast while closes are given a grace budget.
@@ -54,11 +129,10 @@ public class ExecutionGatewayConfig {
                 .limitRefreshPeriod(Duration.ofMillis(rl.getRefreshPeriodMs()))
                 .timeoutDuration(Duration.ZERO)
                 .build();
-        return RateLimiter.of("bingx-execution", cfg);
+        return RateLimiter.of(name, cfg);
     }
 
-    @Bean
-    public CircuitBreaker executionCircuitBreaker(ExecutionGatewayProperties props) {
+    private static CircuitBreaker buildCircuitBreaker(String name, ExecutionGatewayProperties props) {
         var cb = props.getCircuitBreaker();
         CircuitBreakerConfig cfg = CircuitBreakerConfig.custom()
                 .slidingWindowType(CircuitBreakerConfig.SlidingWindowType.COUNT_BASED)
@@ -69,26 +143,6 @@ public class ExecutionGatewayConfig {
                 .permittedNumberOfCallsInHalfOpenState(cb.getPermittedCallsInHalfOpen())
                 .automaticTransitionFromOpenToHalfOpenEnabled(true)
                 .build();
-        return CircuitBreaker.of("bingx-execution", cfg);
-    }
-
-    @Bean
-    public ExecutionGateway executionGateway(BingxFuturesClient client,
-                                             Retry executionRetry,
-                                             RateLimiter executionRateLimiter,
-                                             CircuitBreaker executionCircuitBreaker,
-                                             SystemHealthService healthService,
-                                             MeterRegistry meterRegistry,
-                                             ExecutionGatewayProperties props) {
-        log.info("Execution Gateway active (LIVE): retry={}x rateLimit={}/{}ms breaker={}%@{}",
-                props.getRetry().getMaxAttempts(),
-                props.getRateLimiter().getLimitForPeriod(),
-                props.getRateLimiter().getRefreshPeriodMs(),
-                props.getCircuitBreaker().getFailureRateThreshold(),
-                props.getCircuitBreaker().getSlidingWindowSize());
-        return new BingxExecutionGateway(client, executionRetry, executionRateLimiter,
-                executionCircuitBreaker, healthService, meterRegistry,
-                props.getRateLimiter().getCloseWaitMs(),
-                com.sonar.trading.health.SystemHealthService.DEFAULT_ACCOUNT);
+        return CircuitBreaker.of(name, cfg);
     }
 }
