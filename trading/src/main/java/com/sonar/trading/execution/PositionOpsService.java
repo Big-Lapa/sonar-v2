@@ -1,7 +1,9 @@
 package com.sonar.trading.execution;
 
 import com.sonar.trading.config.AccountRegistry;
+import com.sonar.trading.domain.entity.NotificationEntity;
 import com.sonar.trading.domain.entity.PositionEntity;
+import com.sonar.trading.domain.repository.NotificationRepository;
 import com.sonar.trading.domain.repository.PositionRepository;
 import com.sonar.trading.exchange.spi.ExecutionAdapter;
 import com.sonar.trading.execution.adapter.ExecutionAdapterRegistry;
@@ -28,12 +30,14 @@ public class PositionOpsService {
     private final PositionRepository positionRepository;
     private final AccountRegistry accountRegistry;
     private final ExecutionAdapterRegistry adapters;
+    private final NotificationRepository notificationRepository;
 
     public PositionOpsService(PositionRepository positionRepository, AccountRegistry accountRegistry,
-                              ExecutionAdapterRegistry adapters) {
+                              ExecutionAdapterRegistry adapters, NotificationRepository notificationRepository) {
         this.positionRepository = positionRepository;
         this.accountRegistry = accountRegistry;
         this.adapters = adapters;
+        this.notificationRepository = notificationRepository;
     }
 
     public sealed interface OpResult {
@@ -123,6 +127,16 @@ public class PositionOpsService {
                     + price);
         } catch (RuntimeException e) {
             log.error("[{}] move {} failed: {}", position.getAccountId(), type, e.toString());
+            if (wantsSl) {
+                // cancelReduceOnlyOrder already ran by the time placeReduceOnlyStop can throw — the
+                // old stop may be gone and the new one never landed, leaving the position genuinely
+                // unprotected. position.slPrice also wasn't updated (exception skipped that write),
+                // so the poller's next verifyAndRepair checks a price that's already stale. A loud
+                // notification here, not just OpResult.Failed to the operator who issued the command.
+                notificationRepository.save(new NotificationEntity(NotificationEntity.MISSING_STOP,
+                        position.getAccountId(), position.getSymbol(),
+                        "перестановка стопа не удалась, позиция может быть без защиты: " + e.getMessage()));
+            }
             return new OpResult.Failed("ошибка перестановки: " + e.getMessage());
         }
     }

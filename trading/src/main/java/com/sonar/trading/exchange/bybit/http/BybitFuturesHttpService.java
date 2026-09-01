@@ -74,7 +74,8 @@ public class BybitFuturesHttpService implements BybitFuturesClient {
             body.put("price", request.price());
         }
         if (request.timeInForce() != null) {
-            body.put("timeInForce", timeInForceValue(request.timeInForce()));
+            // Bybit's PostOnly is a timeInForce value (not a separate flag), same slot as GTC/IOC/FOK.
+            body.put("timeInForce", request.timeInForce().name());
         }
         if (request.clientOrderId() != null) {
             body.put("orderLinkId", request.clientOrderId());
@@ -105,11 +106,6 @@ public class BybitFuturesHttpService implements BybitFuturesClient {
             }
         }
         return body;
-    }
-
-    /** Bybit's PostOnly is a {@code timeInForce} value (not a separate flag), same slot as GTC/IOC/FOK. */
-    private static String timeInForceValue(com.sonar.trading.exchange.bybit.BybitTimeInForce tif) {
-        return tif.name();
     }
 
     /** Cancel an order by exchange orderId (client order id not required once orderId is known). */
@@ -172,14 +168,26 @@ public class BybitFuturesHttpService implements BybitFuturesClient {
             }
         }
 
-        List<Map<String, Object>> after = BybitOrderMapper.resultList(getPositions(symbol));
-        List<String> stillOpen = after.stream()
-                .filter(row -> {
-                    BigDecimal size = BybitOrderMapper.extractDecimal(row, "size");
-                    return size != null && size.signum() != 0;
-                })
-                .map(row -> BybitOrderMapper.extractString(row, "symbol"))
-                .toList();
+        // Bybit doesn't guarantee /v5/position/list reflects a fill the instant the close order
+        // acks — a verification read immediately after can still see the pre-close size. Give it
+        // a few short beats before declaring the close incomplete (still bounded: ~1.5s worst case).
+        List<String> stillOpen = List.of();
+        for (int attempt = 0; attempt < 3; attempt++) {
+            if (attempt > 0) {
+                sleep(500);
+            }
+            List<Map<String, Object>> after = BybitOrderMapper.resultList(getPositions(symbol));
+            stillOpen = after.stream()
+                    .filter(row -> {
+                        BigDecimal size = BybitOrderMapper.extractDecimal(row, "size");
+                        return size != null && size.signum() != 0;
+                    })
+                    .map(row -> BybitOrderMapper.extractString(row, "symbol"))
+                    .toList();
+            if (stillOpen.isEmpty()) {
+                break;
+            }
+        }
 
         if (!stillOpen.isEmpty()) {
             throw new ExchangeException(new ExchangeError("CLOSE_ALL_INCOMPLETE",
@@ -228,14 +236,28 @@ public class BybitFuturesHttpService implements BybitFuturesClient {
         return parseJsonToMap(executeSignedGet("/v5/account/wallet-balance", q));
     }
 
+    // Bybit caps page size per-endpoint; a caller-requested limit above these gets rejected
+    // outright (retCode=10001 params error), not clamped server-side.
+    private static final int CLOSED_PNL_MAX_LIMIT = 100;
+    private static final int TRANSACTION_LOG_MAX_LIMIT = 50;
+    private static final int MAX_INCOME_PAGES = 10; // bounds worst-case: 1000 / 500 rows per source
+
     /**
      * Merges {@code /v5/position/closed-pnl} (realized PnL) and {@code /v5/account/transaction-log}
      * (funding/fees) into a single {@code income} list under {@code data}, matching BingX's
      * {@code getIncome} response shape closely enough for {@code MinutePoller.sumIncomeSince} to
      * consume unchanged. Grilled Q4: documented approximation, not a strict ledger match.
+     *
+     * <p>Throws when BOTH sources fail (rather than returning an empty-but-successful list) so the
+     * caller ({@code BybitAccountReader.sumIncomeSince}) can tell "no income this period" (real 0)
+     * apart from "couldn't ask the exchange" (must keep the previous {@code realized_pnl}, not
+     * silently zero out the daily-drawdown baseline). A single source failing still degrades to
+     * partial data — logged, not thrown — same as before.
      */
     public Map<String, Object> getIncome(String incomeType, Long startTime, Long endTime, Integer limit) {
         List<Map<String, Object>> merged = new ArrayList<>();
+        boolean pnlFailed = false;
+        boolean txFailed = false;
 
         Map<String, String> pnlQuery = new LinkedHashMap<>();
         pnlQuery.put("category", CATEGORY);
@@ -245,32 +267,36 @@ public class BybitFuturesHttpService implements BybitFuturesClient {
         if (endTime != null) {
             pnlQuery.put("endTime", String.valueOf(endTime));
         }
-        pnlQuery.put("limit", String.valueOf(limit != null ? limit : 100));
+        pnlQuery.put("limit", String.valueOf(clampLimit(limit, CLOSED_PNL_MAX_LIMIT)));
         try {
-            for (Map<String, Object> row : BybitOrderMapper.resultList(
-                    parseJsonToMap(executeSignedGet("/v5/position/closed-pnl", pnlQuery)))) {
+            for (Map<String, Object> row : fetchPaginated("/v5/position/closed-pnl", pnlQuery, MAX_INCOME_PAGES)) {
                 BigDecimal pnl = BybitOrderMapper.extractDecimal(row, "closedPnl");
                 if (pnl != null) {
                     merged.add(Map.of("income", pnl.toPlainString(), "incomeType", "REALIZED_PNL"));
                 }
             }
         } catch (RuntimeException e) {
-            log.warn("[BYBIT] getIncome: closed-pnl fetch failed, continuing with funding only: {}", e.toString());
+            pnlFailed = true;
+            log.warn("[BYBIT] getIncome: closed-pnl fetch failed: {}", e.toString());
         }
 
         Map<String, String> txQuery = new LinkedHashMap<>();
         txQuery.put("accountType", "UNIFIED");
         txQuery.put("category", CATEGORY);
+        if (incomeType != null && !incomeType.isBlank()) {
+            // transaction-log's own "type" filter (e.g. SETTLEMENT for funding) — closed-pnl has
+            // no equivalent concept (it's realized-PnL-only), so incomeType only narrows this leg.
+            txQuery.put("type", incomeType);
+        }
         if (startTime != null) {
             txQuery.put("startTime", String.valueOf(startTime));
         }
         if (endTime != null) {
             txQuery.put("endTime", String.valueOf(endTime));
         }
-        txQuery.put("limit", String.valueOf(limit != null ? limit : 100));
+        txQuery.put("limit", String.valueOf(clampLimit(limit, TRANSACTION_LOG_MAX_LIMIT)));
         try {
-            for (Map<String, Object> row : BybitOrderMapper.resultList(
-                    parseJsonToMap(executeSignedGet("/v5/account/transaction-log", txQuery)))) {
+            for (Map<String, Object> row : fetchPaginated("/v5/account/transaction-log", txQuery, MAX_INCOME_PAGES)) {
                 BigDecimal change = BybitOrderMapper.extractDecimal(row, "change");
                 String type = BybitOrderMapper.extractString(row, "type");
                 if (change != null && !"TRADE".equalsIgnoreCase(type)) {
@@ -280,14 +306,49 @@ public class BybitFuturesHttpService implements BybitFuturesClient {
                 }
             }
         } catch (RuntimeException e) {
-            log.warn("[BYBIT] getIncome: transaction-log fetch failed, continuing with realized-pnl only: {}",
-                    e.toString());
+            txFailed = true;
+            log.warn("[BYBIT] getIncome: transaction-log fetch failed: {}", e.toString());
+        }
+
+        if (pnlFailed && txFailed) {
+            throw new ExchangeException(new ExchangeError("BYBIT_INCOME_UNAVAILABLE",
+                    "both closed-pnl and transaction-log fetches failed — realized PnL for this period is unknown"));
         }
 
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("retCode", 0);
         out.put("data", merged);
         return out;
+    }
+
+    private static int clampLimit(Integer requested, int max) {
+        if (requested == null) {
+            return max;
+        }
+        return Math.min(requested, max);
+    }
+
+    /**
+     * Follows Bybit's {@code result.nextPageCursor} across pages, bounded by {@code maxPages} —
+     * a day's worth of activity can exceed one page (especially transaction-log's 50-row cap), and
+     * silently reading only page one understates realized PnL for the risk gate that consumes it.
+     */
+    private List<Map<String, Object>> fetchPaginated(String path, Map<String, String> baseQuery, int maxPages) {
+        List<Map<String, Object>> all = new ArrayList<>();
+        String cursor = null;
+        for (int page = 0; page < maxPages; page++) {
+            Map<String, String> q = new LinkedHashMap<>(baseQuery);
+            if (cursor != null && !cursor.isBlank()) {
+                q.put("cursor", cursor);
+            }
+            Map<String, Object> resp = parseJsonToMap(executeSignedGet(path, q));
+            all.addAll(BybitOrderMapper.resultList(resp));
+            cursor = BybitOrderMapper.extractString(resp, "nextPageCursor", "result.nextPageCursor");
+            if (cursor == null || cursor.isBlank()) {
+                break;
+            }
+        }
+        return all;
     }
 
     /** Latest ticker for a symbol (public endpoint, unsigned). */
@@ -496,5 +557,13 @@ public class BybitFuturesHttpService implements BybitFuturesClient {
 
     private static String nullToEmpty(String v) {
         return v == null ? "" : v;
+    }
+
+    private static void sleep(long ms) {
+        try {
+            Thread.sleep(ms);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
     }
 }

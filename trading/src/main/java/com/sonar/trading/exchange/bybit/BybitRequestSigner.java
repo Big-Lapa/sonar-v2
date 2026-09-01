@@ -27,10 +27,16 @@ public final class BybitRequestSigner {
         return hmacSha256Hex(toSign, secret);
     }
 
-    /** HMAC-SHA256 of {@code message} keyed by {@code secret}, lower-case hex. */
+    /**
+     * HMAC-SHA256 of {@code message} keyed by {@code secret}, lower-case hex.
+     *
+     * @throws IllegalStateException if {@code secret} is null or empty — an unconfigured API
+     *         secret (blank {@code .env}) must fail loudly here, not sign every request with a
+     *         "valid-looking" digest computed from an empty key.
+     */
     public static String hmacSha256Hex(String message, String secret) {
-        if (secret == null) {
-            secret = "";
+        if (secret == null || secret.isEmpty()) {
+            throw new IllegalStateException("Bybit API secret is not configured");
         }
         try {
             Mac mac = Mac.getInstance("HmacSHA256");

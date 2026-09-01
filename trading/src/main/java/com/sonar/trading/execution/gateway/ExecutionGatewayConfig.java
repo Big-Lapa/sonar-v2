@@ -22,7 +22,7 @@ import java.time.Duration;
 
 /**
  * Wires the Execution Gateway (T16) and its Resilience4j instances, one full stack per venue
- * (multi-venue routing — full mulit-venue, not a switch, per the grilled Bybit-integration plan).
+ * (full multi-venue routing, not a switch, per the grilled Bybit-integration plan).
  * Active only when {@code trading.exchange=LIVE}; the default PAPER mode never creates these
  * beans, so Phase 1 is untouched. Each venue gets its own named Resilience4j registries (so a
  * BingX outage never trips Bybit's breaker or vice versa) and its own health accountId.

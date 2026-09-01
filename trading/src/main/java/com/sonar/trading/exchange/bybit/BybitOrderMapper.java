@@ -113,7 +113,6 @@ public final class BybitOrderMapper {
         return null;
     }
 
-    @SuppressWarnings("unchecked")
     private static Object descend(Object cur, String field) {
         // "list.0" style index isn't used here — dotted paths address object fields; list rows are
         // the last hop and addressed via extractString's default (first row) semantics elsewhere.

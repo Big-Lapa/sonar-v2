@@ -45,7 +45,8 @@ public class BybitAccountReader implements AccountReader {
     @Override
     public BigDecimal sumIncomeSince(Instant since) {
         try {
-            Map<String, Object> resp = client.getIncome(null, since.toEpochMilli(), System.currentTimeMillis(), 1000);
+            // null limit -> BybitFuturesHttpService clamps to each endpoint's own cap and paginates.
+            Map<String, Object> resp = client.getIncome(null, since.toEpochMilli(), System.currentTimeMillis(), null);
             Object data = resp.get("data");
             if (!(data instanceof List<?> rows)) {
                 return null;

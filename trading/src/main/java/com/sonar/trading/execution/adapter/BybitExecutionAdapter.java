@@ -144,6 +144,18 @@ public class BybitExecutionAdapter implements ExecutionAdapter {
     @Override
     public boolean hasOpenStopOrder(String symbol) {
         String bybitSymbol = BybitOrderMapper.toBybitSymbol(symbol);
+        // TP/SL attached to the entry order (TpSlAttachment -> placeOrder's takeProfit/stopLoss
+        // fields) become POSITION-level fields on Bybit, not separate orders — they never show up
+        // in /v5/order/realtime until they trigger. Without this check, hasOpenStopOrder is a
+        // false negative right after every entry and StopGuard places a duplicate standalone stop.
+        Map<String, Object> posResp = bybitFuturesClient.getPositions(bybitSymbol);
+        boolean positionLevelStop = BybitOrderMapper.resultList(posResp).stream().anyMatch(row -> {
+            String sl = BybitOrderMapper.extractString(row, "stopLoss");
+            return sl != null && !sl.isBlank() && !"0".equals(sl);
+        });
+        if (positionLevelStop) {
+            return true;
+        }
         Map<String, Object> resp = bybitFuturesClient.getOpenOrders(bybitSymbol);
         return BybitOrderMapper.resultList(resp).stream().anyMatch(o -> matchesType(o, true));
     }
@@ -190,8 +202,11 @@ public class BybitExecutionAdapter implements ExecutionAdapter {
         String bybitSymbol = BybitOrderMapper.toBybitSymbol(symbol);
         Map<String, Object> resp = bybitFuturesClient.getPrice(bybitSymbol);
         List<Map<String, Object>> rows = BybitOrderMapper.resultList(resp);
-        BigDecimal fromList = rows.isEmpty() ? null : BybitOrderMapper.extractDecimal(rows.get(0), "lastPrice", "markPrice");
-        return fromList != null ? fromList : BybitOrderMapper.extractDecimal(resp, "lastPrice", "result.lastPrice");
+        // markPrice first: conditional orders trigger against trading.bybit.trigger-by (MarkPrice
+        // by default) — the drift gate should compare against the same price the exchange itself
+        // uses to fire stops, not last-traded (which can gap further on thin books).
+        BigDecimal fromList = rows.isEmpty() ? null : BybitOrderMapper.extractDecimal(rows.get(0), "markPrice", "lastPrice");
+        return fromList != null ? fromList : BybitOrderMapper.extractDecimal(resp, "markPrice", "result.markPrice");
     }
 
     private static AdapterOrderResult toResult(String coreSymbol, String exchangeOrderId,
@@ -208,11 +223,36 @@ public class BybitExecutionAdapter implements ExecutionAdapter {
                 state, filledQty, avgPrice, fee, System.currentTimeMillis());
     }
 
+    /**
+     * A standalone conditional order this adapter placed via {@link #placeStandaloneConditional}
+     * comes back with {@code stopOrderType="Stop"} (generic) — NOT {@code "StopLoss"}/
+     * {@code "TakeProfit"} (those values only appear on TP/SL attached via {@code tpslMode}, a
+     * path this adapter doesn't use). Matching on the {@code stopOrderType} substring therefore
+     * never found the adapter's own remediation/move orders — StopGuard treated every one of them
+     * as missing and stacked a new stop on each poller tick.
+     *
+     * <p>Fix: identify ANY conditional order (non-blank {@code stopOrderType} or {@code
+     * triggerPrice}), then classify stop vs. take-profit by {@code triggerDirection} — 2 (price
+     * falls to trigger) for a stop on a long, 1 (price rises to trigger) for a take-profit. Falls
+     * back to the {@code stopOrderType} substring only when {@code triggerDirection} is absent
+     * (e.g. a conditional order placed by other tooling/{@code tpslMode}).
+     */
     private static boolean matchesType(Map<String, Object> order, boolean wantsStop) {
-        // Bybit V5 conditional orders carry stopOrderType (StopLoss/TakeProfit/PartialStopLoss/...);
-        // plain limit/market legs have it blank.
-        String stopOrderType = String.valueOf(order.getOrDefault("stopOrderType", "")).toUpperCase(Locale.ROOT);
-        return wantsStop ? stopOrderType.contains("STOPLOSS") : stopOrderType.contains("TAKEPROFIT");
+        String stopOrderType = BybitOrderMapper.extractString(order, "stopOrderType");
+        String triggerPrice = BybitOrderMapper.extractString(order, "triggerPrice");
+        boolean isConditional = (stopOrderType != null && !stopOrderType.isBlank())
+                || (triggerPrice != null && !triggerPrice.isBlank());
+        if (!isConditional) {
+            return false;
+        }
+        BigDecimal triggerDirection = BybitOrderMapper.extractDecimal(order, "triggerDirection");
+        if (triggerDirection != null) {
+            int dir = triggerDirection.intValue();
+            return wantsStop ? dir == 2 : dir == 1;
+        }
+        String type = stopOrderType == null ? "" : stopOrderType.toUpperCase(Locale.ROOT);
+        return wantsStop ? type.contains("STOPLOSS") || type.contains("STOP")
+                : type.contains("TAKEPROFIT") || type.contains("PROFIT");
     }
 
     private static String toPlain(BigDecimal v) {

@@ -121,13 +121,21 @@ public class ProposalExecutionService {
     }
 
     /**
-     * Coarse sanity gate before any account/venue is even known (preview() runs after this) — uses
-     * whichever adapter happens to be wired ({@link ExecutionAdapterRegistry#any()}), not a
-     * specific venue's price. Fine for a 0.5% threshold on liquid USDT perps (venues converge
-     * tightly); not meant to be execution-precise.
+     * Coarse sanity gate before any account/venue is even known (preview() runs after this) — so
+     * this can't yet ask "the accounts this proposal will actually execute on". Deliberately NOT
+     * {@code adapters.any()}: that picks an arbitrary wired venue via unordered map iteration, and
+     * a LIVE Bybit adapter is always registered (even with an empty API key — its price read is
+     * unsigned) — a random pick could silently price against Bybit's testnet quotes instead of the
+     * account's real venue, which at the 0.5% drift threshold means false aborts or false passes.
+     * Picking the FIRST account in {@link AccountRegistry} (stable env-var order,
+     * {@code TRADING_ACCOUNTS_0}, {@code _1}, ...) is deterministic across restarts and matches
+     * pre-multi-venue behaviour (the only account/venue that existed was always account 0's BingX).
      */
     private String checkPriceDrift(String symbol, BigDecimal proposalEntry) {
-        ExecutionAdapter adapter = adapters.any().orElse(null);
+        ExecutionAdapter adapter = accountRegistry.all().stream()
+                .flatMap(a -> adapters.forExchange(a.exchange()).stream())
+                .findFirst()
+                .orElse(null);
         if (adapter == null) {
             return "нет подключённой биржи для проверки цены — исполнение отменено";
         }

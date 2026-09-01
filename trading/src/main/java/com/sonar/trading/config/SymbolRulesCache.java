@@ -1,5 +1,6 @@
 package com.sonar.trading.config;
 
+import com.sonar.trading.exchange.bybit.BybitFuturesProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -26,9 +27,16 @@ public class SymbolRulesCache {
 
     private final RestClient binanceClient = RestClient.create("https://fapi.binance.com");
     private final RestClient bingxClient = RestClient.create("https://open-api.bingx.com");
-    private final RestClient bybitClient = RestClient.create("https://api.bybit.com");
+    // Same host as the trading client (testnet by default) — mainnet's instrument set/filters
+    // differ from testnet's, so the contract specs used for sizing must come from wherever orders
+    // actually go, not a hardcoded mainnet host.
+    private final RestClient bybitClient;
 
     private final ConcurrentHashMap<String, VenueCache> byVenue = new ConcurrentHashMap<>();
+
+    public SymbolRulesCache(BybitFuturesProperties bybitProps) {
+        this.bybitClient = RestClient.create(bybitProps.getBaseUrl());
+    }
 
     private record VenueCache(Instant fetchedAt, Map<String, SymbolRules> rules) {}
 
@@ -126,14 +134,42 @@ public class SymbolRulesCache {
         return out;
     }
 
-    /** Bybit's symbol form IS the platform's canonical form (no dash) — no key translation needed. */
+    /**
+     * Bybit's symbol form IS the platform's canonical form (no dash) — no key translation needed.
+     *
+     * <p>Paginated: {@code /v5/market/instruments-info} caps at 1000 rows/page and Bybit lists
+     * well over 500 linear USDT-perpetual instruments — a single unpaginated page silently drops
+     * the tail (mostly the less-liquid symbols, where a non-default step/tick size is more likely,
+     * so a missed row means wrong lot/price rounding rather than just a missing lookup).
+     */
     @SuppressWarnings("unchecked")
     private Map<String, SymbolRules> fetchBybit() {
-        Map<String, Object> body = bybitClient.get()
-                .uri(uri -> uri.path("/v5/market/instruments-info").queryParam("category", "linear").build())
-                .retrieve().body(Map.class);
-        Map<String, Object> result = (Map<String, Object>) body.get("result");
-        List<Map<String, Object>> list = result == null ? List.of() : (List<Map<String, Object>>) result.get("list");
+        Map<String, SymbolRules> out = new ConcurrentHashMap<>();
+        String cursor = null;
+        for (int page = 0; page < 10; page++) {
+            String pageCursor = cursor;
+            Map<String, Object> body = bybitClient.get()
+                    .uri(uri -> {
+                        var b = uri.path("/v5/market/instruments-info").queryParam("category", "linear");
+                        if (pageCursor != null && !pageCursor.isBlank()) {
+                            b = b.queryParam("cursor", pageCursor);
+                        }
+                        return b.build();
+                    })
+                    .retrieve().body(Map.class);
+            Map<String, Object> result = (Map<String, Object>) body.get("result");
+            List<Map<String, Object>> list = result == null ? List.of() : (List<Map<String, Object>>) result.get("list");
+            out.putAll(parseBybitInstruments(list));
+            cursor = result == null ? null : (String) result.get("nextPageCursor");
+            if (cursor == null || cursor.isBlank()) {
+                break;
+            }
+        }
+        log.info("SymbolRulesCache: refreshed BYBIT contracts, {} symbols", out.size());
+        return out;
+    }
+
+    private Map<String, SymbolRules> parseBybitInstruments(List<Map<String, Object>> list) {
         Map<String, SymbolRules> out = new ConcurrentHashMap<>();
         for (Map<String, Object> s : list) {
             String symbol = (String) s.get("symbol");
@@ -148,7 +184,6 @@ public class SymbolRulesCache {
             // Bybit's instruments-info has no direct min-notional field — conservative default kept.
             out.put(symbol, new SymbolRules(stepSize, minQty, SymbolRules.DEFAULT.minNotional(), tickSize));
         }
-        log.info("SymbolRulesCache: refreshed BYBIT contracts, {} symbols", out.size());
         return out;
     }
 
