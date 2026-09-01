@@ -26,6 +26,7 @@ public class SymbolRulesCache {
 
     private final RestClient binanceClient = RestClient.create("https://fapi.binance.com");
     private final RestClient bingxClient = RestClient.create("https://open-api.bingx.com");
+    private final RestClient bybitClient = RestClient.create("https://api.bybit.com");
 
     private final ConcurrentHashMap<String, VenueCache> byVenue = new ConcurrentHashMap<>();
 
@@ -54,7 +55,11 @@ public class SymbolRulesCache {
         }
         Map<String, SymbolRules> rules;
         try {
-            rules = "BINGX".equals(venue) ? fetchBingx() : fetchBinance();
+            rules = switch (venue) {
+                case "BINGX" -> fetchBingx();
+                case "BYBIT" -> fetchBybit();
+                default -> fetchBinance();
+            };
         } catch (RuntimeException e) {
             log.error("SymbolRulesCache: refresh failed for {} — keeping stale cache if any: {}",
                     venue, e.toString());
@@ -118,6 +123,32 @@ public class SymbolRulesCache {
             out.put(canonical, new SymbolRules(stepSize, minQty, minNotional, tickSize));
         }
         log.info("SymbolRulesCache: refreshed BINGX contracts, {} symbols", out.size());
+        return out;
+    }
+
+    /** Bybit's symbol form IS the platform's canonical form (no dash) — no key translation needed. */
+    @SuppressWarnings("unchecked")
+    private Map<String, SymbolRules> fetchBybit() {
+        Map<String, Object> body = bybitClient.get()
+                .uri(uri -> uri.path("/v5/market/instruments-info").queryParam("category", "linear").build())
+                .retrieve().body(Map.class);
+        Map<String, Object> result = (Map<String, Object>) body.get("result");
+        List<Map<String, Object>> list = result == null ? List.of() : (List<Map<String, Object>>) result.get("list");
+        Map<String, SymbolRules> out = new ConcurrentHashMap<>();
+        for (Map<String, Object> s : list) {
+            String symbol = (String) s.get("symbol");
+            Map<String, Object> lotSize = (Map<String, Object>) s.get("lotSizeFilter");
+            Map<String, Object> priceFilter = (Map<String, Object>) s.get("priceFilter");
+            BigDecimal stepSize = lotSize != null && lotSize.get("qtyStep") != null
+                    ? new BigDecimal(lotSize.get("qtyStep").toString()) : SymbolRules.DEFAULT.stepSize();
+            BigDecimal minQty = lotSize != null && lotSize.get("minOrderQty") != null
+                    ? new BigDecimal(lotSize.get("minOrderQty").toString()) : SymbolRules.DEFAULT.minQty();
+            BigDecimal tickSize = priceFilter != null && priceFilter.get("tickSize") != null
+                    ? new BigDecimal(priceFilter.get("tickSize").toString()) : SymbolRules.DEFAULT.tickSize();
+            // Bybit's instruments-info has no direct min-notional field — conservative default kept.
+            out.put(symbol, new SymbolRules(stepSize, minQty, SymbolRules.DEFAULT.minNotional(), tickSize));
+        }
+        log.info("SymbolRulesCache: refreshed BYBIT contracts, {} symbols", out.size());
         return out;
     }
 
