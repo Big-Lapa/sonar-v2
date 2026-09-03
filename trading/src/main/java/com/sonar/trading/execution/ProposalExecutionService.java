@@ -200,9 +200,19 @@ public class ProposalExecutionService {
                 "LONG", "OPEN", leg.qty(), System.currentTimeMillis());
         order = orderRepository.save(order);
 
+        // Adding to an already-open position ("доливка"): the incremental entry order carries no
+        // TP/SL attachment. Bybit's stop is position-level and already covers the combined qty
+        // untouched; BingX's attachment would otherwise create a SECOND reduce-only order sized to
+        // just this increment, leaving the original stop covering only the old qty. The BingX
+        // resize (cancel old, place one fresh pair sized to the new total) happens below, after
+        // the fill, once the combined qty is known.
+        PositionEntity existingPosition = positionRepository.findByAccountIdAndSymbol(accountId, proposal.getSymbol())
+                .orElse(null);
+        boolean isAddOn = existingPosition != null && "OPEN".equals(existingPosition.getStatus());
+
         AdapterOrderRequest request = new AdapterOrderRequest(proposal.getSymbol(), AdapterOrderSide.BUY,
                 AdapterOrderType.MARKET, leg.qty(), null, clientOrderId, OrderIntent.ENTRY, null,
-                new TpSlAttachment(tp, sl), proposal.getLeverage());
+                isAddOn ? null : new TpSlAttachment(tp, sl), proposal.getLeverage());
 
         AdapterOrderResult result;
         try {
@@ -247,22 +257,56 @@ public class ProposalExecutionService {
         fillRepository.save(new FillEntity(order.getId(), accountId, proposal.getSymbol(), filledQty, avgPrice,
                 result.fee(), System.currentTimeMillis()));
 
-        PositionEntity position = positionRepository.findByAccountIdAndSymbol(accountId, proposal.getSymbol())
-                .orElseGet(() -> PositionEntity.newFlat(accountId, exchangeLabel, proposal.getSymbol()));
+        PositionEntity position = existingPosition != null ? existingPosition
+                : PositionEntity.newFlat(accountId, exchangeLabel, proposal.getSymbol());
+        BigDecimal finalQty = filledQty;
+        BigDecimal finalEntry = avgPrice;
+        if (isAddOn) {
+            // Weighted-average entry across the old and the new fill — the position keeps growing
+            // under one row, never a second one, same as an exchange would report it.
+            BigDecimal oldQty = existingPosition.getQuantity();
+            finalQty = oldQty.add(filledQty);
+            finalEntry = oldQty.multiply(existingPosition.getEntryPrice()).add(filledQty.multiply(avgPrice))
+                    .divide(finalQty, 8, java.math.RoundingMode.HALF_UP);
+        }
         position.setSide("LONG");
-        position.setQuantity(filledQty);
-        position.setEntryPrice(avgPrice);
+        position.setQuantity(finalQty);
+        position.setEntryPrice(finalEntry);
         position.setStatus("OPEN");
-        position.setOpenedAt(System.currentTimeMillis());
         position.setUpdatedAt(System.currentTimeMillis());
-        position.setSlPrice(sl.toPlainString());
-        position.setTpPrice(tp.toPlainString());
         position.setPlannedRiskAmount(leg.riskUsd() != null ? leg.riskUsd().toPlainString() : null);
-        positionRepository.save(position);
 
-        // 4.6 step 5 / 3rd invariant: the venue attaches TP/SL atomically at entry, but we verify
-        // it actually landed rather than trusting the attach silently succeeded.
-        boolean stopVerified = stopGuard.verifyAndRepair(account.exchange(), proposal.getSymbol(), filledQty, sl);
+        boolean stopVerified;
+        if (isAddOn && "bingx".equalsIgnoreCase(account.exchange())) {
+            // Bybit's stop is position-level and already covers finalQty untouched (no attachment
+            // was sent on this leg — see the request-building comment above). BingX's stop is a
+            // separate reduce-only order still sized to the OLD qty; resize it to the new total by
+            // cancelling the old SL/TP pair and placing one fresh pair for finalQty.
+            try {
+                adapter.cancelReduceOnlyOrder(proposal.getSymbol(), true);
+                adapter.cancelReduceOnlyOrder(proposal.getSymbol(), false);
+                adapter.placeReduceOnlyStop(proposal.getSymbol(), finalQty, sl);
+                adapter.placeReduceOnlyTakeProfit(proposal.getSymbol(), finalQty, tp);
+                position.setSlPrice(sl.toPlainString());
+                position.setTpPrice(tp.toPlainString());
+                stopVerified = stopGuard.hasStopOrder(account.exchange(), proposal.getSymbol());
+            } catch (RuntimeException e) {
+                log.error("[{}] add-on stop resize failed for {}: {}", accountId, proposal.getSymbol(), e.toString());
+                stopVerified = false;
+            }
+        } else if (isAddOn) {
+            // Bybit add-on: exchange-side stop is untouched, so the DB keeps whatever sl/tp is
+            // actually still active on the position rather than claiming the new ticket's values.
+            stopVerified = stopGuard.hasStopOrder(account.exchange(), proposal.getSymbol());
+        } else {
+            position.setOpenedAt(System.currentTimeMillis());
+            position.setSlPrice(sl.toPlainString());
+            position.setTpPrice(tp.toPlainString());
+            // 4.6 step 5 / 3rd invariant: the venue attaches TP/SL atomically at entry, but we
+            // verify it actually landed rather than trusting the attach silently succeeded.
+            stopVerified = stopGuard.verifyAndRepair(account.exchange(), proposal.getSymbol(), finalQty, sl);
+        }
+        positionRepository.save(position);
 
         markInboxDone(idempotencyKey, accountId);
         return ExecutionLegResult.filled(accountId, filledQty, avgPrice, sl, tp, leg.riskUsd(), stopVerified);
