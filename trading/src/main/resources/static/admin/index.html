@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="night">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sonar-2 · Futures</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/daisyui@5.5.19/daisyui.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/daisyui@5.5.19/themes.css">
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.2.4/dist/index.global.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  :where(.grid, .flex) > * { min-width: 0; }
+  :where(p, h1, h2, h3, h4, li, dd, blockquote, figcaption, td, th, .badge, .label) { overflow-wrap: anywhere; }
+  :where(img, svg, video, canvas, iframe) { max-width: 100%; }
+  body { background: var(--color-base-300); }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  #tv_chart { width: 100%; height: 100%; }
+  .side-btn { flex: 1; }
+  .fade-in { animation: fadeIn .18s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform: translateY(4px);} to {opacity:1; transform:none;} }
+</style>
+</head>
+<body class="min-h-screen text-base-content">
+
+<!-- ============ TOKEN GATE ============ -->
+<dialog id="tokenModal" class="modal">
+  <div class="modal-box">
+    <h3 class="font-bold text-lg">Admin token</h3>
+    <p class="text-sm text-base-content/60 mt-1">Тот же X-Admin-Token, что в .env (ADMIN_TOKEN). Хранится только в этом браузере.</p>
+    <input id="tokenInput" type="password" class="input input-bordered w-full mt-3 mono" placeholder="токен" />
+    <div class="modal-action">
+      <button id="tokenSave" class="btn btn-primary">Сохранить</button>
+    </div>
+  </div>
+</dialog>
+
+<!-- ============ TOP BAR ============ -->
+<div class="navbar bg-base-100 border-b border-base-content/10 px-4 min-h-14">
+  <div class="flex-1 flex items-center gap-2">
+    <span class="text-lg font-bold tracking-tight">Sonar<span class="text-primary">-2</span></span>
+    <span class="badge badge-ghost badge-sm">manual mode</span>
+  </div>
+  <div id="acctBar" class="flex-none flex items-center gap-3 text-sm"></div>
+  <button id="changeTokenBtn" class="btn btn-ghost btn-xs ml-3">токен</button>
+</div>
+
+<div id="globalError" class="px-4 pt-3 hidden">
+  <div role="alert" class="alert alert-error alert-soft py-2 text-sm"><span id="globalErrorText"></span></div>
+</div>
+
+<!-- ============ MAIN LAYOUT ============ -->
+<main class="p-4 grid grid-cols-1 xl:grid-cols-[1fr_380px] gap-4 items-start">
+
+  <!-- ---- Chart ---- -->
+  <div class="card bg-base-100 border border-base-content/10">
+    <div class="card-body p-3 gap-2">
+      <div class="flex items-center gap-2 flex-wrap">
+        <div class="join">
+          <input id="symbolInput" list="symbolList" value="BTCUSDT" class="input input-sm join-item mono w-32" placeholder="Символ" />
+          <button id="symbolGo" class="btn btn-sm join-item">График</button>
+        </div>
+        <datalist id="symbolList">
+          <option value="BTCUSDT"></option>
+          <option value="ETHUSDT"></option>
+          <option value="SOLUSDT"></option>
+          <option value="XRPUSDT"></option>
+          <option value="DOGEUSDT"></option>
+          <option value="BNBUSDT"></option>
+        </datalist>
+        <div class="flex gap-1 ml-auto">
+          <button class="btn btn-xs btn-ghost tf-btn" data-tf="15">15м</button>
+          <button class="btn btn-xs btn-ghost tf-btn tf-active btn-active" data-tf="60">1ч</button>
+          <button class="btn btn-xs btn-ghost tf-btn" data-tf="240">4ч</button>
+          <button class="btn btn-xs btn-ghost tf-btn" data-tf="D">1д</button>
+        </div>
+      </div>
+      <div class="rounded-box overflow-hidden border border-base-content/10" style="height: 560px;">
+        <div id="tv_chart"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ---- Order ticket ---- -->
+  <div class="card bg-base-100 border border-base-content/10 sticky top-4">
+    <div class="card-body p-4 gap-3">
+      <h2 class="card-title text-base">Новая позиция <span id="tickerLabel" class="badge badge-primary badge-outline mono">BTCUSDT</span></h2>
+      <div class="text-xs text-base-content/60">mark ≈ <span id="markPriceLabel" class="mono">—</span> <button id="refreshPriceBtn" class="link link-hover ml-1">↻</button></div>
+
+      <!-- Side -->
+      <div class="flex gap-2" role="group" aria-label="сторона">
+        <button type="button" id="sideLong" class="btn btn-success side-btn" data-side="LONG">Long</button>
+        <div class="tooltip flex-1" data-tip="Short пока не поддержан — система LONG-only">
+          <button type="button" id="sideShort" class="btn btn-outline btn-error side-btn w-full btn-disabled" disabled>Short <span class="badge badge-xs ml-1">скоро</span></button>
+        </div>
+      </div>
+
+      <!-- Order type -->
+      <fieldset class="fieldset py-0">
+        <legend class="fieldset-legend text-xs">Тип ордера</legend>
+        <div class="join w-full">
+          <button type="button" id="typeMarket" class="btn btn-sm join-item flex-1 btn-active">Market</button>
+          <button type="button" id="typeLimit" class="btn btn-sm join-item flex-1">Limit</button>
+        </div>
+      </fieldset>
+
+      <!-- Limit price (hidden unless Limit) -->
+      <label id="limitPriceWrap" class="input input-sm w-full hidden fade-in">
+        <span class="label mono text-xs">Цена входа</span>
+        <input id="limitPrice" type="number" step="any" class="mono" placeholder="0.00" />
+      </label>
+
+      <!-- Notional + leverage -->
+      <div class="grid grid-cols-2 gap-2">
+        <label class="input input-sm w-full">
+          <span class="label text-xs">Нотионал $</span>
+          <input id="notional" type="number" step="any" value="500" class="mono" />
+        </label>
+        <label class="input input-sm w-full">
+          <span class="label text-xs">Плечо</span>
+          <input id="leverage" type="number" min="1" max="125" value="20" class="mono" />
+        </label>
+      </div>
+      <div class="flex gap-1 -mt-1">
+        <button type="button" class="btn btn-xs btn-ghost lev-quick" data-lev="5">5x</button>
+        <button type="button" class="btn btn-xs btn-ghost lev-quick" data-lev="10">10x</button>
+        <button type="button" class="btn btn-xs btn-ghost lev-quick" data-lev="20">20x</button>
+        <button type="button" class="btn btn-xs btn-ghost lev-quick" data-lev="50">50x</button>
+        <button type="button" class="btn btn-xs btn-ghost lev-quick" data-lev="100">100x</button>
+        <span id="marginEst" class="ml-auto text-xs text-base-content/60 self-center mono">маржа ≈ $25.00</span>
+      </div>
+
+      <!-- SL / TP -->
+      <div class="grid grid-cols-2 gap-2">
+        <label class="input input-sm w-full">
+          <span class="label text-xs text-error">SL</span>
+          <input id="slPrice" type="number" step="any" placeholder="0.00" class="mono" />
+        </label>
+        <label class="input input-sm w-full">
+          <span class="label text-xs text-success">TP</span>
+          <input id="tpPrice" type="number" step="any" placeholder="0.00" class="mono" />
+        </label>
+      </div>
+      <div id="rrHint" class="text-xs text-base-content/50 -mt-1">укажи SL и TP для расчёта R:R</div>
+
+      <!-- Accounts -->
+      <fieldset class="fieldset py-0">
+        <legend class="fieldset-legend text-xs">Аккаунты (открыть на каждом отдельно)</legend>
+        <div id="accountChecks" class="flex flex-col gap-1.5"></div>
+      </fieldset>
+
+      <div role="alert" class="alert alert-info alert-soft py-2 text-xs">
+        Несколько аккаунтов ⇒ отдельный proposal на каждый, один и тот же нотионал/плечо на все.
+      </div>
+
+      <button id="previewBtn" class="btn btn-primary btn-block mt-1">Проверить →</button>
+    </div>
+  </div>
+
+  <!-- ---- Preview / confirm (full width, appears after "Проверить") ---- -->
+  <div id="previewSection" class="xl:col-span-2 hidden fade-in">
+    <div class="card bg-base-100 border border-base-content/10">
+      <div class="card-body p-4 gap-3">
+        <div class="flex items-center justify-between">
+          <h3 class="font-semibold">Risk-preview по аккаунтам</h3>
+          <button id="confirmAllBtn" class="btn btn-success btn-sm">Подтвердить все approved</button>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="table table-sm">
+            <thead>
+              <tr><th>Аккаунт</th><th>Статус</th><th>Qty</th><th>Risk $</th><th>Причина отказа</th><th></th></tr>
+            </thead>
+            <tbody id="previewTbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<script src="https://s3.tradingview.com/tv.js"></script>
+<script>
+  const API_BASE = '';
+  let token = localStorage.getItem('sonar_admin_token') || '';
+  let accounts = []; // [{id, exchange, tradable}]
+  let side = 'LONG';
+  let orderType = 'MARKET';
+  let currentSymbol = 'BTCUSDT';
+  let currentTf = '60';
+  let currentMarkPrice = null;
+  // proposalId -> {accountId, approved} for the confirm step
+  let previewState = [];
+
+  // ---- Auth ----
+  const tokenModal = document.getElementById('tokenModal');
+  function ensureToken() {
+    if (!token) {
+      tokenModal.showModal();
+      return false;
+    }
+    return true;
+  }
+  document.getElementById('tokenSave').addEventListener('click', () => {
+    const v = document.getElementById('tokenInput').value.trim();
+    if (!v) return;
+    token = v;
+    localStorage.setItem('sonar_admin_token', v);
+    tokenModal.close();
+    init();
+  });
+  document.getElementById('changeTokenBtn').addEventListener('click', () => {
+    document.getElementById('tokenInput').value = token;
+    tokenModal.showModal();
+  });
+
+  async function api(path, opts = {}) {
+    const resp = await fetch(API_BASE + path, {
+      ...opts,
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Token': token, ...(opts.headers || {}) },
+    });
+    if (resp.status === 401) {
+      showError('неверный admin token');
+      localStorage.removeItem('sonar_admin_token');
+      token = '';
+      tokenModal.showModal();
+      throw new Error('unauthorized');
+    }
+    let body = null;
+    try { body = await resp.json(); } catch (e) { /* no body */ }
+    if (!resp.ok) {
+      throw new Error((body && (body.error || body.message)) || `HTTP ${resp.status}`);
+    }
+    return body;
+  }
+
+  function showError(msg) {
+    const el = document.getElementById('globalError');
+    document.getElementById('globalErrorText').textContent = msg;
+    el.classList.remove('hidden');
+    setTimeout(() => el.classList.add('hidden'), 6000);
+  }
+
+  // ---- Init: accounts + balances ----
+  async function init() {
+    if (!ensureToken()) return;
+    try {
+      accounts = await api('/api/v1/accounts');
+    } catch (e) {
+      showError('не удалось загрузить аккаунты: ' + e.message);
+      return;
+    }
+    renderAccountBar();
+    renderAccountChecks();
+    refreshPrice();
+  }
+
+  async function renderAccountBar() {
+    const bar = document.getElementById('acctBar');
+    bar.innerHTML = accounts.map(a =>
+      `<span class="flex items-center gap-1.5" data-acct-status="${a.id}">
+         <span class="inline-block w-2 h-2 rounded-full bg-base-content/20"></span>
+         ${a.id} <span class="mono text-base-content/60">…</span>
+       </span>`).join('');
+    for (const a of accounts) {
+      try {
+        const b = await api(`/api/v1/accounts/${a.id}/balance?refresh=true`);
+        const el = bar.querySelector(`[data-acct-status="${a.id}"]`);
+        if (!el) continue;
+        if (b.error) {
+          el.innerHTML = `<span class="inline-block w-2 h-2 rounded-full bg-error"></span>${a.id} <span class="text-error text-xs">${b.error}</span>`;
+        } else {
+          el.innerHTML = `<span class="inline-block w-2 h-2 rounded-full bg-success"></span>${a.id} <span class="mono text-base-content/60">${fmt(b.equity ?? b.balance)} ${b.asset ?? ''}</span>`;
+        }
+      } catch (e) { /* per-account failure already surfaced inline */ }
+    }
+  }
+
+  function renderAccountChecks() {
+    const wrap = document.getElementById('accountChecks');
+    wrap.innerHTML = accounts.map(a => `
+      <label class="label cursor-pointer justify-start gap-2 px-2 py-1.5 rounded-btn hover:bg-base-200">
+        <input type="checkbox" class="checkbox checkbox-sm account-cb" value="${a.id}" data-exchange="${a.exchange}" checked ${a.tradable ? '' : 'disabled'} />
+        <span class="flex-1">${a.id} <span class="badge badge-ghost badge-xs">${a.exchange}</span>${a.tradable ? '' : ' <span class=\"badge badge-warning badge-xs\">not tradable</span>'}</span>
+      </label>`).join('');
+  }
+
+  function fmt(v) { const n = parseFloat(v); return Number.isFinite(n) ? n.toLocaleString('en-US', { maximumFractionDigits: 4 }) : (v ?? '—'); }
+
+  // ---- Chart ----
+  function renderChart(symbol, tf) {
+    document.getElementById('tv_chart').innerHTML = '';
+    try {
+      new TradingView.widget({
+        autosize: true, symbol: 'BINANCE:' + symbol, interval: tf, timezone: 'Etc/UTC',
+        theme: 'dark', style: '1', locale: 'ru', toolbar_bg: '#1d232a',
+        enable_publishing: false, save_image: false, container_id: 'tv_chart',
+      });
+    } catch (e) {
+      document.getElementById('tv_chart').innerHTML =
+        '<div class="flex items-center justify-center h-full text-base-content/50 text-sm">TradingView недоступен</div>';
+    }
+  }
+  renderChart(currentSymbol, currentTf);
+
+  document.getElementById('symbolGo').addEventListener('click', updateSymbol);
+  document.getElementById('symbolInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') updateSymbol(); });
+  function updateSymbol() {
+    const v = document.getElementById('symbolInput').value.trim().toUpperCase();
+    if (!v) return;
+    currentSymbol = v;
+    document.getElementById('tickerLabel').textContent = v;
+    renderChart(currentSymbol, currentTf);
+    refreshPrice();
+  }
+  document.querySelectorAll('.tf-btn').forEach(btn => btn.addEventListener('click', () => {
+    document.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('tf-active', 'btn-active'));
+    btn.classList.add('tf-active', 'btn-active');
+    currentTf = btn.dataset.tf;
+    renderChart(currentSymbol, currentTf);
+  }));
+
+  // ---- Live mark price (first checked account's venue — same convention as the drift gate) ----
+  document.getElementById('refreshPriceBtn').addEventListener('click', refreshPrice);
+  async function refreshPrice() {
+    if (!token) return;
+    const firstCb = document.querySelector('.account-cb:checked') || document.querySelector('.account-cb');
+    const exchange = firstCb ? firstCb.dataset.exchange : (accounts[0] && accounts[0].exchange);
+    if (!exchange) return;
+    try {
+      const r = await api(`/api/v1/market/price?symbol=${encodeURIComponent(currentSymbol)}&exchange=${encodeURIComponent(exchange)}`);
+      if (r.error) { document.getElementById('markPriceLabel').textContent = r.error; return; }
+      currentMarkPrice = parseFloat(r.price);
+      document.getElementById('markPriceLabel').textContent = r.price + ' (' + exchange + ')';
+      if (orderType === 'MARKET') updateMarginEst();
+      updateRr();
+    } catch (e) { document.getElementById('markPriceLabel').textContent = 'н/д'; }
+  }
+
+  // ---- Side toggle (Short disabled — see button) ----
+  document.getElementById('sideLong').addEventListener('click', () => { side = 'LONG'; });
+
+  // ---- Order type toggle ----
+  const typeMarketBtn = document.getElementById('typeMarket');
+  const typeLimitBtn = document.getElementById('typeLimit');
+  const limitWrap = document.getElementById('limitPriceWrap');
+  function setType(t) {
+    orderType = t;
+    typeMarketBtn.classList.toggle('btn-active', t === 'MARKET');
+    typeLimitBtn.classList.toggle('btn-active', t === 'LIMIT');
+    limitWrap.classList.toggle('hidden', t !== 'LIMIT');
+  }
+  typeMarketBtn.addEventListener('click', () => setType('MARKET'));
+  typeLimitBtn.addEventListener('click', () => setType('LIMIT'));
+
+  // ---- Leverage quick buttons + margin estimate ----
+  const notionalInput = document.getElementById('notional');
+  const leverageInput = document.getElementById('leverage');
+  const marginEstEl = document.getElementById('marginEst');
+  document.querySelectorAll('.lev-quick').forEach(b => b.addEventListener('click', () => {
+    leverageInput.value = b.dataset.lev;
+    updateMarginEst();
+  }));
+  function updateMarginEst() {
+    const n = parseFloat(notionalInput.value) || 0;
+    const l = parseFloat(leverageInput.value) || 1;
+    marginEstEl.textContent = 'маржа ≈ $' + (n / l).toFixed(2);
+  }
+  notionalInput.addEventListener('input', updateMarginEst);
+  leverageInput.addEventListener('input', updateMarginEst);
+
+  // ---- R:R hint ----
+  const slInput = document.getElementById('slPrice');
+  const tpInput = document.getElementById('tpPrice');
+  const rrHint = document.getElementById('rrHint');
+  function referenceEntry() {
+    if (orderType === 'LIMIT') { const v = parseFloat(document.getElementById('limitPrice').value); return Number.isFinite(v) ? v : null; }
+    return currentMarkPrice;
+  }
+  function updateRr() {
+    const sl = parseFloat(slInput.value), tp = parseFloat(tpInput.value), entry = referenceEntry();
+    if (!sl || !tp || !entry) { rrHint.textContent = 'укажи SL и TP для расчёта R:R'; return; }
+    const risk = Math.abs(entry - sl), reward = Math.abs(tp - entry);
+    const rr = risk > 0 ? (reward / risk).toFixed(2) : '—';
+    rrHint.textContent = `R:R ≈ ${rr} (от цены ${entry})`;
+  }
+  slInput.addEventListener('input', updateRr);
+  tpInput.addEventListener('input', updateRr);
+  document.getElementById('limitPrice').addEventListener('input', updateRr);
+
+  // ---- Preview: creates one proposal per checked account, shows risk-preview rows ----
+  const previewSection = document.getElementById('previewSection');
+  const previewTbody = document.getElementById('previewTbody');
+  document.getElementById('previewBtn').addEventListener('click', async () => {
+    if (!ensureToken()) return;
+    const checked = [...document.querySelectorAll('.account-cb:checked')];
+    if (checked.length === 0) { showError('выбери хотя бы один аккаунт'); return; }
+    const entry = referenceEntry();
+    if (!entry) { showError('нет цены входа — дождись котировки или укажи limit-цену'); return; }
+    const sl = slInput.value, tp = tpInput.value;
+    if (!sl || !tp) { showError('укажи SL и TP'); return; }
+
+    previewTbody.innerHTML = '<tr><td colspan="6" class="text-center text-base-content/50">считаю...</td></tr>';
+    previewSection.classList.remove('hidden');
+    previewState = [];
+
+    for (const cb of checked) {
+      const accountId = cb.value;
+      const row = document.createElement('tr');
+      row.className = 'preview-row';
+      try {
+        const resp = await api('/api/v1/strategy/proposals', {
+          method: 'POST',
+          body: JSON.stringify({
+            accountId, symbol: currentSymbol, entryPrice: String(entry), slPrice: sl, tpPrice: tp,
+            rationale: 'manual panel', notional: notionalInput.value, leverage: parseInt(leverageInput.value, 10),
+          }),
+        });
+        const leg = resp.accounts[0];
+        previewState.push({ proposalId: resp.proposalId, accountId, approved: leg.approved });
+        row.dataset.proposalId = resp.proposalId;
+        row.innerHTML = leg.approved
+          ? `<td class="mono">${accountId}</td><td><span class="badge badge-success badge-sm">approved</span></td>
+             <td class="mono">${leg.qty ?? '—'}</td><td class="mono">${leg.riskUsd ?? '—'}</td><td class="text-base-content/40">—</td>
+             <td><button class="btn btn-xs btn-success confirm-one">Подтвердить</button></td>`
+          : `<td class="mono">${accountId}</td><td><span class="badge badge-error badge-sm">rejected</span></td>
+             <td class="text-base-content/40">—</td><td class="text-base-content/40">—</td>
+             <td class="text-xs">${leg.rejectReason ?? '—'}</td><td></td>`;
+      } catch (e) {
+        row.innerHTML = `<td class="mono">${accountId}</td><td><span class="badge badge-error badge-sm">error</span></td>
+             <td colspan="3" class="text-xs text-error">${e.message}</td><td></td>`;
+      }
+      if (previewTbody.querySelector('td[colspan]')) previewTbody.innerHTML = '';
+      previewTbody.appendChild(row);
+    }
+
+    previewTbody.querySelectorAll('.confirm-one').forEach(btn => btn.addEventListener('click', () => confirmRow(btn)));
+    previewSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  });
+
+  async function confirmRow(btn) {
+    const row = btn.closest('tr');
+    const proposalId = row.dataset.proposalId;
+    btn.disabled = true;
+    btn.textContent = '...';
+    try {
+      const resp = await api(`/api/v1/strategy/proposals/${proposalId}/confirm`, { method: 'POST' });
+      if (resp.status === 'ABORTED') {
+        btn.outerHTML = `<span class="badge badge-error badge-outline">⛔ ${resp.abortReason || 'отменено'}</span>`;
+        return;
+      }
+      const leg = resp.accounts[0];
+      if (leg && leg.success) {
+        btn.outerHTML = `<span class="badge badge-success badge-outline">открыто ✓ @ ${leg.avgPrice ?? ''}</span>`;
+        refreshPrice();
+      } else {
+        btn.outerHTML = `<span class="badge badge-error badge-outline">✗ ${(leg && leg.errorReason) || 'ошибка'}</span>`;
+      }
+    } catch (e) {
+      btn.outerHTML = `<span class="badge badge-error badge-outline">✗ ${e.message}</span>`;
+    }
+  }
+  document.getElementById('confirmAllBtn').addEventListener('click', () => {
+    previewTbody.querySelectorAll('.confirm-one').forEach(btn => btn.click());
+  });
+
+  updateMarginEst();
+  init();
+</script>
+</body>
+</html>
