@@ -57,12 +57,21 @@ public class ProposalEntity {
     @Column(name = "leverage")
     private Integer leverage;
 
+    /** MARKET or LIMIT — what the entry ticket actually asked for (previously always executed as
+     *  MARKET regardless of this choice; see {@code ProposalExecutionService.executeLeg}). */
+    @Column(name = "order_type", nullable = false, length = 10)
+    private String orderType = "MARKET";
+
+    /** Resting price for a LIMIT entry. Null for MARKET. */
+    @Column(name = "limit_price", length = 30)
+    private String limitPrice;
+
     protected ProposalEntity() {}
 
     public static ProposalEntity pending(String proposalId, String symbol, String side,
                                           String entryPrice, String slPrice, String tpPrice,
                                           String rationale, long createdAt, String accountId,
-                                          String notional, Integer leverage) {
+                                          String notional, Integer leverage, String orderType, String limitPrice) {
         ProposalEntity p = new ProposalEntity();
         p.proposalId = proposalId;
         p.symbol = symbol;
@@ -76,6 +85,8 @@ public class ProposalEntity {
         p.accountId = accountId;
         p.notional = notional;
         p.leverage = leverage;
+        p.orderType = orderType != null ? orderType : "MARKET";
+        p.limitPrice = limitPrice;
         return p;
     }
 
@@ -96,4 +107,6 @@ public class ProposalEntity {
     public String getAccountId() { return accountId; }
     public String getNotional() { return notional; }
     public Integer getLeverage() { return leverage; }
+    public String getOrderType() { return orderType; }
+    public String getLimitPrice() { return limitPrice; }
 }

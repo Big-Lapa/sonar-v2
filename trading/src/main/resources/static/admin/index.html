@@ -340,6 +340,20 @@
   // proposalId -> {accountId, approved} for the confirm step
   let previewState = [];
 
+  // At 100%, use the position's own qty untouched — going through qty*pct/100 then toFixed(6)
+  // loses precision for real (small lot steps, or big qty on coins like 1000PEPE), and the server
+  // floors again on top of that, so "close 100%" was reliably leaving dust behind.
+  function pctQty(qty, pct) {
+    return pct >= 100 ? qty : +(qty * pct / 100).toFixed(6);
+  }
+
+  // HTML-escape untrusted text (exchange/exception messages) before it lands in an innerHTML
+  // template string — the panel is behind ADMIN_TOKEN with one operator, so this isn't guarding
+  // against a real attacker, but it costs nothing and these strings genuinely aren't ours.
+  function esc(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
   // ---- Auth ----
   const tokenModal = document.getElementById('tokenModal');
   function ensureToken() {
@@ -430,7 +444,7 @@
         const b = await api(`/api/v1/accounts/${a.id}/balance?refresh=true`);
         if (!card) continue;
         if (b.error) {
-          card.querySelector('div:last-child').outerHTML = `<div class="text-error text-xs">${b.error}</div>`;
+          card.querySelector('div:last-child').outerHTML = `<div class="text-error text-xs">${esc(b.error)}</div>`;
           continue;
         }
         const upnl = parseFloat(b.unrealizedPnl);
@@ -463,7 +477,7 @@
         const el = bar.querySelector(`[data-acct-status="${a.id}"]`);
         if (!el) continue;
         if (b.error) {
-          el.innerHTML = `<span class="inline-block w-2 h-2 rounded-full bg-error"></span>${a.id} <span class="text-error text-xs">${b.error}</span>`;
+          el.innerHTML = `<span class="inline-block w-2 h-2 rounded-full bg-error"></span>${a.id} <span class="text-error text-xs">${esc(b.error)}</span>`;
         } else {
           el.innerHTML = `<span class="inline-block w-2 h-2 rounded-full bg-success"></span>${a.id} <span class="mono text-base-content/60">${fmt(b.equity ?? b.balance)} ${b.asset ?? ''}</span>`;
         }
@@ -614,6 +628,9 @@
     previewTbody.innerHTML = '<tr><td colspan="6" class="text-center text-base-content/50">считаю...</td></tr>';
     previewSection.classList.remove('hidden');
     previewState = [];
+    const confirmAllBtn = document.getElementById('confirmAllBtn');
+    confirmAllBtn.disabled = false;
+    confirmAllBtn.textContent = 'Подтвердить все approved';
 
     for (const cb of checked) {
       const accountId = cb.value;
@@ -624,7 +641,9 @@
           method: 'POST',
           body: JSON.stringify({
             accountId, symbol: currentSymbol, entryPrice: String(entry), slPrice: sl, tpPrice: tp,
-            rationale: 'manual panel', notional: notionalInput.value, leverage: parseInt(leverageInput.value, 10),
+            rationale: 'manual panel', notional: notionalInput.value || null,
+            leverage: Number.isFinite(parseInt(leverageInput.value, 10)) ? parseInt(leverageInput.value, 10) : null,
+            orderType,
           }),
         });
         const leg = resp.accounts[0];
@@ -636,10 +655,10 @@
              <td><button class="btn btn-xs btn-success confirm-one">Подтвердить</button></td>`
           : `<td class="mono">${accountId}</td><td><span class="badge badge-error badge-sm">rejected</span></td>
              <td class="text-base-content/40">—</td><td class="text-base-content/40">—</td>
-             <td class="text-xs">${leg.rejectReason ?? '—'}</td><td></td>`;
+             <td class="text-xs">${esc(leg.rejectReason ?? '—')}</td><td></td>`;
       } catch (e) {
         row.innerHTML = `<td class="mono">${accountId}</td><td><span class="badge badge-error badge-sm">error</span></td>
-             <td colspan="3" class="text-xs text-error">${e.message}</td><td></td>`;
+             <td colspan="3" class="text-xs text-error">${esc(e.message)}</td><td></td>`;
       }
       if (previewTbody.querySelector('td[colspan]')) previewTbody.innerHTML = '';
       previewTbody.appendChild(row);
@@ -649,6 +668,15 @@
     previewSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   });
 
+  // Replaces btn with a <span class="badge {cls}">{text}</span>, text always via textContent —
+  // these strings come from exchange/exception responses, not fully trusted input.
+  function replaceWithBadge(btn, cls, text) {
+    const span = document.createElement('span');
+    span.className = 'badge badge-outline ' + cls;
+    span.textContent = text;
+    btn.replaceWith(span);
+  }
+
   async function confirmRow(btn) {
     const row = btn.closest('tr');
     const proposalId = row.dataset.proposalId;
@@ -657,23 +685,37 @@
     try {
       const resp = await api(`/api/v1/strategy/proposals/${proposalId}/confirm`, { method: 'POST' });
       if (resp.status === 'ABORTED') {
-        btn.outerHTML = `<span class="badge badge-error badge-outline">⛔ ${resp.abortReason || 'отменено'}</span>`;
+        replaceWithBadge(btn, 'badge-error', '⛔ ' + (resp.abortReason || 'отменено'));
         return;
       }
       const leg = resp.accounts[0];
-      if (leg && leg.success) {
-        btn.outerHTML = `<span class="badge badge-success badge-outline">открыто ✓ @ ${leg.avgPrice ?? ''}</span>`;
+      if (leg && leg.success && leg.filledQty == null) {
+        // LIMIT entry placed but not yet filled — live on the exchange, not a position yet.
+        replaceWithBadge(btn, 'badge-warning', '⏳ ' + (leg.errorReason || 'лимитный ордер выставлен'));
+      } else if (leg && leg.success) {
+        replaceWithBadge(btn, 'badge-success', 'открыто ✓ @ ' + (leg.avgPrice ?? ''));
         refreshPrice();
         refreshPositionsSoon();
       } else {
-        btn.outerHTML = `<span class="badge badge-error badge-outline">✗ ${(leg && leg.errorReason) || 'ошибка'}</span>`;
+        replaceWithBadge(btn, 'badge-error', '✗ ' + ((leg && leg.errorReason) || 'ошибка'));
       }
     } catch (e) {
-      btn.outerHTML = `<span class="badge badge-error badge-outline">✗ ${e.message}</span>`;
+      replaceWithBadge(btn, 'badge-error', '✗ ' + e.message);
     }
   }
-  document.getElementById('confirmAllBtn').addEventListener('click', () => {
-    previewTbody.querySelectorAll('.confirm-one').forEach(btn => btn.click());
+  document.getElementById('confirmAllBtn').addEventListener('click', async (ev) => {
+    // Sequential, not N parallel POSTs: each confirm is its own market order, and firing them all
+    // at once gives no place to see "3 of 5 done" or react to one failing mid-batch.
+    const allBtn = ev.currentTarget;
+    const buttons = [...previewTbody.querySelectorAll('.confirm-one')];
+    allBtn.disabled = true;
+    let done = 0;
+    for (const btn of buttons) {
+      allBtn.textContent = `Подтверждаю... (${done}/${buttons.length})`;
+      await confirmRow(btn);
+      done++;
+    }
+    allBtn.textContent = `Подтверждено ${done}/${buttons.length}`;
   });
 
   // ---- Positions: DB rows (id, entry, sl/tp) merged with per-account live rows (mark/uPnL/leverage) ----
@@ -687,7 +729,7 @@
     try {
       dbRows = await api('/api/v1/trade/positions');
     } catch (e) {
-      tbody.innerHTML = `<tr><td colspan="12" class="text-error text-xs text-center py-4">${e.message}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="12" class="text-error text-xs text-center py-4">${esc(e.message)}</td></tr>`;
       return;
     }
     const liveByAccount = {};
@@ -822,7 +864,7 @@
     paintSlider('closeFillBar', pct);
     document.getElementById('closePctLabel').textContent = pct;
     document.getElementById('closeConfirmPct').textContent = pct + '%';
-    document.getElementById('closeQtyInput').value = closeTarget ? +(closeTarget.qty * pct / 100).toFixed(6) : '';
+    document.getElementById('closeQtyInput').value = closeTarget ? pctQty(closeTarget.qty, pct) : '';
   });
   document.getElementById('closeQtyInput').addEventListener('input', e => {
     if (!closeTarget) return;
@@ -881,14 +923,14 @@
   function renderBulkPreview(pct) {
     document.getElementById('bulkPreviewTbody').innerHTML = bulkTargets.map(p => `
       <tr><td class="mono">${p.symbol}</td><td class="mono text-xs">${p.accountId}</td>
-      <td class="text-right mono">${(p.qty * pct / 100).toFixed(6)}</td></tr>`).join('');
+      <td class="text-right mono">${pctQty(p.qty, pct)}</td></tr>`).join('');
   }
   document.getElementById('bulkConfirmBtn').addEventListener('click', async () => {
     const pct = +document.getElementById('bulkPctSlider').value;
     const statusEl = document.getElementById('bulkModalStatus');
     let ok = 0, fail = 0;
     for (const p of bulkTargets) {
-      const qty = +(p.qty * pct / 100).toFixed(6);
+      const qty = pctQty(p.qty, pct);
       if (qty <= 0) { continue; }
       try {
         await api(`/api/v1/positions/${p.positionId}/close`, {

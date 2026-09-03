@@ -50,8 +50,15 @@ public class PositionOpsController {
         if (req.type() == null || req.qty() == null) {
             return ResponseEntity.badRequest().body(new OpResponse(false, "type и qty обязательны"));
         }
-        BigDecimal price = req.price() != null ? new BigDecimal(req.price()) : null;
-        return respond(service.closePartial(id, req.type(), new BigDecimal(req.qty()), price));
+        BigDecimal qty;
+        BigDecimal price;
+        try {
+            qty = new BigDecimal(req.qty());
+            price = req.price() != null && !req.price().isBlank() ? new BigDecimal(req.price()) : null;
+        } catch (NumberFormatException e) {
+            return ResponseEntity.badRequest().body(new OpResponse(false, "qty/price: некорректное число"));
+        }
+        return respond(service.closePartial(id, req.type(), qty, price));
     }
 
     private ResponseEntity<OpResponse> respond(PositionOpsService.OpResult result) {

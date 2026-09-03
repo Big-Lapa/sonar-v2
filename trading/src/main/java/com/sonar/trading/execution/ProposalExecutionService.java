@@ -2,12 +2,16 @@ package com.sonar.trading.execution;
 
 import com.sonar.trading.config.AccountProps;
 import com.sonar.trading.config.AccountRegistry;
+import com.sonar.trading.domain.entity.AccountRiskEntity;
+import com.sonar.trading.domain.entity.DailyBaselineEntity;
 import com.sonar.trading.domain.entity.OrderCommandEntity;
 import com.sonar.trading.domain.entity.OrderEntity;
 import com.sonar.trading.domain.entity.FillEntity;
 import com.sonar.trading.domain.entity.PositionEntity;
 import com.sonar.trading.domain.entity.ProposalEntity;
 import com.sonar.trading.domain.entity.SignalInboxEntity;
+import com.sonar.trading.domain.repository.AccountRiskRepository;
+import com.sonar.trading.domain.repository.DailyBaselineRepository;
 import com.sonar.trading.domain.repository.FillRepository;
 import com.sonar.trading.domain.repository.OrderCommandRepository;
 import com.sonar.trading.domain.repository.OrderRepository;
@@ -24,12 +28,15 @@ import com.sonar.trading.exchange.model.OrderIntent;
 import com.sonar.trading.exchange.spi.ExecutionAdapter;
 import com.sonar.trading.execution.adapter.ExecutionAdapterRegistry;
 import com.sonar.trading.risk.AccountLegPreview;
+import com.sonar.trading.risk.AccountRiskProfile;
 import com.sonar.trading.risk.ProposalPreviewService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -62,12 +69,16 @@ public class ProposalExecutionService {
     private final ExecutionAdapterRegistry adapters;
     private final StopGuard stopGuard;
     private final ProposalClaimer claimer;
+    private final AccountRiskRepository accountRiskRepository;
+    private final DailyBaselineRepository dailyBaselineRepository;
 
     public ProposalExecutionService(ProposalRepository proposals, AccountRegistry accountRegistry,
                                     ProposalPreviewService previewService, PositionRepository positionRepository,
                                     OrderCommandRepository orderCommandRepository, OrderRepository orderRepository,
                                     FillRepository fillRepository, SignalInboxRepository signalInboxRepository,
-                                    ExecutionAdapterRegistry adapters, StopGuard stopGuard, ProposalClaimer claimer) {
+                                    ExecutionAdapterRegistry adapters, StopGuard stopGuard, ProposalClaimer claimer,
+                                    AccountRiskRepository accountRiskRepository,
+                                    DailyBaselineRepository dailyBaselineRepository) {
         this.proposals = proposals;
         this.accountRegistry = accountRegistry;
         this.previewService = previewService;
@@ -79,6 +90,8 @@ public class ProposalExecutionService {
         this.adapters = adapters;
         this.stopGuard = stopGuard;
         this.claimer = claimer;
+        this.accountRiskRepository = accountRiskRepository;
+        this.dailyBaselineRepository = dailyBaselineRepository;
     }
 
     public sealed interface ConfirmOutcome {
@@ -101,10 +114,16 @@ public class ProposalExecutionService {
         BigDecimal sl = new BigDecimal(proposal.getSlPrice());
         BigDecimal tp = new BigDecimal(proposal.getTpPrice());
 
-        String driftReason = checkPriceDrift(proposal.getSymbol(), entry);
-        if (driftReason != null) {
-            log.warn("[{}] confirm aborted: {}", proposalId, driftReason);
-            return new ConfirmOutcome.Aborted(driftReason);
+        // The drift gate exists to catch a stale MARKET confirm (price moved since preview) — it
+        // doesn't apply to a LIMIT entry, whose whole point is a price deliberately away from
+        // market; comparing it to the live price would abort perfectly normal limit orders.
+        boolean isLimit = "LIMIT".equals(proposal.getOrderType());
+        if (!isLimit) {
+            String driftReason = checkPriceDrift(proposal.getSymbol(), entry);
+            if (driftReason != null) {
+                log.warn("[{}] confirm aborted: {}", proposalId, driftReason);
+                return new ConfirmOutcome.Aborted(driftReason);
+            }
         }
 
         if (!claimer.claim(proposalId)) {
@@ -183,6 +202,34 @@ public class ProposalExecutionService {
         }
         String exchangeLabel = account.exchange().toUpperCase(java.util.Locale.ROOT);
 
+        // Adding to an already-open position ("доливка"): the incremental entry order carries no
+        // TP/SL attachment. Bybit's stop is position-level and already covers the combined qty
+        // untouched; BingX's attachment would otherwise create a SECOND reduce-only order sized to
+        // just this increment, leaving the original stop covering only the old qty. The BingX
+        // resize (cancel old, place one fresh pair sized to the new total) happens below, after
+        // the fill, once the combined qty is known.
+        //
+        // entryPrice/quantity null-guarded: a reused-but-broken row (e.g. a crash mid add-on left a
+        // DB write pending — see the class javadoc) must fall back to treating this as a fresh open
+        // rather than NPE deep inside the weighted-average math below, after the exchange order has
+        // already filled.
+        PositionEntity existingPosition = positionRepository.findByAccountIdAndSymbol(accountId, proposal.getSymbol())
+                .orElse(null);
+        boolean isAddOn = existingPosition != null && "OPEN".equals(existingPosition.getStatus())
+                && existingPosition.getEntryPrice() != null
+                && existingPosition.getQuantity() != null && existingPosition.getQuantity().signum() > 0;
+
+        // Cap the position's COMBINED notional/leverage against the account's own caps, not just
+        // this leg's — sizeManual/size only ever clamp the notional of the single order being
+        // sized, so N add-ons at the per-order cap would otherwise sum to N times the account limit
+        // with nothing in the pipeline ever noticing.
+        if (isAddOn) {
+            String rejectReason = checkAddOnCaps(accountId, existingPosition, leg.qty(), new BigDecimal(proposal.getEntryPrice()));
+            if (rejectReason != null) {
+                return ExecutionLegResult.failed(accountId, rejectReason);
+            }
+        }
+
         String idempotencyKey = proposal.getProposalId();
         if (signalInboxRepository.findByIdempotencyKeyAndAccountId(idempotencyKey, accountId).isPresent()) {
             return ExecutionLegResult.failed(accountId, "уже обрабатывалось (idempotency)");
@@ -190,29 +237,22 @@ public class ProposalExecutionService {
         signalInboxRepository.save(new SignalInboxEntity(idempotencyKey, accountId, idempotencyKey,
                 System.currentTimeMillis()));
 
+        boolean isLimit = "LIMIT".equals(proposal.getOrderType());
+        BigDecimal limitPrice = isLimit ? new BigDecimal(proposal.getLimitPrice()) : null;
+
         String clientOrderId = shortId(proposal.getProposalId()) + "-" + accountId;
         String commandId = UUID.randomUUID().toString();
         orderCommandRepository.save(new OrderCommandEntity(commandId, accountId, proposal.getProposalId(),
-                clientOrderId, exchangeLabel, proposal.getSymbol(), "LONG", "OPEN", leg.qty(), "MARKET",
-                System.currentTimeMillis()));
+                clientOrderId, exchangeLabel, proposal.getSymbol(), "LONG", "OPEN", leg.qty(),
+                isLimit ? "LIMIT" : "MARKET", System.currentTimeMillis()));
 
         OrderEntity order = new OrderEntity(clientOrderId, commandId, accountId, exchangeLabel, proposal.getSymbol(),
                 "LONG", "OPEN", leg.qty(), System.currentTimeMillis());
         order = orderRepository.save(order);
 
-        // Adding to an already-open position ("доливка"): the incremental entry order carries no
-        // TP/SL attachment. Bybit's stop is position-level and already covers the combined qty
-        // untouched; BingX's attachment would otherwise create a SECOND reduce-only order sized to
-        // just this increment, leaving the original stop covering only the old qty. The BingX
-        // resize (cancel old, place one fresh pair sized to the new total) happens below, after
-        // the fill, once the combined qty is known.
-        PositionEntity existingPosition = positionRepository.findByAccountIdAndSymbol(accountId, proposal.getSymbol())
-                .orElse(null);
-        boolean isAddOn = existingPosition != null && "OPEN".equals(existingPosition.getStatus());
-
         AdapterOrderRequest request = new AdapterOrderRequest(proposal.getSymbol(), AdapterOrderSide.BUY,
-                AdapterOrderType.MARKET, leg.qty(), null, clientOrderId, OrderIntent.ENTRY, null,
-                isAddOn ? null : new TpSlAttachment(tp, sl), proposal.getLeverage());
+                isLimit ? AdapterOrderType.LIMIT : AdapterOrderType.MARKET, leg.qty(), limitPrice, clientOrderId,
+                OrderIntent.ENTRY, null, isAddOn ? null : new TpSlAttachment(tp, sl), proposal.getLeverage());
 
         AdapterOrderResult result;
         try {
@@ -239,6 +279,22 @@ public class ProposalExecutionService {
             } catch (RuntimeException e) {
                 log.warn("[{}] getOrderStatus attempt {} failed: {}", accountId, attempts, e.toString());
             }
+        }
+
+        // A LIMIT order still resting after the short poll window is normal (it's away from
+        // market on purpose) — leave it live on the exchange, don't cancel it and don't report it
+        // as a failure. Nothing gets recorded as a position until it actually fills; the
+        // reconciliation poller (stage 4) is what picks that up, same as any other exchange-side
+        // fill this system didn't directly witness.
+        if (isLimit && result.state() != AdapterOrderState.FILLED
+                && result.state() != AdapterOrderState.REJECTED
+                && result.state() != AdapterOrderState.CANCELED
+                && result.state() != AdapterOrderState.FAILED) {
+            order.applyResult(result.exchangeOrderId(), result.state().name(), null, null, null, null, null,
+                    System.currentTimeMillis());
+            orderRepository.save(order);
+            markInboxDone(idempotencyKey, accountId);
+            return ExecutionLegResult.limitWorking(accountId);
         }
 
         order.applyResult(result.exchangeOrderId(), result.state().name(), result.filledQty(),
@@ -274,7 +330,6 @@ public class ProposalExecutionService {
         position.setEntryPrice(finalEntry);
         position.setStatus("OPEN");
         position.setUpdatedAt(System.currentTimeMillis());
-        position.setPlannedRiskAmount(leg.riskUsd() != null ? leg.riskUsd().toPlainString() : null);
 
         boolean stopVerified;
         if (isAddOn && "bingx".equalsIgnoreCase(account.exchange())) {
@@ -306,10 +361,63 @@ public class ProposalExecutionService {
             // verify it actually landed rather than trusting the attach silently succeeded.
             stopVerified = stopGuard.verifyAndRepair(account.exchange(), proposal.getSymbol(), finalQty, sl);
         }
+
+        // plannedRiskAmount feeds openPortfolioRisk (ProposalPreviewService sums it across open
+        // positions) — on an add-on this MUST be recomputed from the combined qty and whichever
+        // sl actually ended up active (position.getSlPrice(), set above per-venue), never taken
+        // from leg.riskUsd() alone: that's only the risk of the increment, and overwriting the
+        // position's total risk with just the increment's risk would understate the real portfolio
+        // risk and let a later entry pass a gate it shouldn't.
+        if (isAddOn) {
+            BigDecimal effectiveSl = position.getSlPrice() != null ? new BigDecimal(position.getSlPrice()) : null;
+            BigDecimal riskAmount = effectiveSl != null ? finalQty.multiply(finalEntry.subtract(effectiveSl).abs()) : null;
+            position.setPlannedRiskAmount(riskAmount != null ? riskAmount.toPlainString() : null);
+        } else {
+            position.setPlannedRiskAmount(leg.riskUsd() != null ? leg.riskUsd().toPlainString() : null);
+        }
         positionRepository.save(position);
 
         markInboxDone(idempotencyKey, accountId);
         return ExecutionLegResult.filled(accountId, filledQty, avgPrice, sl, tp, leg.riskUsd(), stopVerified);
+    }
+
+    /**
+     * Null (approved) or a rejection reason. Mirrors the caps {@link com.sonar.trading.sizing.RiskBasedPositionSizer}
+     * already enforces on a single order, but against the position's COMBINED size — {@code sizeManual}
+     * has no notion of "there's already $900 open on this symbol", so ten $1000 add-ons under a
+     * $1000-per-order cap would otherwise sum to $10 000 with nothing in the pipeline noticing.
+     */
+    private String checkAddOnCaps(String accountId, PositionEntity existingPosition, BigDecimal legQty, BigDecimal entry) {
+        AccountRiskEntity riskEntity = accountRiskRepository.findById(accountId).orElse(null);
+        if (riskEntity == null) {
+            return null; // no profile row yet — same as previewOne, shouldn't happen post-preview
+        }
+        AccountRiskProfile profile = AccountRiskProfile.from(riskEntity);
+        BigDecimal existingNotional = existingPosition.getQuantity().multiply(existingPosition.getEntryPrice());
+        BigDecimal combinedNotional = existingNotional.add(legQty.multiply(entry));
+
+        if (combinedNotional.compareTo(profile.maxPositionNotional()) > 0) {
+            return "доливка превысит лимит аккаунта по нотионалу: было $" + existingNotional.setScale(2, java.math.RoundingMode.HALF_UP)
+                    + " + новое $" + legQty.multiply(entry).setScale(2, java.math.RoundingMode.HALF_UP)
+                    + " = $" + combinedNotional.setScale(2, java.math.RoundingMode.HALF_UP)
+                    + " > лимит $" + profile.maxPositionNotional().setScale(2, java.math.RoundingMode.HALF_UP);
+        }
+
+        LocalDate today = LocalDate.now(ZoneOffset.UTC);
+        DailyBaselineEntity baseline = dailyBaselineRepository.findByIdAccountIdAndIdTradingDay(accountId, today)
+                .orElse(null);
+        if (baseline != null) {
+            BigDecimal equity = new BigDecimal(baseline.getEquityAtOpen());
+            if (equity.signum() > 0) {
+                BigDecimal maxLeverageNotional = equity.multiply(BigDecimal.valueOf(profile.maxLeverage()));
+                if (combinedNotional.compareTo(maxLeverageNotional) > 0) {
+                    return "доливка превысит лимит аккаунта по плечу: итоговый нотионал $"
+                            + combinedNotional.setScale(2, java.math.RoundingMode.HALF_UP)
+                            + " > equity×maxLeverage $" + maxLeverageNotional.setScale(2, java.math.RoundingMode.HALF_UP);
+                }
+            }
+        }
+        return null;
     }
 
     private void markInboxDone(String idempotencyKey, String accountId) {

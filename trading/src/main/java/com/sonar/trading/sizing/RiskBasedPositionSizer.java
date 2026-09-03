@@ -98,19 +98,23 @@ public class RiskBasedPositionSizer {
             return new SizingResult.Rejected("SL совпадает с ценой входа");
         }
 
-        BigDecimal qty = notional.divide(entry, SCALE, RoundingMode.DOWN);
-
+        // The operator typed this notional in on purpose — unlike size()'s risk%-derived qty, a cap
+        // here isn't a rounding nuisance to smooth over, it's their explicit input turning out to
+        // be too big. Reject with the numbers rather than silently opening 1/5th of what they asked
+        // for and letting them find out from the preview qty alone.
         if (notional.compareTo(profile.maxPositionNotional()) > 0) {
-            qty = profile.maxPositionNotional().divide(entry, SCALE, RoundingMode.DOWN);
+            return new SizingResult.Rejected("нотионал $" + notional.setScale(2, RoundingMode.HALF_UP)
+                    + " превышает лимит аккаунта по позиции $" + profile.maxPositionNotional().setScale(2, RoundingMode.HALF_UP));
         }
         BigDecimal maxLeverageNotional = equity != null && equity.signum() > 0
                 ? equity.multiply(BigDecimal.valueOf(profile.maxLeverage())) : null;
-        if (maxLeverageNotional != null) {
-            BigDecimal currentNotional = qty.multiply(entry);
-            if (currentNotional.compareTo(maxLeverageNotional) > 0) {
-                qty = maxLeverageNotional.divide(entry, SCALE, RoundingMode.DOWN);
-            }
+        if (maxLeverageNotional != null && notional.compareTo(maxLeverageNotional) > 0) {
+            return new SizingResult.Rejected("нотионал $" + notional.setScale(2, RoundingMode.HALF_UP)
+                    + " превышает лимит аккаунта по плечу (equity×maxLeverage $"
+                    + maxLeverageNotional.setScale(2, RoundingMode.HALF_UP) + ")");
         }
+
+        BigDecimal qty = notional.divide(entry, SCALE, RoundingMode.DOWN);
 
         BigDecimal normalizedQty;
         try {

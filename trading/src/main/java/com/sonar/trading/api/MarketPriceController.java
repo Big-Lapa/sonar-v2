@@ -42,7 +42,7 @@ public class MarketPriceController {
             return new PriceResponse(symbol, exchange, price.toPlainString(), null);
         } catch (RuntimeException e) {
             log.warn("[{}] getMarkPrice({}) failed: {}", exchange, symbol, e.toString());
-            return new PriceResponse(symbol, exchange, null, e.getMessage());
+            return new PriceResponse(symbol, exchange, null, "цена недоступна");
         }
     }
 }

@@ -61,13 +61,24 @@ public class QuantityNormalizer {
      * correct for an entry (a tradeable position beats none), wrong here: bumping a requested
      * 5%-close up to a full step could silently close far more than the operator asked for,
      * especially on a small remaining position where one step IS the whole thing. Returns null
-     * (not zero) when the floored quantity is a whole step below the requested one — the caller
-     * decides how to report "your %/qty rounds down below the exchange's minimum step".
+     * when the floored quantity is zero/negative, OR below the exchange's minQty/minNotional floor
+     * for a close order — either way the exchange would reject it outright, and reporting "smaller
+     * than the exchange minimum" here is more honest than letting the order round-trip and fail.
      */
-    public BigDecimal floorForClose(String venue, String symbol, BigDecimal qty) {
+    public BigDecimal floorForClose(String venue, String symbol, BigDecimal qty, BigDecimal price) {
         SymbolRules rules = symbolRules.get(venue, symbol);
         BigDecimal floored = floorToStep(qty, rules.stepSize());
-        return (floored == null || floored.signum() <= 0) ? null : floored;
+        if (floored == null || floored.signum() <= 0) {
+            return null;
+        }
+        if (rules.minQty() != null && floored.compareTo(rules.minQty()) < 0) {
+            return null;
+        }
+        if (rules.minNotional() != null && price != null && price.signum() > 0
+                && floored.multiply(price).compareTo(rules.minNotional()) < 0) {
+            return null;
+        }
+        return floored;
     }
 
     private BigDecimal floorToStep(BigDecimal value, BigDecimal step) {

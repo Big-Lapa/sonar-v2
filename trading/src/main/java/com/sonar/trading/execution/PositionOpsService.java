@@ -12,6 +12,7 @@ import com.sonar.trading.exchange.model.AdapterOrderType;
 import com.sonar.trading.exchange.model.OrderIntent;
 import com.sonar.trading.exchange.spi.ExecutionAdapter;
 import com.sonar.trading.execution.adapter.ExecutionAdapterRegistry;
+import com.sonar.trading.reconciliation.AccountReaderRegistry;
 import com.sonar.trading.sizing.QuantityNormalizer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -39,15 +40,17 @@ public class PositionOpsService {
     private final ExecutionAdapterRegistry adapters;
     private final NotificationRepository notificationRepository;
     private final QuantityNormalizer quantityNormalizer;
+    private final AccountReaderRegistry accountReaders;
 
     public PositionOpsService(PositionRepository positionRepository, AccountRegistry accountRegistry,
                               ExecutionAdapterRegistry adapters, NotificationRepository notificationRepository,
-                              QuantityNormalizer quantityNormalizer) {
+                              QuantityNormalizer quantityNormalizer, AccountReaderRegistry accountReaders) {
         this.positionRepository = positionRepository;
         this.accountRegistry = accountRegistry;
         this.adapters = adapters;
         this.notificationRepository = notificationRepository;
         this.quantityNormalizer = quantityNormalizer;
+        this.accountReaders = accountReaders;
     }
 
     public sealed interface OpResult {
@@ -116,17 +119,34 @@ public class PositionOpsService {
         if (limit && (price == null || price.signum() <= 0)) {
             return new OpResult.Failed("price обязателен для limit-закрытия");
         }
-        BigDecimal clampedQty = qty.min(position.getQuantity());
 
         var account = accountRegistry.byId(position.getAccountId()).orElse(null);
         ExecutionAdapter adapter = account != null ? adapters.forExchange(account.exchange()).orElse(null) : null;
         if (adapter == null) {
             return new OpResult.Failed("venue аккаунта '" + position.getAccountId() + "' не подключена");
         }
+
+        // Clamp against the LIVE exchange qty, not the DB row: the DB is updated by the minute
+        // poller (lags up to 60s) and closePartial deliberately doesn't touch it, so two fast
+        // closes back-to-back (or a resting limit-close plus a second close) would otherwise both
+        // clamp against the same stale qty and together send reduce-only for more than the actual
+        // position — on a venue where reduceOnly is enforced loosely for limit orders that can flip
+        // the position instead of just failing.
+        BigDecimal liveQty = accountReaders.forExchange(account.exchange())
+                .map(reader -> reader.getPositions().stream()
+                        .filter(p -> position.getSymbol().equals(p.symbol()) && !p.isFlat())
+                        .findFirst().map(p -> p.qty()).orElse(BigDecimal.ZERO))
+                .orElse(position.getQuantity());
+        if (liveQty.signum() <= 0) {
+            return new OpResult.Failed("позиция уже закрыта на бирже");
+        }
+        BigDecimal clampedQty = qty.min(liveQty);
+
         // Floor (never bump up) to the exchange's lot step — a requested %/qty that rounds down
         // below one step must fail loudly, not silently close more (or nothing at all, which is
         // what most exchanges do when they just reject a misaligned qty outright).
-        BigDecimal normalizedQty = quantityNormalizer.floorForClose(account.exchange(), position.getSymbol(), clampedQty);
+        BigDecimal normalizedQty = quantityNormalizer.floorForClose(account.exchange(), position.getSymbol(),
+                clampedQty, price != null ? price : position.getEntryPrice());
         if (normalizedQty == null) {
             return new OpResult.Failed("qty " + clampedQty + " меньше шага лота биржи для " + position.getSymbol());
         }
@@ -137,6 +157,28 @@ public class PositionOpsService {
                     limit ? price : null, "cl-" + UUID.randomUUID().toString().replace("-", "").substring(0, 20),
                     OrderIntent.CLOSE_REDUCE);
             AdapterOrderResult result = adapter.placeOrder(request);
+
+            // BingX's SL/TP are separate reduce-only orders still sized to the pre-close qty —
+            // resize them to what remains so they don't guard a bigger volume than actually exists
+            // (same asymmetry ProposalExecutionService's add-on path already handles for entries).
+            // Bybit's stop is position-level and shrinks with the position automatically.
+            BigDecimal remaining = liveQty.subtract(clampedQty);
+            if ("bingx".equalsIgnoreCase(account.exchange()) && remaining.signum() > 0
+                    && position.getSlPrice() != null && position.getTpPrice() != null) {
+                try {
+                    adapter.cancelReduceOnlyOrder(position.getSymbol(), true);
+                    adapter.cancelReduceOnlyOrder(position.getSymbol(), false);
+                    adapter.placeReduceOnlyStop(position.getSymbol(), remaining, new BigDecimal(position.getSlPrice()));
+                    adapter.placeReduceOnlyTakeProfit(position.getSymbol(), remaining, new BigDecimal(position.getTpPrice()));
+                } catch (RuntimeException e) {
+                    log.error("[{}] SL/TP resize after partial close failed for {}: {}",
+                            position.getAccountId(), position.getSymbol(), e.toString());
+                    notificationRepository.save(new NotificationEntity(NotificationEntity.MISSING_STOP,
+                            position.getAccountId(), position.getSymbol(),
+                            "SL/TP после частичного закрытия не пересчитан, проверить защиту позиции: " + e.getMessage()));
+                }
+            }
+
             return new OpResult.Ok((limit ? "limit-заявка на закрытие " : "закрытие market ")
                     + clampedQty + " " + position.getSymbol() + " отправлено (state=" + result.state() + ")"
                     + ", подтверждение придёт с поллером");
