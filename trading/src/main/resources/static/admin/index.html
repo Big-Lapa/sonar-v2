@@ -31,7 +31,8 @@
   .slider-shell { position: relative; height: 0.5rem; }
   .slider-track { position: absolute; inset: 0; border-radius: 9999px; background: var(--color-base-300); }
   .slider-fill { position: absolute; inset: 0 auto 0 0; border-radius: 9999px; background: var(--color-error); width: 100%; }
-  .slider-input { position: absolute; inset: -0.5rem 0; width: 100%; margin: 0; appearance: none; background: transparent; cursor: pointer; }
+  .slider-input { position: absolute; inset: -0.5rem 0; width: 100%; margin: 0; appearance: none; background: transparent; cursor: pointer; outline: none; }
+  .slider-input:focus, .slider-input:focus-visible { outline: none; box-shadow: none; }
   .slider-input::-webkit-slider-runnable-track { background: transparent; height: 0.5rem; }
   .slider-input::-webkit-slider-thumb { appearance: none; width: 16px; height: 16px; border-radius: 9999px; background: #fff; border: 3px solid var(--color-error); margin-top: -4px; cursor: pointer; }
   .slider-input::-moz-range-track { background: transparent; height: 0.5rem; border: none; }
@@ -232,11 +233,12 @@
               <th class="text-right">Маржа</th>
               <th class="text-right">Entry</th>
               <th class="text-right">Mark</th>
+              <th class="text-right">SL / TP</th>
               <th class="sortable text-right" data-key="upnl">uPnL ⇅</th>
               <th class="text-center">Закрыть</th>
             </tr>
           </thead>
-          <tbody id="posTbody"><tr><td colspan="11" class="text-center text-base-content/40 py-6">загрузка…</td></tr></tbody>
+          <tbody id="posTbody"><tr><td colspan="12" class="text-center text-base-content/40 py-6">загрузка…</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -433,12 +435,12 @@
         const upnl = parseFloat(b.unrealizedPnl);
         card.querySelector('div:last-child').outerHTML = `
           <div class="stats stats-horizontal bg-transparent p-0">
-            <div class="stat p-0 pr-4">
+            <div class="stat py-0 pl-1 pr-4">
               <div class="stat-title text-xs">Equity</div>
               <div class="stat-value text-lg mono">${fmt(b.equity ?? b.balance)}</div>
               <div class="stat-desc text-xs">${b.asset ?? ''}</div>
             </div>
-            <div class="stat p-0 pl-4">
+            <div class="stat py-0 pl-4 pr-1">
               <div class="stat-title text-xs">uPnL</div>
               <div class="stat-value text-lg mono ${Number.isFinite(upnl) ? (upnl >= 0 ? 'pnl-pos' : 'pnl-neg') : ''}">${Number.isFinite(upnl) ? (upnl >= 0 ? '+' : '') + fmt(upnl) : '—'}</div>
             </div>
@@ -684,7 +686,7 @@
     try {
       dbRows = await api('/api/v1/trade/positions');
     } catch (e) {
-      tbody.innerHTML = `<tr><td colspan="11" class="text-error text-xs text-center py-4">${e.message}</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="12" class="text-error text-xs text-center py-4">${e.message}</td></tr>`;
       return;
     }
     const liveByAccount = {};
@@ -709,6 +711,8 @@
         positionId: p.id, accountId: p.accountId, exchange, symbol: p.symbol, side: p.side,
         qty: live.qty, entry: parseFloat(p.entryPrice), mark: live.markPrice, leverage: live.leverage,
         notional, margin, upnl: live.unrealizedPnl,
+        sl: p.slPrice != null ? parseFloat(p.slPrice) : null,
+        tp: p.tpPrice != null ? parseFloat(p.tpPrice) : null,
       };
     }).filter(Boolean);
     populateSymbolFilter();
@@ -750,9 +754,10 @@
         <td class="text-right mono text-base-content/60">${p.margin != null ? '$' + fmt(p.margin) : '—'}</td>
         <td class="text-right mono">${fmt(p.entry)}</td>
         <td class="text-right mono">${p.mark != null ? fmt(p.mark) : '—'}</td>
+        <td class="text-right mono text-xs"><span class="text-error">${p.sl != null ? fmt(p.sl) : '—'}</span> / <span class="text-success">${p.tp != null ? fmt(p.tp) : '—'}</span></td>
         <td class="text-right mono ${p.upnl != null ? (p.upnl >= 0 ? 'pnl-pos' : 'pnl-neg') : ''}">${p.upnl != null ? (p.upnl >= 0 ? '+' : '') + fmt(p.upnl) : '—'}</td>
         <td class="text-center"><button class="btn btn-xs btn-outline btn-error open-close" data-position-id="${p.positionId}">Закрыть</button></td>
-      </tr>`).join('') || '<tr><td colspan="11" class="text-center text-base-content/40 py-6">нет открытых позиций</td></tr>';
+      </tr>`).join('') || '<tr><td colspan="12" class="text-center text-base-content/40 py-6">нет открытых позиций</td></tr>';
 
     tbody.querySelectorAll('.open-close').forEach(b => b.addEventListener('click', () => openCloseModal(+b.dataset.positionId)));
     tbody.querySelectorAll('.pos-select').forEach(cb => cb.addEventListener('change', updateBulkBar));
