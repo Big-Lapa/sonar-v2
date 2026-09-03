@@ -31,12 +31,13 @@
   .slider-shell { position: relative; height: 0.5rem; }
   .slider-track { position: absolute; inset: 0; border-radius: 9999px; background: var(--color-base-300); }
   .slider-fill { position: absolute; inset: 0 auto 0 0; border-radius: 9999px; background: var(--color-error); width: 100%; }
-  .slider-input { position: absolute; inset: -0.5rem 0; width: 100%; margin: 0; appearance: none; background: transparent; cursor: pointer; outline: none; }
-  .slider-input:focus, .slider-input:focus-visible { outline: none; box-shadow: none; }
-  .slider-input::-webkit-slider-runnable-track { background: transparent; height: 0.5rem; }
-  .slider-input::-webkit-slider-thumb { appearance: none; width: 16px; height: 16px; border-radius: 9999px; background: #fff; border: 3px solid var(--color-error); margin-top: -4px; cursor: pointer; }
-  .slider-input::-moz-range-track { background: transparent; height: 0.5rem; border: none; }
-  .slider-input::-moz-range-thumb { width: 16px; height: 16px; border-radius: 9999px; background: #fff; border: 3px solid var(--color-error); cursor: pointer; }
+  .slider-input { position: absolute; inset: -0.5rem 0; width: 100%; margin: 0; appearance: none; background: transparent !important; cursor: pointer; outline: none !important; border: none !important; box-shadow: none !important; }
+  .slider-input:focus, .slider-input:focus-visible { outline: none !important; box-shadow: none !important; }
+  .slider-input::-webkit-slider-runnable-track { background: transparent !important; height: 0.5rem !important; border: none !important; box-shadow: none !important; }
+  .slider-input::-webkit-slider-thumb { appearance: none; width: 16px; height: 16px; border-radius: 9999px; background: #fff; border: 3px solid var(--color-error); margin-top: -4px; cursor: pointer; box-shadow: none !important; }
+  .slider-input::-moz-range-track { background: transparent !important; height: 0.5rem !important; border: none !important; box-shadow: none !important; }
+  .slider-input::-moz-range-thumb { width: 16px; height: 16px; border-radius: 9999px; background: #fff; border: 3px solid var(--color-error); cursor: pointer; box-shadow: none !important; }
+  .slider-input::-moz-range-progress { background: transparent !important; }
 </style>
 </head>
 <body class="min-h-screen text-base-content">
