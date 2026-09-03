@@ -60,6 +60,19 @@ public class BybitExecutionAdapter implements ExecutionAdapter {
     @Override
     public AdapterOrderResult placeOrder(AdapterOrderRequest request) {
         String symbol = BybitOrderMapper.toBybitSymbol(request.symbol());
+
+        if (request.intent() == OrderIntent.ENTRY && request.leverage() != null) {
+            // Best-effort: a leverage-set hiccup shouldn't block the entry, but it does mean the
+            // margin the panel showed the operator may not match what actually got used — logged
+            // loudly rather than silently proceeding on whatever leverage was already set.
+            try {
+                gateway.setLeverage(symbol, request.leverage());
+            } catch (RuntimeException e) {
+                log.warn("[LIVE] setLeverage {}x failed for {}, proceeding with existing exchange leverage: {}",
+                        request.leverage(), symbol, e.toString());
+            }
+        }
+
         BybitOrderSide side = request.side() == AdapterOrderSide.BUY ? BybitOrderSide.Buy : BybitOrderSide.Sell;
         BybitOrderType type = request.type() == AdapterOrderType.LIMIT ? BybitOrderType.Limit : BybitOrderType.Market;
         boolean limit = type == BybitOrderType.Limit;

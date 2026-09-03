@@ -34,6 +34,14 @@ public interface BybitFuturesClient extends ExchangeRestClient {
      * exchange, which is what makes this call safe for the gateway to retry.
      */
     Map<String, Object> setTradingStop(String symbol, String stopLoss, String takeProfit, BybitTriggerBy triggerBy);
+
+    /**
+     * {@code /v5/position/set-leverage} — one-way mode requires {@code buyLeverage == sellLeverage},
+     * so both are set to the same value. Bybit returns retCode 110043 ("leverage not modified")
+     * when the position is already at that leverage; treated as success, not an error.
+     */
+    Map<String, Object> setLeverage(String symbol, int leverage);
+
     /** All open orders for a symbol, including untriggered conditional TP/SL orders. */
     Map<String, Object> getOpenOrders(String symbol);
 

@@ -59,4 +59,9 @@ public class BybitExecutionGateway extends ResilientExecutionGateway implements 
     public Map<String, Object> closeAllPositions(String symbol) {
         return invoke(OrderIntent.CLOSE_REDUCE, "close", true, () -> client.closeAllPositions(symbol));
     }
+
+    /** Venue-typed — not on {@link ExecutionGateway}. Runs as ENTRY: it's part of opening a position. */
+    public Map<String, Object> setLeverage(String symbol, int leverage) {
+        return invoke(OrderIntent.ENTRY, "leverage", false, () -> client.setLeverage(symbol, leverage));
+    }
 }

@@ -65,6 +65,19 @@ public class LiveExecutionAdapter implements ExecutionAdapter {
     @Override
     public AdapterOrderResult placeOrder(AdapterOrderRequest request) {
         String bingxSymbol = BingxOrderMapper.toBingxSymbol(request.symbol());
+
+        if (request.intent() == OrderIntent.ENTRY && request.leverage() != null) {
+            // Best-effort: a leverage-set hiccup shouldn't block the entry, but it does mean the
+            // margin the panel showed the operator may not match what actually got used — logged
+            // loudly rather than silently proceeding on whatever leverage was already set.
+            try {
+                gateway.setLeverage(bingxSymbol, "LONG", request.leverage());
+            } catch (RuntimeException e) {
+                log.warn("[LIVE] setLeverage {}x failed for {}, proceeding with existing exchange leverage: {}",
+                        request.leverage(), bingxSymbol, e.toString());
+            }
+        }
+
         BingxOrderSide side = BingxOrderSide.valueOf(request.side().name());
         BingxOrderType type = BingxOrderType.valueOf(request.type().name());
         boolean limit = request.type() == AdapterOrderType.LIMIT;
