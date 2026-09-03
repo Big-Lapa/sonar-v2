@@ -49,11 +49,20 @@ public class ProposalEntity {
     @Column(name = "account_id", length = 100)
     private String accountId;
 
+    /** Manual trading panel: notional in USD for qty = notional / entry sizing. Null = risk%-based. */
+    @Column(name = "notional", length = 30)
+    private String notional;
+
+    /** Leverage to set on the exchange before entry. Null = don't touch exchange leverage. */
+    @Column(name = "leverage")
+    private Integer leverage;
+
     protected ProposalEntity() {}
 
     public static ProposalEntity pending(String proposalId, String symbol, String side,
                                           String entryPrice, String slPrice, String tpPrice,
-                                          String rationale, long createdAt, String accountId) {
+                                          String rationale, long createdAt, String accountId,
+                                          String notional, Integer leverage) {
         ProposalEntity p = new ProposalEntity();
         p.proposalId = proposalId;
         p.symbol = symbol;
@@ -65,6 +74,8 @@ public class ProposalEntity {
         p.status = "PENDING";
         p.createdAt = createdAt;
         p.accountId = accountId;
+        p.notional = notional;
+        p.leverage = leverage;
         return p;
     }
 
@@ -83,4 +94,6 @@ public class ProposalEntity {
     public Long getTgMessageId() { return tgMessageId; }
     public void setTgMessageId(Long tgMessageId) { this.tgMessageId = tgMessageId; }
     public String getAccountId() { return accountId; }
+    public String getNotional() { return notional; }
+    public Integer getLeverage() { return leverage; }
 }

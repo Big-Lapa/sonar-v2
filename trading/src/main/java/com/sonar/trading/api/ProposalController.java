@@ -32,8 +32,14 @@ public class ProposalController {
         this.previewService = previewService;
     }
 
+    /**
+     * @param notional manual-panel sizing: qty = notional / entryPrice. Null keeps the risk%-based
+     *                 path (previous behaviour).
+     * @param leverage exchange leverage to set before entry. Null leaves whatever's already set.
+     */
     public record CreateProposalRequest(
-            String accountId, String symbol, String entryPrice, String slPrice, String tpPrice, String rationale) {}
+            String accountId, String symbol, String entryPrice, String slPrice, String tpPrice, String rationale,
+            String notional, Integer leverage) {}
 
     public record ProposalResponse(String proposalId, List<AccountLegPreview> accounts) {}
 
@@ -46,12 +52,13 @@ public class ProposalController {
         String proposalId = UUID.randomUUID().toString();
         ProposalEntity entity = ProposalEntity.pending(proposalId, req.symbol(), "LONG",
                 req.entryPrice(), req.slPrice(), req.tpPrice(), req.rationale(),
-                System.currentTimeMillis(), req.accountId());
+                System.currentTimeMillis(), req.accountId(), req.notional(), req.leverage());
         proposals.save(entity);
 
         BigDecimal entry = new BigDecimal(req.entryPrice());
         BigDecimal sl = new BigDecimal(req.slPrice());
-        List<AccountLegPreview> legs = previewService.preview(req.symbol(), entry, sl, req.accountId());
+        BigDecimal manualNotional = req.notional() != null ? new BigDecimal(req.notional()) : null;
+        List<AccountLegPreview> legs = previewService.preview(req.symbol(), entry, sl, req.accountId(), manualNotional);
         return ResponseEntity.ok(new ProposalResponse(proposalId, legs));
     }
 

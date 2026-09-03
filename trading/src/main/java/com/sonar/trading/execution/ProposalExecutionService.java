@@ -112,7 +112,9 @@ public class ProposalExecutionService {
             return new ConfirmOutcome.AlreadyProcessed(rebuildReport(proposalId));
         }
 
-        List<AccountLegPreview> preview = previewService.preview(proposal.getSymbol(), entry, sl, proposal.getAccountId());
+        BigDecimal manualNotional = proposal.getNotional() != null ? new BigDecimal(proposal.getNotional()) : null;
+        List<AccountLegPreview> preview = previewService.preview(proposal.getSymbol(), entry, sl,
+                proposal.getAccountId(), manualNotional);
         List<ExecutionLegResult> results = new ArrayList<>();
         for (AccountLegPreview leg : preview) {
             results.add(executeLeg(proposal, leg, sl, tp));
@@ -200,7 +202,7 @@ public class ProposalExecutionService {
 
         AdapterOrderRequest request = new AdapterOrderRequest(proposal.getSymbol(), AdapterOrderSide.BUY,
                 AdapterOrderType.MARKET, leg.qty(), null, clientOrderId, OrderIntent.ENTRY, null,
-                new TpSlAttachment(tp, sl));
+                new TpSlAttachment(tp, sl), proposal.getLeverage());
 
         AdapterOrderResult result;
         try {

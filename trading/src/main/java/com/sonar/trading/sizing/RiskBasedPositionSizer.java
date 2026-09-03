@@ -79,4 +79,56 @@ public class RiskBasedPositionSizer {
         BigDecimal actualRisk = normalizedQty.multiply(slDistance);
         return new SizingResult.Approved(normalizedQty, normalizedNotional, actualRisk);
     }
+
+    /**
+     * Manual sizing (manual multi-exchange trading panel): {@code qty = notional / entry} directly
+     * — no risk% math, the operator picked the notional themselves. Still clamped against the
+     * account's own {@code maxPositionNotional}/{@code maxLeverage} caps and the exchange floor,
+     * same safety rails as {@link #size}, so a fat-fingered notional can't silently exceed the
+     * account's configured limits. {@code actualRisk} is informational (from the given SL), not
+     * something this method sized against.
+     */
+    public SizingResult sizeManual(AccountRiskProfile profile, String venue, String symbol,
+                                   BigDecimal equity, BigDecimal notional, BigDecimal entry, BigDecimal sl) {
+        if (notional == null || notional.signum() <= 0) {
+            return new SizingResult.Rejected("нотионал должен быть положительным");
+        }
+        BigDecimal slDistance = sl != null ? entry.subtract(sl).abs() : null;
+        if (sl != null && slDistance.signum() <= 0) {
+            return new SizingResult.Rejected("SL совпадает с ценой входа");
+        }
+
+        BigDecimal qty = notional.divide(entry, SCALE, RoundingMode.DOWN);
+
+        if (notional.compareTo(profile.maxPositionNotional()) > 0) {
+            qty = profile.maxPositionNotional().divide(entry, SCALE, RoundingMode.DOWN);
+        }
+        BigDecimal maxLeverageNotional = equity != null && equity.signum() > 0
+                ? equity.multiply(BigDecimal.valueOf(profile.maxLeverage())) : null;
+        if (maxLeverageNotional != null) {
+            BigDecimal currentNotional = qty.multiply(entry);
+            if (currentNotional.compareTo(maxLeverageNotional) > 0) {
+                qty = maxLeverageNotional.divide(entry, SCALE, RoundingMode.DOWN);
+            }
+        }
+
+        BigDecimal normalizedQty;
+        try {
+            normalizedQty = normalizer.normalize(venue, symbol, qty, entry);
+        } catch (IllegalArgumentException e) {
+            return new SizingResult.Rejected("не прошёл биржевые минималки: " + e.getMessage());
+        }
+
+        BigDecimal normalizedNotional = normalizedQty.multiply(entry);
+        BigDecimal notionalCap = maxLeverageNotional != null
+                ? profile.maxPositionNotional().min(maxLeverageNotional) : profile.maxPositionNotional();
+        if (normalizedNotional.compareTo(notionalCap) > 0) {
+            return new SizingResult.Rejected(
+                    "биржевой минимум лота (" + normalizedQty + ", notional $" + normalizedNotional.setScale(2, RoundingMode.HALF_UP)
+                            + ") превышает лимит аккаунта $" + notionalCap.setScale(2, RoundingMode.HALF_UP));
+        }
+
+        BigDecimal actualRisk = slDistance != null ? normalizedQty.multiply(slDistance) : null;
+        return new SizingResult.Approved(normalizedQty, normalizedNotional, actualRisk);
+    }
 }

@@ -59,22 +59,28 @@ public class ProposalPreviewService {
     /**
      * @param accountId targets exactly this account; null falls back to the legacy fan-out across
      *                  every account in the registry (kept for now, no current caller uses it).
+     * @param manualNotional manual-trading-panel sizing: {@code qty = notional / entry} instead of
+     *                       risk%-based sizing; null keeps the risk-based path. Risk GATES (auto
+     *                       -pause, cooldown, position limits, portfolio risk, drawdown) still run
+     *                       either way — only the qty formula changes.
      */
     @Transactional(readOnly = true)
-    public List<AccountLegPreview> preview(String symbol, BigDecimal entry, BigDecimal sl, String accountId) {
+    public List<AccountLegPreview> preview(String symbol, BigDecimal entry, BigDecimal sl, String accountId,
+                                           BigDecimal manualNotional) {
         if (accountId != null) {
             return accountRegistry.byId(accountId)
-                    .<List<AccountLegPreview>>map(account -> List.of(previewOne(account, symbol, entry, sl)))
+                    .<List<AccountLegPreview>>map(account -> List.of(previewOne(account, symbol, entry, sl, manualNotional)))
                     .orElseGet(() -> List.of(AccountLegPreview.rejected(accountId, "аккаунт не найден в реестре")));
         }
         List<AccountLegPreview> legs = new ArrayList<>();
         for (AccountProps account : accountRegistry.all()) {
-            legs.add(previewOne(account, symbol, entry, sl));
+            legs.add(previewOne(account, symbol, entry, sl, manualNotional));
         }
         return legs;
     }
 
-    private AccountLegPreview previewOne(AccountProps account, String symbol, BigDecimal entry, BigDecimal sl) {
+    private AccountLegPreview previewOne(AccountProps account, String symbol, BigDecimal entry, BigDecimal sl,
+                                         BigDecimal manualNotional) {
         String accountId = account.id();
         AccountRiskEntity riskEntity = accountRiskRepository.findById(accountId)
                 .orElseGet(() -> accountRiskRepository.save(AccountRiskEntity.defaultsFor(accountId)));
@@ -105,7 +111,9 @@ public class ProposalPreviewService {
                 .map(c -> c.getLastLossAt()).orElse(null);
         boolean autoPaused = riskEngine.isAutoPauseActive(accountId);
 
-        SizingResult sizing = sizer.size(profile, account.exchange(), symbol, equity, entry, sl);
+        SizingResult sizing = manualNotional != null
+                ? sizer.sizeManual(profile, account.exchange(), symbol, equity, manualNotional, entry, sl)
+                : sizer.size(profile, account.exchange(), symbol, equity, entry, sl);
         BigDecimal candidateRisk = sizing instanceof SizingResult.Approved a ? a.actualRisk() : null;
 
         RiskContext ctx = new RiskContext(
