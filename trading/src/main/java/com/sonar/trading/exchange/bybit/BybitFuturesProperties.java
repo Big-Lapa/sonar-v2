@@ -30,7 +30,13 @@ public class BybitFuturesProperties {
     private int readTimeoutMs = 5_000;
 
     public String getBaseUrl() { return baseUrl; }
-    public void setBaseUrl(String baseUrl) { this.baseUrl = baseUrl; }
+    /** Blank/null is a no-op (keeps the testnet default) — docker-compose always sets the env var
+     *  key even when the host doesn't define it, which would otherwise blank out the default. */
+    public void setBaseUrl(String baseUrl) {
+        if (baseUrl != null && !baseUrl.isBlank()) {
+            this.baseUrl = baseUrl;
+        }
+    }
 
     public String getApiKey() { return apiKey; }
     public void setApiKey(String apiKey) { this.apiKey = apiKey; }

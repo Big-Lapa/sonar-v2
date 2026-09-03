@@ -5,14 +5,21 @@ import com.sonar.trading.domain.entity.NotificationEntity;
 import com.sonar.trading.domain.entity.PositionEntity;
 import com.sonar.trading.domain.repository.NotificationRepository;
 import com.sonar.trading.domain.repository.PositionRepository;
+import com.sonar.trading.exchange.dto.AdapterOrderRequest;
+import com.sonar.trading.exchange.dto.AdapterOrderResult;
+import com.sonar.trading.exchange.model.AdapterOrderSide;
+import com.sonar.trading.exchange.model.AdapterOrderType;
+import com.sonar.trading.exchange.model.OrderIntent;
 import com.sonar.trading.exchange.spi.ExecutionAdapter;
 import com.sonar.trading.execution.adapter.ExecutionAdapterRegistry;
+import com.sonar.trading.sizing.QuantityNormalizer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.util.List;
+import java.util.UUID;
 
 /**
  * {@code /closeall}, {@code /be}, {@code /move} (4.7/5) — manual operator actions on an
@@ -31,13 +38,16 @@ public class PositionOpsService {
     private final AccountRegistry accountRegistry;
     private final ExecutionAdapterRegistry adapters;
     private final NotificationRepository notificationRepository;
+    private final QuantityNormalizer quantityNormalizer;
 
     public PositionOpsService(PositionRepository positionRepository, AccountRegistry accountRegistry,
-                              ExecutionAdapterRegistry adapters, NotificationRepository notificationRepository) {
+                              ExecutionAdapterRegistry adapters, NotificationRepository notificationRepository,
+                              QuantityNormalizer quantityNormalizer) {
         this.positionRepository = positionRepository;
         this.accountRegistry = accountRegistry;
         this.adapters = adapters;
         this.notificationRepository = notificationRepository;
+        this.quantityNormalizer = quantityNormalizer;
     }
 
     public sealed interface OpResult {
@@ -75,6 +85,64 @@ public class PositionOpsService {
         } catch (RuntimeException e) {
             log.error("[close-all] {} failed: {}", accountId, e.toString());
             return new OpResult.Failed("ошибка close-all: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Manual trading panel: close an arbitrary quantity of an open position (market or limit),
+     * not necessarily the whole thing. Unlike {@link #closeAll} (venue-native bulk / synthesized
+     * close-all), this always goes through {@link ExecutionAdapter#placeOrder} with a reduce-only
+     * {@link OrderIntent#CLOSE_REDUCE} SELL — the same primitive an entry uses, just the other
+     * side, and it already handles reduceOnly correctly per venue. A 100%-of-qty request is not
+     * special-cased: it's still just a reduce-only order for the full size, so there is exactly
+     * one code path for "close some" and "close all of this position" (as opposed to the account
+     * -wide {@code closeAll}, which stays the dedicated bulk/verified path for /closeall).
+     *
+     * <p>{@code qty} is clamped to the position's own quantity — a caller-computed percentage that
+     * rounds up past 100% (or a stale qty from a UI that hasn't refreshed) must not overshoot into
+     * a reduce-only order the exchange rejects, or worse, one that's accepted and flips the
+     * position on a venue where reduceOnly is advisory. DB status is NOT flipped here, same
+     * reasoning as {@code closeAll}: the poller is the single source of truth for the fill.
+     */
+    public OpResult closePartial(Long positionId, String orderType, BigDecimal qty, BigDecimal price) {
+        PositionEntity position = positionRepository.findById(positionId).orElse(null);
+        if (position == null || !"OPEN".equals(position.getStatus())) {
+            return new OpResult.Failed("позиция не найдена или не открыта");
+        }
+        if (qty == null || qty.signum() <= 0) {
+            return new OpResult.Failed("qty должен быть положительным");
+        }
+        boolean limit = "LIMIT".equalsIgnoreCase(orderType);
+        if (limit && (price == null || price.signum() <= 0)) {
+            return new OpResult.Failed("price обязателен для limit-закрытия");
+        }
+        BigDecimal clampedQty = qty.min(position.getQuantity());
+
+        var account = accountRegistry.byId(position.getAccountId()).orElse(null);
+        ExecutionAdapter adapter = account != null ? adapters.forExchange(account.exchange()).orElse(null) : null;
+        if (adapter == null) {
+            return new OpResult.Failed("venue аккаунта '" + position.getAccountId() + "' не подключена");
+        }
+        // Floor (never bump up) to the exchange's lot step — a requested %/qty that rounds down
+        // below one step must fail loudly, not silently close more (or nothing at all, which is
+        // what most exchanges do when they just reject a misaligned qty outright).
+        BigDecimal normalizedQty = quantityNormalizer.floorForClose(account.exchange(), position.getSymbol(), clampedQty);
+        if (normalizedQty == null) {
+            return new OpResult.Failed("qty " + clampedQty + " меньше шага лота биржи для " + position.getSymbol());
+        }
+        clampedQty = normalizedQty;
+        try {
+            AdapterOrderRequest request = new AdapterOrderRequest(position.getSymbol(), AdapterOrderSide.SELL,
+                    limit ? AdapterOrderType.LIMIT : AdapterOrderType.MARKET, clampedQty,
+                    limit ? price : null, "cl-" + UUID.randomUUID().toString().replace("-", "").substring(0, 20),
+                    OrderIntent.CLOSE_REDUCE);
+            AdapterOrderResult result = adapter.placeOrder(request);
+            return new OpResult.Ok((limit ? "limit-заявка на закрытие " : "закрытие market ")
+                    + clampedQty + " " + position.getSymbol() + " отправлено (state=" + result.state() + ")"
+                    + ", подтверждение придёт с поллером");
+        } catch (RuntimeException e) {
+            log.error("[{}] closePartial {} {} failed: {}", position.getAccountId(), position.getSymbol(), clampedQty, e.toString());
+            return new OpResult.Failed("ошибка закрытия: " + e.getMessage());
         }
     }
 

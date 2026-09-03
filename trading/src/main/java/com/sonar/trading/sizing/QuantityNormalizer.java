@@ -55,6 +55,21 @@ public class QuantityNormalizer {
         return normalized;
     }
 
+    /**
+     * Closing a position (manual trading panel's partial close): round DOWN to the exchange's
+     * step, never up. {@link #normalize} bumps a too-small entry qty up to the exchange floor —
+     * correct for an entry (a tradeable position beats none), wrong here: bumping a requested
+     * 5%-close up to a full step could silently close far more than the operator asked for,
+     * especially on a small remaining position where one step IS the whole thing. Returns null
+     * (not zero) when the floored quantity is a whole step below the requested one — the caller
+     * decides how to report "your %/qty rounds down below the exchange's minimum step".
+     */
+    public BigDecimal floorForClose(String venue, String symbol, BigDecimal qty) {
+        SymbolRules rules = symbolRules.get(venue, symbol);
+        BigDecimal floored = floorToStep(qty, rules.stepSize());
+        return (floored == null || floored.signum() <= 0) ? null : floored;
+    }
+
     private BigDecimal floorToStep(BigDecimal value, BigDecimal step) {
         if (value == null) return null;
         if (step == null || step.signum() == 0) return value;
