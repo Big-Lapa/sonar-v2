@@ -64,6 +64,14 @@
   <button id="changeTokenBtn" class="btn btn-ghost btn-xs ml-3">токен</button>
 </div>
 
+<!-- ============ TABS ============ -->
+<div role="tablist" class="tabs tabs-lift px-4 pt-2 bg-base-100 border-b border-base-content/10">
+  <button role="tab" id="tabBtnTrading" class="tab tab-active">Trading</button>
+  <button role="tab" id="tabBtnManagement" class="tab">Management</button>
+</div>
+
+<div id="tabTrading">
+
 <div id="globalError" class="px-4 pt-3 hidden">
   <div role="alert" class="alert alert-error alert-soft py-2 text-sm"><span id="globalErrorText"></span></div>
 </div>
@@ -253,6 +261,39 @@
   </div>
 </section>
 
+<!-- ============ OPEN ORDERS ============ -->
+<section class="px-4 pb-4">
+  <div class="flex items-center justify-between mb-2 flex-wrap gap-2">
+    <h2 class="text-sm font-semibold text-base-content/60">Открытые ордера</h2>
+    <div class="flex items-center gap-2">
+      <select id="ordersAccount" class="select select-sm w-40"></select>
+      <input id="ordersSymbol" class="input input-sm w-32 mono" placeholder="Символ" value="BTCUSDT" />
+      <button id="refreshOrdersBtn" class="btn btn-sm btn-ghost">↻</button>
+    </div>
+  </div>
+  <div class="card bg-base-100 border border-base-content/10">
+    <div class="card-body p-0">
+      <div class="overflow-x-auto">
+        <table class="table table-sm">
+          <thead>
+            <tr>
+              <th>Тип</th><th>Side</th><th class="text-right">Qty</th><th class="text-right">Цена</th>
+              <th>Статус</th><th class="text-center">Отмена</th>
+            </tr>
+          </thead>
+          <tbody id="ordersTbody"><tr><td colspan="6" class="text-center text-base-content/40 py-6">укажи аккаунт и символ</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</section>
+
+</div><!-- /tabTrading -->
+
+<div id="tabManagement" class="hidden">
+  <iframe id="managementFrame" style="width:100%; height: calc(100vh - 105px); border: 0;"></iframe>
+</div>
+
 <!-- ============ CLOSE MODAL (single position) ============ -->
 <dialog id="closeModal" class="modal">
   <div class="modal-box max-w-md">
@@ -416,6 +457,7 @@
     renderAccountChecks();
     renderBalanceCards();
     populateAccountFilter();
+    populateOrdersAccount();
     refreshPrice();
     loadPositions();
   }
@@ -425,6 +467,80 @@
     sel.innerHTML = '<option value="">Все аккаунты</option>' +
       accounts.map(a => `<option value="${a.id}">${a.id}</option>`).join('');
   }
+
+  // ---- Tabs: Trading / Management (management is the pre-manual-mode risk/strategy/blacklist
+  // admin.html, embedded as an iframe rather than reimplemented — same X-Admin-Token via the
+  // shared sonar_admin_token localStorage key, lazy-loaded on first switch to it). ----
+  const tabBtnTrading = document.getElementById('tabBtnTrading');
+  const tabBtnManagement = document.getElementById('tabBtnManagement');
+  const tabTrading = document.getElementById('tabTrading');
+  const tabManagement = document.getElementById('tabManagement');
+  const managementFrame = document.getElementById('managementFrame');
+  tabBtnTrading.addEventListener('click', () => {
+    tabBtnTrading.classList.add('tab-active');
+    tabBtnManagement.classList.remove('tab-active');
+    tabTrading.classList.remove('hidden');
+    tabManagement.classList.add('hidden');
+  });
+  tabBtnManagement.addEventListener('click', () => {
+    tabBtnManagement.classList.add('tab-active');
+    tabBtnTrading.classList.remove('tab-active');
+    tabManagement.classList.remove('hidden');
+    tabTrading.classList.add('hidden');
+    if (!managementFrame.getAttribute('src')) managementFrame.src = '/admin.html';
+  });
+
+  // ---- Open orders (cancel-order screen) ----
+  function populateOrdersAccount() {
+    const sel = document.getElementById('ordersAccount');
+    sel.innerHTML = accounts.map(a => `<option value="${a.id}">${a.id} (${a.exchange})</option>`).join('');
+  }
+  async function loadOpenOrders() {
+    const accountId = document.getElementById('ordersAccount').value;
+    const symbol = document.getElementById('ordersSymbol').value.trim().toUpperCase();
+    const tbody = document.getElementById('ordersTbody');
+    if (!accountId || !symbol) {
+      tbody.innerHTML = '<tr><td colspan="6" class="text-center text-base-content/40 py-6">укажи аккаунт и символ</td></tr>';
+      return;
+    }
+    tbody.innerHTML = '<tr><td colspan="6" class="text-center text-base-content/40 py-6">загрузка…</td></tr>';
+    try {
+      const resp = await api(`/api/v1/accounts/${accountId}/orders?symbol=${encodeURIComponent(symbol)}`);
+      if (resp.error) { tbody.innerHTML = `<tr><td colspan="6" class="text-center text-error text-xs py-6">${esc(resp.error)}</td></tr>`; return; }
+      if (!resp.orders.length) { tbody.innerHTML = '<tr><td colspan="6" class="text-center text-base-content/40 py-6">нет открытых ордеров</td></tr>'; return; }
+      tbody.innerHTML = resp.orders.map(o => `
+        <tr>
+          <td class="mono text-xs">${esc(o.type ?? '—')}</td>
+          <td><span class="badge badge-ghost badge-xs">${esc(o.side ?? '—')}</span></td>
+          <td class="text-right mono">${o.qty ?? '—'}</td>
+          <td class="text-right mono">${o.price ?? '—'}</td>
+          <td class="text-xs">${esc(o.status ?? '—')}</td>
+          <td class="text-center"><button class="btn btn-xs btn-outline btn-error cancel-order" data-order-id="${esc(o.orderId)}">Отменить</button></td>
+        </tr>`).join('');
+      tbody.querySelectorAll('.cancel-order').forEach(btn => btn.addEventListener('click', () => cancelOrder(btn)));
+    } catch (e) {
+      tbody.innerHTML = `<tr><td colspan="6" class="text-center text-error text-xs py-6">${esc(e.message)}</td></tr>`;
+    }
+  }
+  async function cancelOrder(btn) {
+    const accountId = document.getElementById('ordersAccount').value;
+    const symbol = document.getElementById('ordersSymbol').value.trim().toUpperCase();
+    const orderId = btn.dataset.orderId;
+    btn.disabled = true;
+    btn.textContent = '...';
+    try {
+      await api(`/api/v1/accounts/${accountId}/orders/${encodeURIComponent(orderId)}/cancel?symbol=${encodeURIComponent(symbol)}`,
+        { method: 'POST' });
+      loadOpenOrders();
+    } catch (e) {
+      btn.disabled = false;
+      btn.textContent = 'Отменить';
+      showError('не удалось отменить ордер: ' + e.message);
+    }
+  }
+  document.getElementById('refreshOrdersBtn').addEventListener('click', loadOpenOrders);
+  document.getElementById('ordersAccount').addEventListener('change', loadOpenOrders);
+  document.getElementById('ordersSymbol').addEventListener('keydown', e => { if (e.key === 'Enter') loadOpenOrders(); });
 
   async function renderBalanceCards() {
     const wrap = document.getElementById('balanceCards');

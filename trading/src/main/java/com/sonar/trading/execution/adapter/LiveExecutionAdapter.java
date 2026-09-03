@@ -10,6 +10,7 @@ import com.sonar.trading.exchange.bingx.BingxPositionSide;
 import com.sonar.trading.exchange.bingx.BingxTimeInForce;
 import com.sonar.trading.exchange.bingx.BingxTpSlOrder;
 import com.sonar.trading.exchange.bingx.BingxWorkingType;
+import com.sonar.trading.exchange.dto.AdapterOpenOrder;
 import com.sonar.trading.exchange.dto.AdapterOrderRequest;
 import com.sonar.trading.exchange.dto.AdapterOrderResult;
 import com.sonar.trading.exchange.dto.TpSlAttachment;
@@ -182,6 +183,28 @@ public class LiveExecutionAdapter implements ExecutionAdapter {
         String bingxSymbol = BingxOrderMapper.toBingxSymbol(symbol);
         Map<String, Object> resp = bingxFuturesClient.getOpenOrders(bingxSymbol);
         return openOrders(resp).stream().anyMatch(o -> matchesType(o, true));
+    }
+
+    @Override
+    public List<AdapterOpenOrder> listOpenOrders(String symbol) {
+        String bingxSymbol = BingxOrderMapper.toBingxSymbol(symbol);
+        Map<String, Object> resp = bingxFuturesClient.getOpenOrders(bingxSymbol);
+        return openOrders(resp).stream().map(o -> new AdapterOpenOrder(
+                BingxOrderMapper.extractString(o, "orderId"),
+                BingxOrderMapper.extractString(o, "clientOrderId", "clientOrderID"),
+                symbol,
+                BingxOrderMapper.extractString(o, "side"),
+                BingxOrderMapper.extractString(o, "type"),
+                BingxOrderMapper.extractDecimal(o, "origQty", "quantity"),
+                BingxOrderMapper.extractDecimal(o, "price"),
+                BingxOrderMapper.extractString(o, "status", "orderStatus")
+        )).toList();
+    }
+
+    @Override
+    public void cancelOrderById(String symbol, String orderId) {
+        log.info("[LIVE] CANCEL symbol={} orderId={}", symbol, orderId);
+        gateway.cancelOrder(BingxOrderMapper.toBingxSymbol(symbol), orderId, null);
     }
 
     @Override

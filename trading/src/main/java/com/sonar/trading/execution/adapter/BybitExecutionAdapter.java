@@ -8,6 +8,7 @@ import com.sonar.trading.exchange.bybit.BybitOrderType;
 import com.sonar.trading.exchange.bybit.BybitPlaceOrderRequest;
 import com.sonar.trading.exchange.bybit.BybitTimeInForce;
 import com.sonar.trading.exchange.bybit.BybitTriggerBy;
+import com.sonar.trading.exchange.dto.AdapterOpenOrder;
 import com.sonar.trading.exchange.dto.AdapterOrderRequest;
 import com.sonar.trading.exchange.dto.AdapterOrderResult;
 import com.sonar.trading.exchange.dto.TpSlAttachment;
@@ -183,6 +184,28 @@ public class BybitExecutionAdapter implements ExecutionAdapter {
         }
         Map<String, Object> resp = bybitFuturesClient.getOpenOrders(bybitSymbol);
         return BybitOrderMapper.resultList(resp).stream().anyMatch(o -> matchesType(o, true));
+    }
+
+    @Override
+    public List<AdapterOpenOrder> listOpenOrders(String symbol) {
+        String bybitSymbol = BybitOrderMapper.toBybitSymbol(symbol);
+        Map<String, Object> resp = bybitFuturesClient.getOpenOrders(bybitSymbol);
+        return BybitOrderMapper.resultList(resp).stream().map(o -> new AdapterOpenOrder(
+                BybitOrderMapper.extractString(o, "orderId"),
+                BybitOrderMapper.extractString(o, "orderLinkId"),
+                symbol,
+                BybitOrderMapper.extractString(o, "side"),
+                BybitOrderMapper.extractString(o, "orderType", "stopOrderType"),
+                BybitOrderMapper.extractDecimal(o, "qty"),
+                BybitOrderMapper.extractDecimal(o, "price"),
+                BybitOrderMapper.extractString(o, "orderStatus")
+        )).toList();
+    }
+
+    @Override
+    public void cancelOrderById(String symbol, String orderId) {
+        log.info("[LIVE] CANCEL symbol={} orderId={}", symbol, orderId);
+        gateway.cancelOrder(BybitOrderMapper.toBybitSymbol(symbol), orderId, null);
     }
 
     /**
