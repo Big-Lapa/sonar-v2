@@ -23,6 +23,19 @@
   .pnl-pos { color: var(--color-success); }
   .pnl-neg { color: var(--color-error); }
   .bulk-bar { position: sticky; bottom: 0.5rem; z-index: 10; }
+
+  /* Custom slider fill: DaisyUI's .range track is opaque and covers any background painted on the
+     input itself, so the "filled" portion never actually reaches the value it reports (100% looks
+     like ~85%). A real track+fill div underneath a transparent, appearance:none input sidesteps
+     the browser/library quirk entirely instead of fighting it. */
+  .slider-shell { position: relative; height: 0.5rem; }
+  .slider-track { position: absolute; inset: 0; border-radius: 9999px; background: var(--color-base-300); }
+  .slider-fill { position: absolute; inset: 0 auto 0 0; border-radius: 9999px; background: var(--color-error); width: 100%; }
+  .slider-input { position: absolute; inset: -0.5rem 0; width: 100%; margin: 0; appearance: none; background: transparent; cursor: pointer; }
+  .slider-input::-webkit-slider-runnable-track { background: transparent; height: 0.5rem; }
+  .slider-input::-webkit-slider-thumb { appearance: none; width: 16px; height: 16px; border-radius: 9999px; background: #fff; border: 3px solid var(--color-error); margin-top: -4px; cursor: pointer; }
+  .slider-input::-moz-range-track { background: transparent; height: 0.5rem; border: none; }
+  .slider-input::-moz-range-thumb { width: 16px; height: 16px; border-radius: 9999px; background: #fff; border: 3px solid var(--color-error); cursor: pointer; }
 </style>
 </head>
 <body class="min-h-screen text-base-content">
@@ -197,7 +210,9 @@
       <select id="filterAccount" class="select select-sm w-40">
         <option value="">Все аккаунты</option>
       </select>
-      <input id="filterSymbol" type="text" placeholder="фильтр по символу" class="input input-sm w-40 mono" />
+      <select id="filterSymbol" class="select select-sm w-40 mono">
+        <option value="">Все символы</option>
+      </select>
       <button id="refreshPositionsBtn" class="btn btn-sm btn-ghost">↻</button>
     </div>
   </div>
@@ -257,7 +272,11 @@
         <span><span id="closePctLabel">100</span>%</span>
       </div>
       <input id="closeQtyInput" type="number" step="any" class="input input-sm w-full mono mb-2" />
-      <input id="closePctSlider" type="range" min="0" max="100" value="100" class="range range-sm range-error" />
+      <div class="slider-shell">
+        <div class="slider-track"></div>
+        <div id="closeFillBar" class="slider-fill"></div>
+        <input id="closePctSlider" type="range" min="0" max="100" value="100" class="slider-input" />
+      </div>
       <div class="flex justify-between text-[10px] text-base-content/40 mt-1"><span>0%</span><span>25%</span><span>50%</span><span>75%</span><span>100%</span></div>
     </div>
     <div id="closeModalError" class="text-error text-xs mt-2 hidden"></div>
@@ -281,7 +300,11 @@
         <span>Размер закрытия (для каждой позиции)</span>
         <span><span id="bulkPctLabel">100</span>%</span>
       </div>
-      <input id="bulkPctSlider" type="range" min="0" max="100" value="100" class="range range-sm range-error" />
+      <div class="slider-shell">
+        <div class="slider-track"></div>
+        <div id="bulkFillBar" class="slider-fill"></div>
+        <input id="bulkPctSlider" type="range" min="0" max="100" value="100" class="slider-input" />
+      </div>
       <div class="flex justify-between text-[10px] text-base-content/40 mt-1"><span>0%</span><span>25%</span><span>50%</span><span>75%</span><span>100%</span></div>
     </div>
 
@@ -456,6 +479,22 @@
 
   function fmt(v) { const n = parseFloat(v); return Number.isFinite(n) ? n.toLocaleString('en-US', { maximumFractionDigits: 4 }) : (v ?? '—'); }
 
+  /** The exchange doesn't always reflect a just-filled reduce-only order in the very next read
+   *  (same eventual-consistency window StopGuard has to retry around server-side) — one refresh
+   *  right after a close can still show the pre-close qty. Refresh now and twice more shortly
+   *  after instead of a single delayed guess. */
+  function refreshPositionsSoon() {
+    loadPositions();
+    setTimeout(loadPositions, 1500);
+    setTimeout(loadPositions, 3500);
+  }
+
+  /** Paints the custom .slider-fill div under the (visually transparent) range input — see the
+   *  .slider-shell CSS comment for why DaisyUI's own track fill isn't used. */
+  function paintSlider(fillBarId, pct) {
+    document.getElementById(fillBarId).style.width = pct + '%';
+  }
+
   // ---- Chart ----
   function renderChart(symbol, tf) {
     document.getElementById('tv_chart').innerHTML = '';
@@ -622,7 +661,7 @@
       if (leg && leg.success) {
         btn.outerHTML = `<span class="badge badge-success badge-outline">открыто ✓ @ ${leg.avgPrice ?? ''}</span>`;
         refreshPrice();
-        setTimeout(loadPositions, 1500);
+        refreshPositionsSoon();
       } else {
         btn.outerHTML = `<span class="badge badge-error badge-outline">✗ ${(leg && leg.errorReason) || 'ошибка'}</span>`;
       }
@@ -657,19 +696,34 @@
     }
     allPositions = dbRows.map(p => {
       const live = (liveByAccount[p.accountId] || []).find(l => l.symbol === p.symbol && !l.flat);
+      // No live row = flat on the exchange (the live-positions endpoint already filters flat rows
+      // out server-side). The DB row can still say OPEN for up to a minute (MinutePoller hasn't
+      // reconciled yet) — falling back to its now-stale qty would show a "ghost" position that's
+      // actually fully closed. Drop it instead; it disappears from the table the moment the
+      // exchange itself shows it flat, not a minute later.
+      if (!live) return null;
       const exchange = (accounts.find(a => a.id === p.accountId) || {}).exchange || '';
-      const qty = live ? live.qty : parseFloat(p.quantity);
-      const mark = live ? live.markPrice : null;
-      const leverage = live ? live.leverage : null;
-      const notional = mark != null ? qty * mark : null;
-      const margin = notional != null && leverage ? notional / leverage : null;
+      const notional = live.markPrice != null ? live.qty * live.markPrice : null;
+      const margin = notional != null && live.leverage ? notional / live.leverage : null;
       return {
         positionId: p.id, accountId: p.accountId, exchange, symbol: p.symbol, side: p.side,
-        qty, entry: parseFloat(p.entryPrice), mark, leverage,
-        notional, margin, upnl: live ? live.unrealizedPnl : null,
+        qty: live.qty, entry: parseFloat(p.entryPrice), mark: live.markPrice, leverage: live.leverage,
+        notional, margin, upnl: live.unrealizedPnl,
       };
-    });
+    }).filter(Boolean);
+    populateSymbolFilter();
     renderPositionsTable();
+  }
+
+  /** Dropdown only ever lists symbols that currently have an open position — a free-text filter
+   *  made it too easy to type a symbol that isn't open and stare at an empty table. */
+  function populateSymbolFilter() {
+    const sel = document.getElementById('filterSymbol');
+    const prev = sel.value;
+    const symbols = [...new Set(allPositions.map(p => p.symbol))].sort();
+    sel.innerHTML = '<option value="">Все символы</option>' + symbols.map(s => `<option value="${s}">${s}</option>`).join('');
+    if (symbols.includes(prev)) sel.value = prev;
+    else posFilterSymbol = '';
   }
 
   function renderPositionsTable() {
@@ -706,9 +760,9 @@
   }
 
   document.getElementById('filterAccount').addEventListener('change', e => { posFilterAccount = e.target.value; renderPositionsTable(); });
-  document.getElementById('filterSymbol').addEventListener('input', e => { posFilterSymbol = e.target.value; renderPositionsTable(); });
+  document.getElementById('filterSymbol').addEventListener('change', e => { posFilterSymbol = e.target.value; renderPositionsTable(); });
   document.getElementById('refreshPositionsBtn').addEventListener('click', loadPositions);
-  document.querySelectorAll('#posTable th.sortable, th.sortable').forEach(th => th.addEventListener('click', () => {
+  document.querySelectorAll('th.sortable').forEach(th => th.addEventListener('click', () => {
     const key = th.dataset.key;
     posSortDir = (posSortKey === key) ? -posSortDir : 1;
     posSortKey = key;
@@ -721,7 +775,7 @@
 
   function updateBulkBar() {
     const checked = document.querySelectorAll('.pos-select:checked');
-    document.getElementById('bulkBar').classList.toggle('hidden', checked.length < 2);
+    document.getElementById('bulkBar').classList.toggle('hidden', checked.length < 1);
     document.getElementById('bulkCount').textContent = checked.length;
   }
 
@@ -738,8 +792,11 @@
     document.getElementById('closeQtyInput').value = closeTarget.qty;
     document.getElementById('closePctSlider').value = 100;
     document.getElementById('closePctLabel').textContent = 100;
+    document.getElementById('closeConfirmPct').textContent = '100%';
+    document.getElementById('closeLimitPrice').value = closeTarget.entry;
     document.getElementById('closeModalError').classList.add('hidden');
     setCloseType('MARKET');
+    paintSlider('closeFillBar', 100);
     closeModal.showModal();
   }
   function setCloseType(t) {
@@ -756,6 +813,7 @@
   document.getElementById('closeTypeLimit').addEventListener('click', () => setCloseType('LIMIT'));
   document.getElementById('closePctSlider').addEventListener('input', e => {
     const pct = +e.target.value;
+    paintSlider('closeFillBar', pct);
     document.getElementById('closePctLabel').textContent = pct;
     document.getElementById('closeConfirmPct').textContent = pct + '%';
     document.getElementById('closeQtyInput').value = closeTarget ? +(closeTarget.qty * pct / 100).toFixed(6) : '';
@@ -763,7 +821,9 @@
   document.getElementById('closeQtyInput').addEventListener('input', e => {
     if (!closeTarget) return;
     const pct = Math.max(0, Math.min(100, Math.round((+e.target.value / closeTarget.qty) * 100)));
-    document.getElementById('closePctSlider').value = pct;
+    const slider = document.getElementById('closePctSlider');
+    slider.value = pct;
+    paintSlider('closeFillBar', pct);
     document.getElementById('closePctLabel').textContent = pct;
     document.getElementById('closeConfirmPct').textContent = pct + '%';
   });
@@ -782,7 +842,7 @@
       });
       closeModal.close();
       showError(resp.message || 'отправлено'); // reuse the banner for a success toast too — good enough for now
-      setTimeout(loadPositions, 1500);
+      refreshPositionsSoon();
     } catch (e) {
       errEl.textContent = e.message;
       errEl.classList.remove('hidden');
@@ -796,7 +856,9 @@
     const ids = [...document.querySelectorAll('.pos-select:checked')].map(cb => +cb.value);
     bulkTargets = allPositions.filter(p => ids.includes(p.positionId));
     document.getElementById('bulkModalCount').textContent = bulkTargets.length;
-    document.getElementById('bulkPctSlider').value = 100;
+    const bulkSlider = document.getElementById('bulkPctSlider');
+    bulkSlider.value = 100;
+    paintSlider('bulkFillBar', 100);
     document.getElementById('bulkPctLabel').textContent = 100;
     document.getElementById('bulkConfirmPct').textContent = '100%';
     document.getElementById('bulkModalStatus').textContent = '';
@@ -805,6 +867,7 @@
   });
   document.getElementById('bulkPctSlider').addEventListener('input', e => {
     const pct = +e.target.value;
+    paintSlider('bulkFillBar', pct);
     document.getElementById('bulkPctLabel').textContent = pct;
     document.getElementById('bulkConfirmPct').textContent = pct + '%';
     renderBulkPreview(pct);
@@ -829,7 +892,7 @@
       } catch (e) { fail++; }
       statusEl.textContent = `отправлено: ${ok} ок, ${fail} ошибок из ${bulkTargets.length}`;
     }
-    setTimeout(() => { bulkModal.close(); loadPositions(); }, 1200);
+    setTimeout(() => { bulkModal.close(); refreshPositionsSoon(); }, 1200);
   });
 
   updateMarginEst();
