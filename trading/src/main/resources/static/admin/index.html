@@ -18,6 +18,11 @@
   .side-btn { flex: 1; }
   .fade-in { animation: fadeIn .18s ease-out; }
   @keyframes fadeIn { from { opacity:0; transform: translateY(4px);} to {opacity:1; transform:none;} }
+  th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+  th.sortable:hover { color: var(--color-primary); }
+  .pnl-pos { color: var(--color-success); }
+  .pnl-neg { color: var(--color-error); }
+  .bulk-bar { position: sticky; bottom: 0.5rem; z-index: 10; }
 </style>
 </head>
 <body class="min-h-screen text-base-content">
@@ -46,6 +51,12 @@
 
 <div id="globalError" class="px-4 pt-3 hidden">
   <div role="alert" class="alert alert-error alert-soft py-2 text-sm"><span id="globalErrorText"></span></div>
+</div>
+
+<!-- ============ BALANCES ============ -->
+<div class="px-4 pt-4">
+  <h2 class="text-sm font-semibold text-base-content/60 mb-2">Балансы</h2>
+  <div id="balanceCards" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3"></div>
 </div>
 
 <!-- ============ MAIN LAYOUT ============ -->
@@ -178,6 +189,118 @@
 
 </main>
 
+<!-- ============ POSITIONS ============ -->
+<section class="px-4 pb-4">
+  <div class="flex items-center justify-between mb-2 flex-wrap gap-2">
+    <h2 class="text-sm font-semibold text-base-content/60">Открытые позиции</h2>
+    <div class="flex items-center gap-2">
+      <select id="filterAccount" class="select select-sm w-40">
+        <option value="">Все аккаунты</option>
+      </select>
+      <input id="filterSymbol" type="text" placeholder="фильтр по символу" class="input input-sm w-40 mono" />
+      <button id="refreshPositionsBtn" class="btn btn-sm btn-ghost">↻</button>
+    </div>
+  </div>
+
+  <div class="card bg-base-100 border border-base-content/10">
+    <div class="card-body p-0">
+      <div class="overflow-x-auto">
+        <table class="table table-sm">
+          <thead>
+            <tr>
+              <th class="w-8"><input type="checkbox" id="selectAllPos" class="checkbox checkbox-xs" /></th>
+              <th class="sortable" data-key="accountId">Аккаунт ⇅</th>
+              <th class="sortable" data-key="symbol">Контракт ⇅</th>
+              <th>Side</th>
+              <th class="sortable text-right" data-key="qty">Кол-во ⇅</th>
+              <th class="sortable text-right" data-key="notional">Нотионал ⇅</th>
+              <th class="text-right">Маржа</th>
+              <th class="text-right">Entry</th>
+              <th class="text-right">Mark</th>
+              <th class="sortable text-right" data-key="upnl">uPnL ⇅</th>
+              <th class="text-center">Закрыть</th>
+            </tr>
+          </thead>
+          <tbody id="posTbody"><tr><td colspan="11" class="text-center text-base-content/40 py-6">загрузка…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div id="bulkBar" class="bulk-bar hidden fade-in mt-2">
+    <div class="alert bg-base-100 border border-primary/30 flex items-center justify-between shadow-lg">
+      <span class="text-sm"><b id="bulkCount">0</b> позиций выбрано</span>
+      <button id="bulkCloseBtn" class="btn btn-error btn-sm">Закрыть выбранные →</button>
+    </div>
+  </div>
+</section>
+
+<!-- ============ CLOSE MODAL (single position) ============ -->
+<dialog id="closeModal" class="modal">
+  <div class="modal-box max-w-md">
+    <h3 class="font-bold text-lg">Закрыть позицию <span id="closeModalSymbol" class="badge badge-outline mono ml-1"></span></h3>
+    <p class="text-xs text-base-content/50 mt-1">Открыто: <span id="closeModalQty" class="mono"></span> · счёт <span id="closeModalAccount" class="mono"></span></p>
+
+    <div class="join w-full mt-4">
+      <button type="button" id="closeTypeMarket" class="btn btn-sm join-item flex-1 btn-active">Market</button>
+      <button type="button" id="closeTypeLimit" class="btn btn-sm join-item flex-1">Limit</button>
+    </div>
+
+    <label id="closeLimitPriceWrap" class="input input-sm w-full mt-3 hidden fade-in">
+      <span class="label mono text-xs">Цена</span>
+      <input id="closeLimitPrice" type="number" step="any" class="mono" placeholder="0.00" />
+    </label>
+
+    <div class="mt-4">
+      <div class="flex items-center justify-between text-xs text-base-content/60 mb-1">
+        <span>Размер закрытия</span>
+        <span><span id="closePctLabel">100</span>%</span>
+      </div>
+      <input id="closeQtyInput" type="number" step="any" class="input input-sm w-full mono mb-2" />
+      <input id="closePctSlider" type="range" min="0" max="100" value="100" class="range range-sm range-error" />
+      <div class="flex justify-between text-[10px] text-base-content/40 mt-1"><span>0%</span><span>25%</span><span>50%</span><span>75%</span><span>100%</span></div>
+    </div>
+    <div id="closeModalError" class="text-error text-xs mt-2 hidden"></div>
+
+    <div class="modal-action">
+      <form method="dialog"><button class="btn btn-sm">Отмена</button></form>
+      <button id="closeConfirmBtn" class="btn btn-error btn-sm"><span id="closeConfirmPrefix">Закрыть market</span>&nbsp;<span id="closeConfirmPct">100%</span></button>
+    </div>
+  </div>
+  <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<!-- ============ BULK CLOSE MODAL ============ -->
+<dialog id="bulkCloseModal" class="modal">
+  <div class="modal-box max-w-md">
+    <h3 class="font-bold text-lg">Закрыть <span id="bulkModalCount">0</span> позиций</h3>
+    <p class="text-xs text-base-content/50 mt-1">Один процент на все — размеры позиций разные, qty каждой считается от её собственного объёма. Всегда market.</p>
+
+    <div class="mt-4">
+      <div class="flex items-center justify-between text-xs text-base-content/60 mb-1">
+        <span>Размер закрытия (для каждой позиции)</span>
+        <span><span id="bulkPctLabel">100</span>%</span>
+      </div>
+      <input id="bulkPctSlider" type="range" min="0" max="100" value="100" class="range range-sm range-error" />
+      <div class="flex justify-between text-[10px] text-base-content/40 mt-1"><span>0%</span><span>25%</span><span>50%</span><span>75%</span><span>100%</span></div>
+    </div>
+
+    <div class="mt-3 rounded-box border border-base-content/10 overflow-hidden max-h-48 overflow-y-auto">
+      <table class="table table-xs">
+        <thead><tr><th>Контракт</th><th>Счёт</th><th class="text-right">Закроется</th></tr></thead>
+        <tbody id="bulkPreviewTbody"></tbody>
+      </table>
+    </div>
+    <div id="bulkModalStatus" class="text-xs mt-2"></div>
+
+    <div class="modal-action">
+      <form method="dialog"><button class="btn btn-sm">Отмена</button></form>
+      <button id="bulkConfirmBtn" class="btn btn-error btn-sm">Закрыть все market <span id="bulkConfirmPct">100%</span></button>
+    </div>
+  </div>
+  <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
 <script src="https://s3.tradingview.com/tv.js"></script>
 <script>
   const API_BASE = '';
@@ -251,7 +374,54 @@
     }
     renderAccountBar();
     renderAccountChecks();
+    renderBalanceCards();
+    populateAccountFilter();
     refreshPrice();
+    loadPositions();
+  }
+
+  function populateAccountFilter() {
+    const sel = document.getElementById('filterAccount');
+    sel.innerHTML = '<option value="">Все аккаунты</option>' +
+      accounts.map(a => `<option value="${a.id}">${a.id}</option>`).join('');
+  }
+
+  async function renderBalanceCards() {
+    const wrap = document.getElementById('balanceCards');
+    wrap.innerHTML = accounts.map(a => `
+      <div class="card bg-base-100 border border-base-content/10" data-balance-card="${a.id}">
+        <div class="card-body p-4 gap-1">
+          <div class="flex items-center justify-between">
+            <span class="font-semibold">${a.id}</span>
+            <span class="badge badge-ghost badge-xs">${a.exchange}</span>
+          </div>
+          <div class="text-xs text-base-content/50">загрузка…</div>
+        </div>
+      </div>`).join('');
+    for (const a of accounts) {
+      const card = wrap.querySelector(`[data-balance-card="${a.id}"] .card-body`);
+      try {
+        const b = await api(`/api/v1/accounts/${a.id}/balance?refresh=true`);
+        if (!card) continue;
+        if (b.error) {
+          card.querySelector('div:last-child').outerHTML = `<div class="text-error text-xs">${b.error}</div>`;
+          continue;
+        }
+        const upnl = parseFloat(b.unrealizedPnl);
+        card.querySelector('div:last-child').outerHTML = `
+          <div class="stats stats-horizontal bg-transparent p-0">
+            <div class="stat p-0 pr-4">
+              <div class="stat-title text-xs">Equity</div>
+              <div class="stat-value text-lg mono">${fmt(b.equity ?? b.balance)}</div>
+              <div class="stat-desc text-xs">${b.asset ?? ''}</div>
+            </div>
+            <div class="stat p-0 pl-4">
+              <div class="stat-title text-xs">uPnL</div>
+              <div class="stat-value text-lg mono ${Number.isFinite(upnl) ? (upnl >= 0 ? 'pnl-pos' : 'pnl-neg') : ''}">${Number.isFinite(upnl) ? (upnl >= 0 ? '+' : '') + fmt(upnl) : '—'}</div>
+            </div>
+          </div>`;
+      } catch (e) { /* card already shows a spinner-ish state; leave it */ }
+    }
   }
 
   async function renderAccountBar() {
@@ -452,6 +622,7 @@
       if (leg && leg.success) {
         btn.outerHTML = `<span class="badge badge-success badge-outline">открыто ✓ @ ${leg.avgPrice ?? ''}</span>`;
         refreshPrice();
+        setTimeout(loadPositions, 1500);
       } else {
         btn.outerHTML = `<span class="badge badge-error badge-outline">✗ ${(leg && leg.errorReason) || 'ошибка'}</span>`;
       }
@@ -461,6 +632,204 @@
   }
   document.getElementById('confirmAllBtn').addEventListener('click', () => {
     previewTbody.querySelectorAll('.confirm-one').forEach(btn => btn.click());
+  });
+
+  // ---- Positions: DB rows (id, entry, sl/tp) merged with per-account live rows (mark/uPnL/leverage) ----
+  let allPositions = []; // merged rows, each carries positionId (DB id) for close actions
+  let posFilterAccount = '', posFilterSymbol = '';
+  let posSortKey = null, posSortDir = 1;
+
+  async function loadPositions() {
+    const tbody = document.getElementById('posTbody');
+    let dbRows;
+    try {
+      dbRows = await api('/api/v1/trade/positions');
+    } catch (e) {
+      tbody.innerHTML = `<tr><td colspan="11" class="text-error text-xs text-center py-4">${e.message}</td></tr>`;
+      return;
+    }
+    const liveByAccount = {};
+    for (const acc of new Set(dbRows.map(p => p.accountId))) {
+      try {
+        const r = await api(`/api/v1/accounts/${acc}/live-positions`);
+        liveByAccount[acc] = r.error ? [] : r.positions;
+      } catch (e) { liveByAccount[acc] = []; }
+    }
+    allPositions = dbRows.map(p => {
+      const live = (liveByAccount[p.accountId] || []).find(l => l.symbol === p.symbol && !l.flat);
+      const exchange = (accounts.find(a => a.id === p.accountId) || {}).exchange || '';
+      const qty = live ? live.qty : parseFloat(p.quantity);
+      const mark = live ? live.markPrice : null;
+      const leverage = live ? live.leverage : null;
+      const notional = mark != null ? qty * mark : null;
+      const margin = notional != null && leverage ? notional / leverage : null;
+      return {
+        positionId: p.id, accountId: p.accountId, exchange, symbol: p.symbol, side: p.side,
+        qty, entry: parseFloat(p.entryPrice), mark, leverage,
+        notional, margin, upnl: live ? live.unrealizedPnl : null,
+      };
+    });
+    renderPositionsTable();
+  }
+
+  function renderPositionsTable() {
+    let rows = allPositions.filter(p =>
+      (!posFilterAccount || p.accountId === posFilterAccount) &&
+      (!posFilterSymbol || p.symbol.toLowerCase().includes(posFilterSymbol.toLowerCase())));
+    if (posSortKey) {
+      rows = rows.slice().sort((a, b) => {
+        const av = a[posSortKey], bv = b[posSortKey];
+        if (av == null) return 1;
+        if (bv == null) return -1;
+        return (av > bv ? 1 : av < bv ? -1 : 0) * posSortDir;
+      });
+    }
+    const tbody = document.getElementById('posTbody');
+    tbody.innerHTML = rows.map(p => `
+      <tr data-position-id="${p.positionId}">
+        <td><input type="checkbox" class="checkbox checkbox-xs pos-select" value="${p.positionId}" /></td>
+        <td class="mono text-xs">${p.accountId}</td>
+        <td class="mono">${p.symbol} <span class="badge badge-ghost badge-xs">${p.exchange}</span></td>
+        <td><span class="badge badge-success badge-xs">${p.side}</span></td>
+        <td class="text-right mono">${p.qty}</td>
+        <td class="text-right mono">${p.notional != null ? '$' + fmt(p.notional) : '—'}</td>
+        <td class="text-right mono text-base-content/60">${p.margin != null ? '$' + fmt(p.margin) : '—'}</td>
+        <td class="text-right mono">${fmt(p.entry)}</td>
+        <td class="text-right mono">${p.mark != null ? fmt(p.mark) : '—'}</td>
+        <td class="text-right mono ${p.upnl != null ? (p.upnl >= 0 ? 'pnl-pos' : 'pnl-neg') : ''}">${p.upnl != null ? (p.upnl >= 0 ? '+' : '') + fmt(p.upnl) : '—'}</td>
+        <td class="text-center"><button class="btn btn-xs btn-outline btn-error open-close" data-position-id="${p.positionId}">Закрыть</button></td>
+      </tr>`).join('') || '<tr><td colspan="11" class="text-center text-base-content/40 py-6">нет открытых позиций</td></tr>';
+
+    tbody.querySelectorAll('.open-close').forEach(b => b.addEventListener('click', () => openCloseModal(+b.dataset.positionId)));
+    tbody.querySelectorAll('.pos-select').forEach(cb => cb.addEventListener('change', updateBulkBar));
+    updateBulkBar();
+  }
+
+  document.getElementById('filterAccount').addEventListener('change', e => { posFilterAccount = e.target.value; renderPositionsTable(); });
+  document.getElementById('filterSymbol').addEventListener('input', e => { posFilterSymbol = e.target.value; renderPositionsTable(); });
+  document.getElementById('refreshPositionsBtn').addEventListener('click', loadPositions);
+  document.querySelectorAll('#posTable th.sortable, th.sortable').forEach(th => th.addEventListener('click', () => {
+    const key = th.dataset.key;
+    posSortDir = (posSortKey === key) ? -posSortDir : 1;
+    posSortKey = key;
+    renderPositionsTable();
+  }));
+  document.getElementById('selectAllPos').addEventListener('change', e => {
+    document.querySelectorAll('.pos-select').forEach(cb => cb.checked = e.target.checked);
+    updateBulkBar();
+  });
+
+  function updateBulkBar() {
+    const checked = document.querySelectorAll('.pos-select:checked');
+    document.getElementById('bulkBar').classList.toggle('hidden', checked.length < 2);
+    document.getElementById('bulkCount').textContent = checked.length;
+  }
+
+  // ---- Single close modal ----
+  const closeModal = document.getElementById('closeModal');
+  let closeTarget = null;
+  let closeType = 'MARKET';
+  function openCloseModal(positionId) {
+    closeTarget = allPositions.find(p => p.positionId === positionId);
+    if (!closeTarget) return;
+    document.getElementById('closeModalSymbol').textContent = closeTarget.symbol;
+    document.getElementById('closeModalQty').textContent = closeTarget.qty + ' (' + closeTarget.side + ')';
+    document.getElementById('closeModalAccount').textContent = closeTarget.accountId;
+    document.getElementById('closeQtyInput').value = closeTarget.qty;
+    document.getElementById('closePctSlider').value = 100;
+    document.getElementById('closePctLabel').textContent = 100;
+    document.getElementById('closeModalError').classList.add('hidden');
+    setCloseType('MARKET');
+    closeModal.showModal();
+  }
+  function setCloseType(t) {
+    closeType = t;
+    document.getElementById('closeTypeMarket').classList.toggle('btn-active', t === 'MARKET');
+    document.getElementById('closeTypeLimit').classList.toggle('btn-active', t === 'LIMIT');
+    document.getElementById('closeLimitPriceWrap').classList.toggle('hidden', t !== 'LIMIT');
+    updateCloseConfirmLabel();
+  }
+  function updateCloseConfirmLabel() {
+    document.getElementById('closeConfirmPrefix').textContent = closeType === 'MARKET' ? 'Закрыть market' : 'Поставить limit';
+  }
+  document.getElementById('closeTypeMarket').addEventListener('click', () => setCloseType('MARKET'));
+  document.getElementById('closeTypeLimit').addEventListener('click', () => setCloseType('LIMIT'));
+  document.getElementById('closePctSlider').addEventListener('input', e => {
+    const pct = +e.target.value;
+    document.getElementById('closePctLabel').textContent = pct;
+    document.getElementById('closeConfirmPct').textContent = pct + '%';
+    document.getElementById('closeQtyInput').value = closeTarget ? +(closeTarget.qty * pct / 100).toFixed(6) : '';
+  });
+  document.getElementById('closeQtyInput').addEventListener('input', e => {
+    if (!closeTarget) return;
+    const pct = Math.max(0, Math.min(100, Math.round((+e.target.value / closeTarget.qty) * 100)));
+    document.getElementById('closePctSlider').value = pct;
+    document.getElementById('closePctLabel').textContent = pct;
+    document.getElementById('closeConfirmPct').textContent = pct + '%';
+  });
+  document.getElementById('closeConfirmBtn').addEventListener('click', async () => {
+    if (!closeTarget) return;
+    const qty = parseFloat(document.getElementById('closeQtyInput').value);
+    const errEl = document.getElementById('closeModalError');
+    errEl.classList.add('hidden');
+    if (!qty || qty <= 0) { errEl.textContent = 'qty должен быть положительным'; errEl.classList.remove('hidden'); return; }
+    const price = closeType === 'LIMIT' ? document.getElementById('closeLimitPrice').value : null;
+    if (closeType === 'LIMIT' && !price) { errEl.textContent = 'укажи цену для limit'; errEl.classList.remove('hidden'); return; }
+    try {
+      const resp = await api(`/api/v1/positions/${closeTarget.positionId}/close`, {
+        method: 'POST',
+        body: JSON.stringify({ type: closeType, qty: String(qty), price: price ? String(price) : null }),
+      });
+      closeModal.close();
+      showError(resp.message || 'отправлено'); // reuse the banner for a success toast too — good enough for now
+      setTimeout(loadPositions, 1500);
+    } catch (e) {
+      errEl.textContent = e.message;
+      errEl.classList.remove('hidden');
+    }
+  });
+
+  // ---- Bulk close modal (always market, one % applied to each position's own qty) ----
+  const bulkModal = document.getElementById('bulkCloseModal');
+  let bulkTargets = [];
+  document.getElementById('bulkCloseBtn').addEventListener('click', () => {
+    const ids = [...document.querySelectorAll('.pos-select:checked')].map(cb => +cb.value);
+    bulkTargets = allPositions.filter(p => ids.includes(p.positionId));
+    document.getElementById('bulkModalCount').textContent = bulkTargets.length;
+    document.getElementById('bulkPctSlider').value = 100;
+    document.getElementById('bulkPctLabel').textContent = 100;
+    document.getElementById('bulkConfirmPct').textContent = '100%';
+    document.getElementById('bulkModalStatus').textContent = '';
+    renderBulkPreview(100);
+    bulkModal.showModal();
+  });
+  document.getElementById('bulkPctSlider').addEventListener('input', e => {
+    const pct = +e.target.value;
+    document.getElementById('bulkPctLabel').textContent = pct;
+    document.getElementById('bulkConfirmPct').textContent = pct + '%';
+    renderBulkPreview(pct);
+  });
+  function renderBulkPreview(pct) {
+    document.getElementById('bulkPreviewTbody').innerHTML = bulkTargets.map(p => `
+      <tr><td class="mono">${p.symbol}</td><td class="mono text-xs">${p.accountId}</td>
+      <td class="text-right mono">${(p.qty * pct / 100).toFixed(6)}</td></tr>`).join('');
+  }
+  document.getElementById('bulkConfirmBtn').addEventListener('click', async () => {
+    const pct = +document.getElementById('bulkPctSlider').value;
+    const statusEl = document.getElementById('bulkModalStatus');
+    let ok = 0, fail = 0;
+    for (const p of bulkTargets) {
+      const qty = +(p.qty * pct / 100).toFixed(6);
+      if (qty <= 0) { continue; }
+      try {
+        await api(`/api/v1/positions/${p.positionId}/close`, {
+          method: 'POST', body: JSON.stringify({ type: 'MARKET', qty: String(qty) }),
+        });
+        ok++;
+      } catch (e) { fail++; }
+      statusEl.textContent = `отправлено: ${ok} ок, ${fail} ошибок из ${bulkTargets.length}`;
+    }
+    setTimeout(() => { bulkModal.close(); loadPositions(); }, 1200);
   });
 
   updateMarginEst();
