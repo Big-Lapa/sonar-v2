@@ -132,6 +132,13 @@ public class PositionOpsService {
         // clamp against the same stale qty and together send reduce-only for more than the actual
         // position — on a venue where reduceOnly is enforced loosely for limit orders that can flip
         // the position instead of just failing.
+        //
+        // KNOWN GAP (PR #2 follow-up review): forExchange resolves ONE reader per VENUE, not per
+        // ACCOUNT — inherited from the same pattern every adapter lookup in this codebase already
+        // uses (accountRegistry.byId(...).exchange() -> one shared client per exchange). With today's
+        // one-account-per-exchange config it can't misfire, but a second account on the same venue
+        // would read that OTHER account's live qty here. Fixing this for real means per-account API
+        // client wiring throughout the execution layer, not a local patch to this one clamp.
         BigDecimal liveQty = accountReaders.forExchange(account.exchange())
                 .map(reader -> reader.getPositions().stream()
                         .filter(p -> position.getSymbol().equals(p.symbol()) && !p.isFlat())

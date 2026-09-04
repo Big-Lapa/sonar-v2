@@ -219,12 +219,15 @@ public class ProposalExecutionService {
                 && existingPosition.getEntryPrice() != null
                 && existingPosition.getQuantity() != null && existingPosition.getQuantity().signum() > 0;
 
-        // Cap the position's COMBINED notional/leverage against the account's own caps, not just
-        // this leg's — sizeManual/size only ever clamp the notional of the single order being
-        // sized, so N add-ons at the per-order cap would otherwise sum to N times the account limit
-        // with nothing in the pipeline ever noticing.
-        if (isAddOn) {
-            String rejectReason = checkAddOnCaps(accountId, existingPosition, leg.qty(), new BigDecimal(proposal.getEntryPrice()));
+        // Cap the account's COMMITTED notional/leverage — existing open position PLUS every still-
+        // pending LIMIT order on the symbol PLUS this leg — against its own caps. sizeManual/size
+        // only ever clamp the notional of the single order being sized, so N add-ons (or N pending
+        // LIMIT entries that haven't filled yet — review follow-up, PR #2) at the per-order cap
+        // would otherwise sum to N times the account limit with nothing in the pipeline noticing
+        // until they've all landed.
+        {
+            String rejectReason = checkNotionalCaps(accountId, proposal.getSymbol(),
+                    existingPosition, leg.qty(), new BigDecimal(proposal.getEntryPrice()));
             if (rejectReason != null) {
                 return ExecutionLegResult.failed(accountId, rejectReason);
             }
@@ -244,7 +247,7 @@ public class ProposalExecutionService {
         String commandId = UUID.randomUUID().toString();
         orderCommandRepository.save(new OrderCommandEntity(commandId, accountId, proposal.getProposalId(),
                 clientOrderId, exchangeLabel, proposal.getSymbol(), "LONG", "OPEN", leg.qty(),
-                isLimit ? "LIMIT" : "MARKET", System.currentTimeMillis()));
+                isLimit ? "LIMIT" : "MARKET", limitPrice, System.currentTimeMillis()));
 
         OrderEntity order = new OrderEntity(clientOrderId, commandId, accountId, exchangeLabel, proposal.getSymbol(),
                 "LONG", "OPEN", leg.qty(), System.currentTimeMillis());
@@ -383,23 +386,32 @@ public class ProposalExecutionService {
 
     /**
      * Null (approved) or a rejection reason. Mirrors the caps {@link com.sonar.trading.sizing.RiskBasedPositionSizer}
-     * already enforces on a single order, but against the position's COMBINED size — {@code sizeManual}
-     * has no notion of "there's already $900 open on this symbol", so ten $1000 add-ons under a
-     * $1000-per-order cap would otherwise sum to $10 000 with nothing in the pipeline noticing.
+     * already enforces on a single order, but against what the account is actually COMMITTED to —
+     * {@code sizeManual} only ever clamps the notional of the order being sized right now, with no
+     * notion of "there's already $900 open" (add-on) or "there are three $400 LIMIT entries still
+     * resting, unfilled" (review follow-up, PR #2: a pending LIMIT order reserves nothing anywhere
+     * in the pipeline, so N of them under the per-order cap would each pass this gate independently
+     * and could all land together, well past the account's real limit).
      */
-    private String checkAddOnCaps(String accountId, PositionEntity existingPosition, BigDecimal legQty, BigDecimal entry) {
+    private String checkNotionalCaps(String accountId, String symbol, PositionEntity existingPosition,
+                                     BigDecimal legQty, BigDecimal entry) {
         AccountRiskEntity riskEntity = accountRiskRepository.findById(accountId).orElse(null);
         if (riskEntity == null) {
             return null; // no profile row yet — same as previewOne, shouldn't happen post-preview
         }
         AccountRiskProfile profile = AccountRiskProfile.from(riskEntity);
-        BigDecimal existingNotional = existingPosition.getQuantity().multiply(existingPosition.getEntryPrice());
-        BigDecimal combinedNotional = existingNotional.add(legQty.multiply(entry));
+        BigDecimal existingNotional = existingPosition != null && existingPosition.getQuantity() != null
+                && existingPosition.getEntryPrice() != null
+                ? existingPosition.getQuantity().multiply(existingPosition.getEntryPrice()) : BigDecimal.ZERO;
+        BigDecimal pendingNotional = pendingLimitNotional(accountId, symbol);
+        BigDecimal legNotional = legQty.multiply(entry);
+        BigDecimal committedNotional = existingNotional.add(pendingNotional).add(legNotional);
 
-        if (combinedNotional.compareTo(profile.maxPositionNotional()) > 0) {
-            return "доливка превысит лимит аккаунта по нотионалу: было $" + existingNotional.setScale(2, java.math.RoundingMode.HALF_UP)
-                    + " + новое $" + legQty.multiply(entry).setScale(2, java.math.RoundingMode.HALF_UP)
-                    + " = $" + combinedNotional.setScale(2, java.math.RoundingMode.HALF_UP)
+        if (committedNotional.compareTo(profile.maxPositionNotional()) > 0) {
+            return "превысит лимит аккаунта по нотионалу: открыто $" + existingNotional.setScale(2, java.math.RoundingMode.HALF_UP)
+                    + " + в резерве (pending limit) $" + pendingNotional.setScale(2, java.math.RoundingMode.HALF_UP)
+                    + " + новое $" + legNotional.setScale(2, java.math.RoundingMode.HALF_UP)
+                    + " = $" + committedNotional.setScale(2, java.math.RoundingMode.HALF_UP)
                     + " > лимит $" + profile.maxPositionNotional().setScale(2, java.math.RoundingMode.HALF_UP);
         }
 
@@ -410,14 +422,32 @@ public class ProposalExecutionService {
             BigDecimal equity = new BigDecimal(baseline.getEquityAtOpen());
             if (equity.signum() > 0) {
                 BigDecimal maxLeverageNotional = equity.multiply(BigDecimal.valueOf(profile.maxLeverage()));
-                if (combinedNotional.compareTo(maxLeverageNotional) > 0) {
-                    return "доливка превысит лимит аккаунта по плечу: итоговый нотионал $"
-                            + combinedNotional.setScale(2, java.math.RoundingMode.HALF_UP)
+                if (committedNotional.compareTo(maxLeverageNotional) > 0) {
+                    return "превысит лимит аккаунта по плечу: итоговый нотионал $"
+                            + committedNotional.setScale(2, java.math.RoundingMode.HALF_UP)
                             + " > equity×maxLeverage $" + maxLeverageNotional.setScale(2, java.math.RoundingMode.HALF_UP);
                 }
             }
         }
         return null;
+    }
+
+    /** Sum of qty×limitPrice for every still-resting LIMIT entry on this account+symbol —
+     *  OrderEntity carries no price of its own, so each active order's price comes from its
+     *  OrderCommandEntity (small N per account, a per-order lookup is not worth a join for). */
+    private BigDecimal pendingLimitNotional(String accountId, String symbol) {
+        BigDecimal total = BigDecimal.ZERO;
+        for (OrderEntity order : orderRepository.findAllActiveByAccountId(accountId)) {
+            if (!"OPEN".equals(order.getAction()) || !symbol.equals(order.getSymbol())) {
+                continue;
+            }
+            OrderCommandEntity cmd = orderCommandRepository.findByCommandId(order.getCommandId()).orElse(null);
+            if (cmd == null || !"LIMIT".equals(cmd.getOrderType()) || cmd.getPrice() == null) {
+                continue;
+            }
+            total = total.add(order.getQuantity().multiply(cmd.getPrice()));
+        }
+        return total;
     }
 
     private void markInboxDone(String idempotencyKey, String accountId) {
