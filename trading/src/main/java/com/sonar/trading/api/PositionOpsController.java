@@ -19,6 +19,8 @@ public class PositionOpsController {
 
     public record CloseAllRequest(String account, String symbol) {}
     public record MoveStopRequest(String type, String price) {}
+    /** @param type MARKET or LIMIT. @param price required for LIMIT, ignored for MARKET. */
+    public record ClosePartialRequest(String type, String qty, String price) {}
     public record OpResponse(boolean ok, String message) {}
 
     @PostMapping("/api/v1/trade/close-all")
@@ -40,6 +42,23 @@ public class PositionOpsController {
             return ResponseEntity.badRequest().body(new OpResponse(false, "type и price обязательны"));
         }
         return respond(service.move(id, req.type(), new BigDecimal(req.price())));
+    }
+
+    /** Manual trading panel: close some (or all) of a position's quantity, market or limit. */
+    @PostMapping("/api/v1/positions/{id}/close")
+    public ResponseEntity<OpResponse> closePartial(@PathVariable Long id, @RequestBody ClosePartialRequest req) {
+        if (req.type() == null || req.qty() == null) {
+            return ResponseEntity.badRequest().body(new OpResponse(false, "type и qty обязательны"));
+        }
+        BigDecimal qty;
+        BigDecimal price;
+        try {
+            qty = new BigDecimal(req.qty());
+            price = req.price() != null && !req.price().isBlank() ? new BigDecimal(req.price()) : null;
+        } catch (NumberFormatException e) {
+            return ResponseEntity.badRequest().body(new OpResponse(false, "qty/price: некорректное число"));
+        }
+        return respond(service.closePartial(id, req.type(), qty, price));
     }
 
     private ResponseEntity<OpResponse> respond(PositionOpsService.OpResult result) {

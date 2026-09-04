@@ -147,6 +147,15 @@ public class BingxFuturesHttpService implements BingxFuturesClient {
         return parseJsonToMap(postSigned("/openApi/swap/v2/trade/closeAllPositions", q));
     }
 
+    /** {@code POST /openApi/swap/v2/trade/leverage}. {@code positionSide} required even one-way. */
+    public Map<String, Object> setLeverage(String symbol, String positionSide, int leverage) {
+        Map<String, String> q = new LinkedHashMap<>();
+        q.put("symbol", symbol);
+        q.put("side", positionSide);
+        q.put("leverage", String.valueOf(leverage));
+        return parseJsonToMap(postSigned("/openApi/swap/v2/trade/leverage", q));
+    }
+
     // ---- Account / market endpoints ----
 
     /** All open orders for a symbol, including pending TP/SL conditional orders. */

@@ -54,8 +54,8 @@
 const $ = (s, el) => (el || document).querySelector(s);
 const $$ = (s, el) => Array.from((el || document).querySelectorAll(s));
 
-function getToken() { return localStorage.getItem('adminToken') || ''; }
-function setToken(t) { localStorage.setItem('adminToken', t); }
+function getToken() { return localStorage.getItem('sonar_admin_token') || ''; }
+function setToken(t) { localStorage.setItem('sonar_admin_token', t); }
 
 $('#btn-token').onclick = (e) => {
   e.preventDefault();

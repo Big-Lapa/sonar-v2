@@ -1,0 +1,1066 @@
+<!DOCTYPE html>
+<html lang="ru" data-theme="night">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Sonar-2 · Futures</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/daisyui@5.5.19/daisyui.css">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/daisyui@5.5.19/themes.css">
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.2.4/dist/index.global.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  :where(.grid, .flex) > * { min-width: 0; }
+  :where(p, h1, h2, h3, h4, li, dd, blockquote, figcaption, td, th, .badge, .label) { overflow-wrap: anywhere; }
+  :where(img, svg, video, canvas, iframe) { max-width: 100%; }
+  body { background: var(--color-base-300); }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  #tv_chart { width: 100%; height: 100%; }
+  .side-btn { flex: 1; }
+  .fade-in { animation: fadeIn .18s ease-out; }
+  @keyframes fadeIn { from { opacity:0; transform: translateY(4px);} to {opacity:1; transform:none;} }
+  th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+  th.sortable:hover { color: var(--color-primary); }
+  .pnl-pos { color: var(--color-success); }
+  .pnl-neg { color: var(--color-error); }
+  .bulk-bar { position: sticky; bottom: 0.5rem; z-index: 10; }
+
+  /* Custom slider fill: DaisyUI's .range track is opaque and covers any background painted on the
+     input itself, so the "filled" portion never actually reaches the value it reports (100% looks
+     like ~85%). A real track+fill div underneath a transparent, appearance:none input sidesteps
+     the browser/library quirk entirely instead of fighting it. */
+  .slider-shell { position: relative; height: 0.5rem; }
+  .slider-track { position: absolute; inset: 0; border-radius: 9999px; background: var(--color-base-300); }
+  .slider-fill { position: absolute; inset: 0 auto 0 0; border-radius: 9999px; background: var(--color-error); width: 100%; }
+  .slider-input { position: absolute; inset: -0.5rem 0; width: 100%; margin: 0; appearance: none; background: transparent !important; cursor: pointer; outline: none !important; border: none !important; box-shadow: none !important; }
+  .slider-input:focus, .slider-input:focus-visible { outline: none !important; box-shadow: none !important; }
+  .slider-input::-webkit-slider-runnable-track { background: transparent !important; height: 0.5rem !important; border: none !important; box-shadow: none !important; }
+  .slider-input::-webkit-slider-thumb { appearance: none; width: 16px; height: 16px; border-radius: 9999px; background: #fff; border: 3px solid var(--color-error); margin-top: -4px; cursor: pointer; box-shadow: none !important; }
+  .slider-input::-moz-range-track { background: transparent !important; height: 0.5rem !important; border: none !important; box-shadow: none !important; }
+  .slider-input::-moz-range-thumb { width: 16px; height: 16px; border-radius: 9999px; background: #fff; border: 3px solid var(--color-error); cursor: pointer; box-shadow: none !important; }
+  .slider-input::-moz-range-progress { background: transparent !important; }
+</style>
+</head>
+<body class="min-h-screen text-base-content">
+
+<!-- ============ TOKEN GATE ============ -->
+<dialog id="tokenModal" class="modal">
+  <div class="modal-box">
+    <h3 class="font-bold text-lg">Admin token</h3>
+    <p class="text-sm text-base-content/60 mt-1">Тот же X-Admin-Token, что в .env (ADMIN_TOKEN). Хранится только в этом браузере.</p>
+    <input id="tokenInput" type="password" class="input input-bordered w-full mt-3 mono" placeholder="токен" />
+    <div class="modal-action">
+      <button id="tokenSave" class="btn btn-primary">Сохранить</button>
+    </div>
+  </div>
+</dialog>
+
+<!-- ============ TOP BAR ============ -->
+<div class="navbar bg-base-100 border-b border-base-content/10 px-4 min-h-14">
+  <div class="flex-1 flex items-center gap-2">
+    <span class="text-lg font-bold tracking-tight">Sonar<span class="text-primary">-2</span></span>
+    <span class="badge badge-ghost badge-sm">manual mode</span>
+  </div>
+  <div id="acctBar" class="flex-none flex items-center gap-3 text-sm"></div>
+  <button id="changeTokenBtn" class="btn btn-ghost btn-xs ml-3">токен</button>
+</div>
+
+<!-- ============ TABS ============ -->
+<div role="tablist" class="tabs tabs-lift px-4 pt-2 bg-base-100 border-b border-base-content/10">
+  <button role="tab" id="tabBtnTrading" class="tab tab-active">Trading</button>
+  <button role="tab" id="tabBtnManagement" class="tab">Management</button>
+</div>
+
+<div id="tabTrading">
+
+<div id="globalError" class="px-4 pt-3 hidden">
+  <div role="alert" class="alert alert-error alert-soft py-2 text-sm"><span id="globalErrorText"></span></div>
+</div>
+
+<!-- ============ BALANCES ============ -->
+<div class="px-4 pt-4">
+  <h2 class="text-sm font-semibold text-base-content/60 mb-2">Балансы</h2>
+  <div id="balanceCards" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3"></div>
+</div>
+
+<!-- ============ MAIN LAYOUT ============ -->
+<main class="p-4 grid grid-cols-1 xl:grid-cols-[1fr_380px] gap-4 items-start">
+
+  <!-- ---- Chart ---- -->
+  <div class="card bg-base-100 border border-base-content/10">
+    <div class="card-body p-3 gap-2">
+      <div class="flex items-center gap-2 flex-wrap">
+        <div class="join">
+          <input id="symbolInput" list="symbolList" value="BTCUSDT" class="input input-sm join-item mono w-32" placeholder="Символ" />
+          <button id="symbolGo" class="btn btn-sm join-item">График</button>
+        </div>
+        <datalist id="symbolList">
+          <option value="BTCUSDT"></option>
+          <option value="ETHUSDT"></option>
+          <option value="SOLUSDT"></option>
+          <option value="XRPUSDT"></option>
+          <option value="DOGEUSDT"></option>
+          <option value="BNBUSDT"></option>
+        </datalist>
+        <div class="flex gap-1 ml-auto">
+          <button class="btn btn-xs btn-ghost tf-btn" data-tf="15">15м</button>
+          <button class="btn btn-xs btn-ghost tf-btn tf-active btn-active" data-tf="60">1ч</button>
+          <button class="btn btn-xs btn-ghost tf-btn" data-tf="240">4ч</button>
+          <button class="btn btn-xs btn-ghost tf-btn" data-tf="D">1д</button>
+        </div>
+      </div>
+      <div class="rounded-box overflow-hidden border border-base-content/10" style="height: 560px;">
+        <div id="tv_chart"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ---- Order ticket ---- -->
+  <div class="card bg-base-100 border border-base-content/10 sticky top-4">
+    <div class="card-body p-4 gap-3">
+      <h2 class="card-title text-base">Новая позиция <span id="tickerLabel" class="badge badge-primary badge-outline mono">BTCUSDT</span></h2>
+      <div class="text-xs text-base-content/60">mark ≈ <span id="markPriceLabel" class="mono">—</span> <button id="refreshPriceBtn" class="link link-hover ml-1">↻</button></div>
+
+      <!-- Side -->
+      <div class="flex gap-2" role="group" aria-label="сторона">
+        <button type="button" id="sideLong" class="btn btn-success side-btn" data-side="LONG">Long</button>
+        <div class="tooltip flex-1" data-tip="Short пока не поддержан — система LONG-only">
+          <button type="button" id="sideShort" class="btn btn-outline btn-error side-btn w-full btn-disabled" disabled>Short <span class="badge badge-xs ml-1">скоро</span></button>
+        </div>
+      </div>
+
+      <!-- Order type -->
+      <fieldset class="fieldset py-0">
+        <legend class="fieldset-legend text-xs">Тип ордера</legend>
+        <div class="join w-full">
+          <button type="button" id="typeMarket" class="btn btn-sm join-item flex-1 btn-active">Market</button>
+          <button type="button" id="typeLimit" class="btn btn-sm join-item flex-1">Limit</button>
+        </div>
+      </fieldset>
+
+      <!-- Limit price (hidden unless Limit) -->
+      <label id="limitPriceWrap" class="input input-sm w-full hidden fade-in">
+        <span class="label mono text-xs">Цена входа</span>
+        <input id="limitPrice" type="number" step="any" class="mono" placeholder="0.00" />
+      </label>
+
+      <!-- Notional + leverage -->
+      <div class="grid grid-cols-2 gap-2">
+        <label class="input input-sm w-full">
+          <span class="label text-xs">Нотионал $</span>
+          <input id="notional" type="number" step="any" value="500" class="mono" />
+        </label>
+        <label class="input input-sm w-full">
+          <span class="label text-xs">Плечо</span>
+          <input id="leverage" type="number" min="1" max="125" value="20" class="mono" />
+        </label>
+      </div>
+      <div class="flex gap-1 -mt-1">
+        <button type="button" class="btn btn-xs btn-ghost lev-quick" data-lev="5">5x</button>
+        <button type="button" class="btn btn-xs btn-ghost lev-quick" data-lev="10">10x</button>
+        <button type="button" class="btn btn-xs btn-ghost lev-quick" data-lev="20">20x</button>
+        <button type="button" class="btn btn-xs btn-ghost lev-quick" data-lev="50">50x</button>
+        <button type="button" class="btn btn-xs btn-ghost lev-quick" data-lev="100">100x</button>
+        <span id="marginEst" class="ml-auto text-xs text-base-content/60 self-center mono">маржа ≈ $25.00</span>
+      </div>
+
+      <!-- SL / TP -->
+      <div class="grid grid-cols-2 gap-2">
+        <label class="input input-sm w-full">
+          <span class="label text-xs text-error">SL</span>
+          <input id="slPrice" type="number" step="any" placeholder="0.00" class="mono" />
+        </label>
+        <label class="input input-sm w-full">
+          <span class="label text-xs text-success">TP</span>
+          <input id="tpPrice" type="number" step="any" placeholder="0.00" class="mono" />
+        </label>
+      </div>
+      <div id="rrHint" class="text-xs text-base-content/50 -mt-1">укажи SL и TP для расчёта R:R</div>
+
+      <!-- Accounts -->
+      <fieldset class="fieldset py-0">
+        <legend class="fieldset-legend text-xs">Аккаунты (открыть на каждом отдельно)</legend>
+        <div id="accountChecks" class="flex flex-col gap-1.5"></div>
+      </fieldset>
+
+      <div role="alert" class="alert alert-info alert-soft py-2 text-xs">
+        Несколько аккаунтов ⇒ отдельный proposal на каждый, один и тот же нотионал/плечо на все.
+      </div>
+
+      <button id="previewBtn" class="btn btn-primary btn-block mt-1">Проверить →</button>
+    </div>
+  </div>
+
+  <!-- ---- Preview / confirm (full width, appears after "Проверить") ---- -->
+  <div id="previewSection" class="xl:col-span-2 hidden fade-in">
+    <div class="card bg-base-100 border border-base-content/10">
+      <div class="card-body p-4 gap-3">
+        <div class="flex items-center justify-between">
+          <h3 class="font-semibold">Risk-preview по аккаунтам</h3>
+          <button id="confirmAllBtn" class="btn btn-success btn-sm">Подтвердить все approved</button>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="table table-sm">
+            <thead>
+              <tr><th>Аккаунт</th><th>Статус</th><th>Qty</th><th>Risk $</th><th>Причина отказа</th><th></th></tr>
+            </thead>
+            <tbody id="previewTbody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<!-- ============ POSITIONS ============ -->
+<section class="px-4 pb-4">
+  <div class="flex items-center justify-between mb-2 flex-wrap gap-2">
+    <h2 class="text-sm font-semibold text-base-content/60">Открытые позиции</h2>
+    <div class="flex items-center gap-2">
+      <select id="filterAccount" class="select select-sm w-40">
+        <option value="">Все аккаунты</option>
+      </select>
+      <select id="filterSymbol" class="select select-sm w-40 mono">
+        <option value="">Все символы</option>
+      </select>
+      <button id="refreshPositionsBtn" class="btn btn-sm btn-ghost">↻</button>
+    </div>
+  </div>
+
+  <div class="card bg-base-100 border border-base-content/10">
+    <div class="card-body p-0">
+      <div class="overflow-x-auto">
+        <table class="table table-sm">
+          <thead>
+            <tr>
+              <th class="w-8"><input type="checkbox" id="selectAllPos" class="checkbox checkbox-xs" /></th>
+              <th class="sortable" data-key="accountId">Аккаунт ⇅</th>
+              <th class="sortable" data-key="symbol">Контракт ⇅</th>
+              <th>Side</th>
+              <th class="sortable text-right" data-key="qty">Кол-во ⇅</th>
+              <th class="sortable text-right" data-key="notional">Нотионал ⇅</th>
+              <th class="text-right">Маржа</th>
+              <th class="text-right">Entry</th>
+              <th class="text-right">Mark</th>
+              <th class="text-right">SL / TP</th>
+              <th class="sortable text-right" data-key="upnl">uPnL ⇅</th>
+              <th class="text-center">Закрыть</th>
+            </tr>
+          </thead>
+          <tbody id="posTbody"><tr><td colspan="12" class="text-center text-base-content/40 py-6">загрузка…</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <div id="bulkBar" class="bulk-bar hidden fade-in mt-2">
+    <div class="alert bg-base-100 border border-primary/30 flex items-center justify-between shadow-lg">
+      <span class="text-sm"><b id="bulkCount">0</b> позиций выбрано</span>
+      <button id="bulkCloseBtn" class="btn btn-error btn-sm">Закрыть выбранные →</button>
+    </div>
+  </div>
+</section>
+
+<!-- ============ OPEN ORDERS ============ -->
+<section class="px-4 pb-4">
+  <div class="flex items-center justify-between mb-2 flex-wrap gap-2">
+    <h2 class="text-sm font-semibold text-base-content/60">Открытые ордера</h2>
+    <div class="flex items-center gap-2">
+      <select id="ordersAccount" class="select select-sm w-40"></select>
+      <input id="ordersSymbol" class="input input-sm w-32 mono" placeholder="Символ" value="BTCUSDT" />
+      <button id="refreshOrdersBtn" class="btn btn-sm btn-ghost">↻</button>
+    </div>
+  </div>
+  <div class="card bg-base-100 border border-base-content/10">
+    <div class="card-body p-0">
+      <div class="overflow-x-auto">
+        <table class="table table-sm">
+          <thead>
+            <tr>
+              <th>Тип</th><th>Side</th><th class="text-right">Qty</th><th class="text-right">Цена</th>
+              <th>Статус</th><th class="text-center">Отмена</th>
+            </tr>
+          </thead>
+          <tbody id="ordersTbody"><tr><td colspan="6" class="text-center text-base-content/40 py-6">укажи аккаунт и символ</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</section>
+
+</div><!-- /tabTrading -->
+
+<div id="tabManagement" class="hidden">
+  <iframe id="managementFrame" style="width:100%; height: calc(100vh - 105px); border: 0;"></iframe>
+</div>
+
+<!-- ============ CLOSE MODAL (single position) ============ -->
+<dialog id="closeModal" class="modal">
+  <div class="modal-box max-w-md">
+    <h3 class="font-bold text-lg">Закрыть позицию <span id="closeModalSymbol" class="badge badge-outline mono ml-1"></span></h3>
+    <p class="text-xs text-base-content/50 mt-1">Открыто: <span id="closeModalQty" class="mono"></span> · счёт <span id="closeModalAccount" class="mono"></span></p>
+
+    <div class="join w-full mt-4">
+      <button type="button" id="closeTypeMarket" class="btn btn-sm join-item flex-1 btn-active">Market</button>
+      <button type="button" id="closeTypeLimit" class="btn btn-sm join-item flex-1">Limit</button>
+    </div>
+
+    <label id="closeLimitPriceWrap" class="input input-sm w-full mt-3 hidden fade-in">
+      <span class="label mono text-xs">Цена</span>
+      <input id="closeLimitPrice" type="number" step="any" class="mono" placeholder="0.00" />
+    </label>
+
+    <div class="mt-4">
+      <div class="flex items-center justify-between text-xs text-base-content/60 mb-1">
+        <span>Размер закрытия</span>
+        <span><span id="closePctLabel">100</span>%</span>
+      </div>
+      <input id="closeQtyInput" type="number" step="any" class="input input-sm w-full mono mb-2" />
+      <div class="slider-shell">
+        <div class="slider-track"></div>
+        <div id="closeFillBar" class="slider-fill"></div>
+        <input id="closePctSlider" type="range" min="0" max="100" value="100" class="slider-input" />
+      </div>
+      <div class="flex justify-between text-[10px] text-base-content/40 mt-1"><span>0%</span><span>25%</span><span>50%</span><span>75%</span><span>100%</span></div>
+    </div>
+    <div id="closeModalError" class="text-error text-xs mt-2 hidden"></div>
+
+    <div class="modal-action">
+      <form method="dialog"><button class="btn btn-sm">Отмена</button></form>
+      <button id="closeConfirmBtn" class="btn btn-error btn-sm"><span id="closeConfirmPrefix">Закрыть market</span>&nbsp;<span id="closeConfirmPct">100%</span></button>
+    </div>
+  </div>
+  <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<!-- ============ BULK CLOSE MODAL ============ -->
+<dialog id="bulkCloseModal" class="modal">
+  <div class="modal-box max-w-md">
+    <h3 class="font-bold text-lg">Закрыть <span id="bulkModalCount">0</span> позиций</h3>
+    <p class="text-xs text-base-content/50 mt-1">Один процент на все — размеры позиций разные, qty каждой считается от её собственного объёма. Всегда market.</p>
+
+    <div class="mt-4">
+      <div class="flex items-center justify-between text-xs text-base-content/60 mb-1">
+        <span>Размер закрытия (для каждой позиции)</span>
+        <span><span id="bulkPctLabel">100</span>%</span>
+      </div>
+      <div class="slider-shell">
+        <div class="slider-track"></div>
+        <div id="bulkFillBar" class="slider-fill"></div>
+        <input id="bulkPctSlider" type="range" min="0" max="100" value="100" class="slider-input" />
+      </div>
+      <div class="flex justify-between text-[10px] text-base-content/40 mt-1"><span>0%</span><span>25%</span><span>50%</span><span>75%</span><span>100%</span></div>
+    </div>
+
+    <div class="mt-3 rounded-box border border-base-content/10 overflow-hidden max-h-48 overflow-y-auto">
+      <table class="table table-xs">
+        <thead><tr><th>Контракт</th><th>Счёт</th><th class="text-right">Закроется</th></tr></thead>
+        <tbody id="bulkPreviewTbody"></tbody>
+      </table>
+    </div>
+    <div id="bulkModalStatus" class="text-xs mt-2"></div>
+
+    <div class="modal-action">
+      <form method="dialog"><button class="btn btn-sm">Отмена</button></form>
+      <button id="bulkConfirmBtn" class="btn btn-error btn-sm">Закрыть все market <span id="bulkConfirmPct">100%</span></button>
+    </div>
+  </div>
+  <form method="dialog" class="modal-backdrop"><button>close</button></form>
+</dialog>
+
+<script src="https://s3.tradingview.com/tv.js"></script>
+<script>
+  const API_BASE = '';
+  let token = localStorage.getItem('sonar_admin_token') || '';
+  let accounts = []; // [{id, exchange, tradable}]
+  let side = 'LONG';
+  let orderType = 'MARKET';
+  let currentSymbol = 'BTCUSDT';
+  let currentTf = '60';
+  let currentMarkPrice = null;
+  // proposalId -> {accountId, approved} for the confirm step
+  let previewState = [];
+
+  // At 100%, use the position's own qty untouched — going through qty*pct/100 then toFixed(6)
+  // loses precision for real (small lot steps, or big qty on coins like 1000PEPE), and the server
+  // floors again on top of that, so "close 100%" was reliably leaving dust behind.
+  function pctQty(qty, pct) {
+    return pct >= 100 ? qty : +(qty * pct / 100).toFixed(6);
+  }
+
+  // HTML-escape untrusted text (exchange/exception messages) before it lands in an innerHTML
+  // template string — the panel is behind ADMIN_TOKEN with one operator, so this isn't guarding
+  // against a real attacker, but it costs nothing and these strings genuinely aren't ours.
+  function esc(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  // ---- Auth ----
+  const tokenModal = document.getElementById('tokenModal');
+  function ensureToken() {
+    if (!token) {
+      tokenModal.showModal();
+      return false;
+    }
+    return true;
+  }
+  document.getElementById('tokenSave').addEventListener('click', () => {
+    const v = document.getElementById('tokenInput').value.trim();
+    if (!v) return;
+    token = v;
+    localStorage.setItem('sonar_admin_token', v);
+    tokenModal.close();
+    init();
+  });
+  document.getElementById('changeTokenBtn').addEventListener('click', () => {
+    document.getElementById('tokenInput').value = token;
+    tokenModal.showModal();
+  });
+
+  async function api(path, opts = {}) {
+    const resp = await fetch(API_BASE + path, {
+      ...opts,
+      headers: { 'Content-Type': 'application/json', 'X-Admin-Token': token, ...(opts.headers || {}) },
+    });
+    if (resp.status === 401) {
+      showError('неверный admin token');
+      localStorage.removeItem('sonar_admin_token');
+      token = '';
+      tokenModal.showModal();
+      throw new Error('unauthorized');
+    }
+    let body = null;
+    try { body = await resp.json(); } catch (e) { /* no body */ }
+    if (!resp.ok) {
+      throw new Error((body && (body.error || body.message)) || `HTTP ${resp.status}`);
+    }
+    return body;
+  }
+
+  function showError(msg) {
+    const el = document.getElementById('globalError');
+    document.getElementById('globalErrorText').textContent = msg;
+    el.classList.remove('hidden');
+    setTimeout(() => el.classList.add('hidden'), 6000);
+  }
+
+  // ---- Init: accounts + balances ----
+  async function init() {
+    if (!ensureToken()) return;
+    try {
+      accounts = await api('/api/v1/accounts');
+    } catch (e) {
+      showError('не удалось загрузить аккаунты: ' + e.message);
+      return;
+    }
+    renderAccountBar();
+    renderAccountChecks();
+    renderBalanceCards();
+    populateAccountFilter();
+    populateOrdersAccount();
+    refreshPrice();
+    loadPositions();
+  }
+
+  function populateAccountFilter() {
+    const sel = document.getElementById('filterAccount');
+    sel.innerHTML = '<option value="">Все аккаунты</option>' +
+      accounts.map(a => `<option value="${a.id}">${a.id}</option>`).join('');
+  }
+
+  // ---- Tabs: Trading / Management (management is the pre-manual-mode risk/strategy/blacklist
+  // admin.html, embedded as an iframe rather than reimplemented — same X-Admin-Token via the
+  // shared sonar_admin_token localStorage key, lazy-loaded on first switch to it). ----
+  const tabBtnTrading = document.getElementById('tabBtnTrading');
+  const tabBtnManagement = document.getElementById('tabBtnManagement');
+  const tabTrading = document.getElementById('tabTrading');
+  const tabManagement = document.getElementById('tabManagement');
+  const managementFrame = document.getElementById('managementFrame');
+  tabBtnTrading.addEventListener('click', () => {
+    tabBtnTrading.classList.add('tab-active');
+    tabBtnManagement.classList.remove('tab-active');
+    tabTrading.classList.remove('hidden');
+    tabManagement.classList.add('hidden');
+  });
+  tabBtnManagement.addEventListener('click', () => {
+    tabBtnManagement.classList.add('tab-active');
+    tabBtnTrading.classList.remove('tab-active');
+    tabManagement.classList.remove('hidden');
+    tabTrading.classList.add('hidden');
+    if (!managementFrame.getAttribute('src')) managementFrame.src = '/admin.html';
+  });
+
+  // ---- Open orders (cancel-order screen) ----
+  function populateOrdersAccount() {
+    const sel = document.getElementById('ordersAccount');
+    sel.innerHTML = accounts.map(a => `<option value="${a.id}">${a.id} (${a.exchange})</option>`).join('');
+  }
+  async function loadOpenOrders() {
+    const accountId = document.getElementById('ordersAccount').value;
+    const symbol = document.getElementById('ordersSymbol').value.trim().toUpperCase();
+    const tbody = document.getElementById('ordersTbody');
+    if (!accountId || !symbol) {
+      tbody.innerHTML = '<tr><td colspan="6" class="text-center text-base-content/40 py-6">укажи аккаунт и символ</td></tr>';
+      return;
+    }
+    tbody.innerHTML = '<tr><td colspan="6" class="text-center text-base-content/40 py-6">загрузка…</td></tr>';
+    try {
+      const resp = await api(`/api/v1/accounts/${accountId}/orders?symbol=${encodeURIComponent(symbol)}`);
+      if (resp.error) { tbody.innerHTML = `<tr><td colspan="6" class="text-center text-error text-xs py-6">${esc(resp.error)}</td></tr>`; return; }
+      if (!resp.orders.length) { tbody.innerHTML = '<tr><td colspan="6" class="text-center text-base-content/40 py-6">нет открытых ордеров</td></tr>'; return; }
+      tbody.innerHTML = resp.orders.map(o => `
+        <tr>
+          <td class="mono text-xs">${esc(o.type ?? '—')}</td>
+          <td><span class="badge badge-ghost badge-xs">${esc(o.side ?? '—')}</span></td>
+          <td class="text-right mono">${o.qty ?? '—'}</td>
+          <td class="text-right mono">${o.price ?? '—'}</td>
+          <td class="text-xs">${esc(o.status ?? '—')}</td>
+          <td class="text-center"><button class="btn btn-xs btn-outline btn-error cancel-order" data-order-id="${esc(o.orderId)}">Отменить</button></td>
+        </tr>`).join('');
+      tbody.querySelectorAll('.cancel-order').forEach(btn => btn.addEventListener('click', () => cancelOrder(btn)));
+    } catch (e) {
+      tbody.innerHTML = `<tr><td colspan="6" class="text-center text-error text-xs py-6">${esc(e.message)}</td></tr>`;
+    }
+  }
+  async function cancelOrder(btn) {
+    const accountId = document.getElementById('ordersAccount').value;
+    const symbol = document.getElementById('ordersSymbol').value.trim().toUpperCase();
+    const orderId = btn.dataset.orderId;
+    btn.disabled = true;
+    btn.textContent = '...';
+    try {
+      await api(`/api/v1/accounts/${accountId}/orders/${encodeURIComponent(orderId)}/cancel?symbol=${encodeURIComponent(symbol)}`,
+        { method: 'POST' });
+      loadOpenOrders();
+    } catch (e) {
+      btn.disabled = false;
+      btn.textContent = 'Отменить';
+      showError('не удалось отменить ордер: ' + e.message);
+    }
+  }
+  document.getElementById('refreshOrdersBtn').addEventListener('click', loadOpenOrders);
+  document.getElementById('ordersAccount').addEventListener('change', loadOpenOrders);
+  document.getElementById('ordersSymbol').addEventListener('keydown', e => { if (e.key === 'Enter') loadOpenOrders(); });
+
+  async function renderBalanceCards() {
+    const wrap = document.getElementById('balanceCards');
+    wrap.innerHTML = accounts.map(a => `
+      <div class="card bg-base-100 border border-base-content/10" data-balance-card="${a.id}">
+        <div class="card-body p-4 gap-1">
+          <div class="flex items-center justify-between">
+            <span class="font-semibold">${a.id}</span>
+            <span class="badge badge-ghost badge-xs">${a.exchange}</span>
+          </div>
+          <div class="text-xs text-base-content/50">загрузка…</div>
+        </div>
+      </div>`).join('');
+    for (const a of accounts) {
+      const card = wrap.querySelector(`[data-balance-card="${a.id}"] .card-body`);
+      try {
+        const b = await api(`/api/v1/accounts/${a.id}/balance?refresh=true`);
+        if (!card) continue;
+        if (b.error) {
+          card.querySelector('div:last-child').outerHTML = `<div class="text-error text-xs">${esc(b.error)}</div>`;
+          continue;
+        }
+        const upnl = parseFloat(b.unrealizedPnl);
+        card.querySelector('div:last-child').outerHTML = `
+          <div class="stats stats-horizontal bg-transparent p-0">
+            <div class="stat py-0 pl-1 pr-4">
+              <div class="stat-title text-xs">Equity</div>
+              <div class="stat-value text-lg mono">${fmt(b.equity ?? b.balance)}</div>
+              <div class="stat-desc text-xs">${b.asset ?? ''}</div>
+            </div>
+            <div class="stat py-0 pl-4 pr-1">
+              <div class="stat-title text-xs">uPnL</div>
+              <div class="stat-value text-lg mono ${Number.isFinite(upnl) ? (upnl >= 0 ? 'pnl-pos' : 'pnl-neg') : ''}">${Number.isFinite(upnl) ? (upnl >= 0 ? '+' : '') + fmt(upnl) : '—'}</div>
+            </div>
+          </div>`;
+      } catch (e) { /* card already shows a spinner-ish state; leave it */ }
+    }
+  }
+
+  async function renderAccountBar() {
+    const bar = document.getElementById('acctBar');
+    bar.innerHTML = accounts.map(a =>
+      `<span class="flex items-center gap-1.5" data-acct-status="${a.id}">
+         <span class="inline-block w-2 h-2 rounded-full bg-base-content/20"></span>
+         ${a.id} <span class="mono text-base-content/60">…</span>
+       </span>`).join('');
+    for (const a of accounts) {
+      try {
+        const b = await api(`/api/v1/accounts/${a.id}/balance?refresh=true`);
+        const el = bar.querySelector(`[data-acct-status="${a.id}"]`);
+        if (!el) continue;
+        if (b.error) {
+          el.innerHTML = `<span class="inline-block w-2 h-2 rounded-full bg-error"></span>${a.id} <span class="text-error text-xs">${esc(b.error)}</span>`;
+        } else {
+          el.innerHTML = `<span class="inline-block w-2 h-2 rounded-full bg-success"></span>${a.id} <span class="mono text-base-content/60">${fmt(b.equity ?? b.balance)} ${b.asset ?? ''}</span>`;
+        }
+      } catch (e) { /* per-account failure already surfaced inline */ }
+    }
+  }
+
+  function renderAccountChecks() {
+    const wrap = document.getElementById('accountChecks');
+    wrap.innerHTML = accounts.map(a => `
+      <label class="label cursor-pointer justify-start gap-2 px-2 py-1.5 rounded-btn hover:bg-base-200">
+        <input type="checkbox" class="checkbox checkbox-sm account-cb" value="${a.id}" data-exchange="${a.exchange}" checked ${a.tradable ? '' : 'disabled'} />
+        <span class="flex-1">${a.id} <span class="badge badge-ghost badge-xs">${a.exchange}</span>${a.tradable ? '' : ' <span class=\"badge badge-warning badge-xs\">not tradable</span>'}</span>
+      </label>`).join('');
+  }
+
+  function fmt(v) { const n = parseFloat(v); return Number.isFinite(n) ? n.toLocaleString('en-US', { maximumFractionDigits: 4 }) : (v ?? '—'); }
+
+  /** The exchange doesn't always reflect a just-filled reduce-only order in the very next read
+   *  (same eventual-consistency window StopGuard has to retry around server-side) — one refresh
+   *  right after a close can still show the pre-close qty. Refresh now and twice more shortly
+   *  after instead of a single delayed guess. */
+  function refreshPositionsSoon() {
+    loadPositions();
+    setTimeout(loadPositions, 1500);
+    setTimeout(loadPositions, 3500);
+  }
+
+  /** Paints the custom .slider-fill div under the (visually transparent) range input — see the
+   *  .slider-shell CSS comment for why DaisyUI's own track fill isn't used. */
+  function paintSlider(fillBarId, pct) {
+    document.getElementById(fillBarId).style.width = pct + '%';
+  }
+
+  // ---- Chart ----
+  function renderChart(symbol, tf) {
+    document.getElementById('tv_chart').innerHTML = '';
+    try {
+      new TradingView.widget({
+        autosize: true, symbol: 'BYBIT:' + symbol + '.P', interval: tf, timezone: 'Etc/UTC',
+        theme: 'dark', style: '1', locale: 'ru', toolbar_bg: '#1d232a',
+        enable_publishing: false, save_image: false, container_id: 'tv_chart',
+      });
+    } catch (e) {
+      document.getElementById('tv_chart').innerHTML =
+        '<div class="flex items-center justify-center h-full text-base-content/50 text-sm">TradingView недоступен</div>';
+    }
+  }
+  renderChart(currentSymbol, currentTf);
+
+  document.getElementById('symbolGo').addEventListener('click', updateSymbol);
+  document.getElementById('symbolInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') updateSymbol(); });
+  function updateSymbol() {
+    const v = document.getElementById('symbolInput').value.trim().toUpperCase();
+    if (!v) return;
+    currentSymbol = v;
+    document.getElementById('tickerLabel').textContent = v;
+    renderChart(currentSymbol, currentTf);
+    refreshPrice();
+  }
+  document.querySelectorAll('.tf-btn').forEach(btn => btn.addEventListener('click', () => {
+    document.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('tf-active', 'btn-active'));
+    btn.classList.add('tf-active', 'btn-active');
+    currentTf = btn.dataset.tf;
+    renderChart(currentSymbol, currentTf);
+  }));
+
+  // ---- Live mark price (first checked account's venue — same convention as the drift gate) ----
+  document.getElementById('refreshPriceBtn').addEventListener('click', refreshPrice);
+  async function refreshPrice() {
+    if (!token) return;
+    const firstCb = document.querySelector('.account-cb:checked') || document.querySelector('.account-cb');
+    const exchange = firstCb ? firstCb.dataset.exchange : (accounts[0] && accounts[0].exchange);
+    if (!exchange) return;
+    try {
+      const r = await api(`/api/v1/market/price?symbol=${encodeURIComponent(currentSymbol)}&exchange=${encodeURIComponent(exchange)}`);
+      if (r.error) { document.getElementById('markPriceLabel').textContent = r.error; return; }
+      currentMarkPrice = parseFloat(r.price);
+      document.getElementById('markPriceLabel').textContent = r.price + ' (' + exchange + ')';
+      if (orderType === 'MARKET') updateMarginEst();
+      updateRr();
+    } catch (e) { document.getElementById('markPriceLabel').textContent = 'н/д'; }
+  }
+
+  // ---- Side toggle (Short disabled — see button) ----
+  document.getElementById('sideLong').addEventListener('click', () => { side = 'LONG'; });
+
+  // ---- Order type toggle ----
+  const typeMarketBtn = document.getElementById('typeMarket');
+  const typeLimitBtn = document.getElementById('typeLimit');
+  const limitWrap = document.getElementById('limitPriceWrap');
+  function setType(t) {
+    orderType = t;
+    typeMarketBtn.classList.toggle('btn-active', t === 'MARKET');
+    typeLimitBtn.classList.toggle('btn-active', t === 'LIMIT');
+    limitWrap.classList.toggle('hidden', t !== 'LIMIT');
+  }
+  typeMarketBtn.addEventListener('click', () => setType('MARKET'));
+  typeLimitBtn.addEventListener('click', () => setType('LIMIT'));
+
+  // ---- Leverage quick buttons + margin estimate ----
+  const notionalInput = document.getElementById('notional');
+  const leverageInput = document.getElementById('leverage');
+  const marginEstEl = document.getElementById('marginEst');
+  document.querySelectorAll('.lev-quick').forEach(b => b.addEventListener('click', () => {
+    leverageInput.value = b.dataset.lev;
+    updateMarginEst();
+  }));
+  function updateMarginEst() {
+    const n = parseFloat(notionalInput.value) || 0;
+    const l = parseFloat(leverageInput.value) || 1;
+    marginEstEl.textContent = 'маржа ≈ $' + (n / l).toFixed(2);
+  }
+  notionalInput.addEventListener('input', updateMarginEst);
+  leverageInput.addEventListener('input', updateMarginEst);
+
+  // ---- R:R hint ----
+  const slInput = document.getElementById('slPrice');
+  const tpInput = document.getElementById('tpPrice');
+  const rrHint = document.getElementById('rrHint');
+  function referenceEntry() {
+    if (orderType === 'LIMIT') { const v = parseFloat(document.getElementById('limitPrice').value); return Number.isFinite(v) ? v : null; }
+    return currentMarkPrice;
+  }
+  function updateRr() {
+    const sl = parseFloat(slInput.value), tp = parseFloat(tpInput.value), entry = referenceEntry();
+    if (!sl || !tp || !entry) { rrHint.textContent = 'укажи SL и TP для расчёта R:R'; return; }
+    const risk = Math.abs(entry - sl), reward = Math.abs(tp - entry);
+    const rr = risk > 0 ? (reward / risk).toFixed(2) : '—';
+    rrHint.textContent = `R:R ≈ ${rr} (от цены ${entry})`;
+  }
+  slInput.addEventListener('input', updateRr);
+  tpInput.addEventListener('input', updateRr);
+  document.getElementById('limitPrice').addEventListener('input', updateRr);
+
+  // ---- Preview: creates one proposal per checked account, shows risk-preview rows ----
+  const previewSection = document.getElementById('previewSection');
+  const previewTbody = document.getElementById('previewTbody');
+  document.getElementById('previewBtn').addEventListener('click', async () => {
+    if (!ensureToken()) return;
+    const checked = [...document.querySelectorAll('.account-cb:checked')];
+    if (checked.length === 0) { showError('выбери хотя бы один аккаунт'); return; }
+    const entry = referenceEntry();
+    if (!entry) { showError('нет цены входа — дождись котировки или укажи limit-цену'); return; }
+    const sl = slInput.value, tp = tpInput.value;
+    if (!sl || !tp) { showError('укажи SL и TP'); return; }
+
+    previewTbody.innerHTML = '<tr><td colspan="6" class="text-center text-base-content/50">считаю...</td></tr>';
+    previewSection.classList.remove('hidden');
+    previewState = [];
+    const confirmAllBtn = document.getElementById('confirmAllBtn');
+    confirmAllBtn.disabled = false;
+    confirmAllBtn.textContent = 'Подтвердить все approved';
+
+    for (const cb of checked) {
+      const accountId = cb.value;
+      const row = document.createElement('tr');
+      row.className = 'preview-row';
+      try {
+        const resp = await api('/api/v1/strategy/proposals', {
+          method: 'POST',
+          body: JSON.stringify({
+            accountId, symbol: currentSymbol, entryPrice: String(entry), slPrice: sl, tpPrice: tp,
+            rationale: 'manual panel', notional: notionalInput.value || null,
+            leverage: Number.isFinite(parseInt(leverageInput.value, 10)) ? parseInt(leverageInput.value, 10) : null,
+            orderType,
+          }),
+        });
+        const leg = resp.accounts[0];
+        previewState.push({ proposalId: resp.proposalId, accountId, approved: leg.approved });
+        row.dataset.proposalId = resp.proposalId;
+        row.innerHTML = leg.approved
+          ? `<td class="mono">${accountId}</td><td><span class="badge badge-success badge-sm">approved</span></td>
+             <td class="mono">${leg.qty ?? '—'}</td><td class="mono">${leg.riskUsd ?? '—'}</td><td class="text-base-content/40">—</td>
+             <td><button class="btn btn-xs btn-success confirm-one">Подтвердить</button></td>`
+          : `<td class="mono">${accountId}</td><td><span class="badge badge-error badge-sm">rejected</span></td>
+             <td class="text-base-content/40">—</td><td class="text-base-content/40">—</td>
+             <td class="text-xs">${esc(leg.rejectReason ?? '—')}</td><td></td>`;
+      } catch (e) {
+        row.innerHTML = `<td class="mono">${accountId}</td><td><span class="badge badge-error badge-sm">error</span></td>
+             <td colspan="3" class="text-xs text-error">${esc(e.message)}</td><td></td>`;
+      }
+      if (previewTbody.querySelector('td[colspan]')) previewTbody.innerHTML = '';
+      previewTbody.appendChild(row);
+    }
+
+    previewTbody.querySelectorAll('.confirm-one').forEach(btn => btn.addEventListener('click', () => confirmRow(btn)));
+    previewSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  });
+
+  // Replaces btn with a <span class="badge {cls}">{text}</span>, text always via textContent —
+  // these strings come from exchange/exception responses, not fully trusted input.
+  function replaceWithBadge(btn, cls, text) {
+    const span = document.createElement('span');
+    span.className = 'badge badge-outline ' + cls;
+    span.textContent = text;
+    btn.replaceWith(span);
+  }
+
+  async function confirmRow(btn) {
+    const row = btn.closest('tr');
+    const proposalId = row.dataset.proposalId;
+    btn.disabled = true;
+    btn.textContent = '...';
+    try {
+      const resp = await api(`/api/v1/strategy/proposals/${proposalId}/confirm`, { method: 'POST' });
+      if (resp.status === 'ABORTED') {
+        replaceWithBadge(btn, 'badge-error', '⛔ ' + (resp.abortReason || 'отменено'));
+        return;
+      }
+      const leg = resp.accounts[0];
+      if (leg && leg.success && leg.filledQty == null) {
+        // LIMIT entry placed but not yet filled — live on the exchange, not a position yet.
+        replaceWithBadge(btn, 'badge-warning', '⏳ ' + (leg.errorReason || 'лимитный ордер выставлен'));
+      } else if (leg && leg.success) {
+        replaceWithBadge(btn, 'badge-success', 'открыто ✓ @ ' + (leg.avgPrice ?? ''));
+        refreshPrice();
+        refreshPositionsSoon();
+      } else {
+        replaceWithBadge(btn, 'badge-error', '✗ ' + ((leg && leg.errorReason) || 'ошибка'));
+      }
+    } catch (e) {
+      replaceWithBadge(btn, 'badge-error', '✗ ' + e.message);
+    }
+  }
+  document.getElementById('confirmAllBtn').addEventListener('click', async (ev) => {
+    // Sequential, not N parallel POSTs: each confirm is its own market order, and firing them all
+    // at once gives no place to see "3 of 5 done" or react to one failing mid-batch.
+    const allBtn = ev.currentTarget;
+    const buttons = [...previewTbody.querySelectorAll('.confirm-one')];
+    allBtn.disabled = true;
+    let done = 0;
+    for (const btn of buttons) {
+      allBtn.textContent = `Подтверждаю... (${done}/${buttons.length})`;
+      await confirmRow(btn);
+      done++;
+    }
+    allBtn.textContent = `Подтверждено ${done}/${buttons.length}`;
+  });
+
+  // ---- Positions: DB rows (id, entry, sl/tp) merged with per-account live rows (mark/uPnL/leverage) ----
+  let allPositions = []; // merged rows, each carries positionId (DB id) for close actions
+  let posFilterAccount = '', posFilterSymbol = '';
+  let posSortKey = null, posSortDir = 1;
+
+  async function loadPositions() {
+    const tbody = document.getElementById('posTbody');
+    let dbRows;
+    try {
+      dbRows = await api('/api/v1/trade/positions');
+    } catch (e) {
+      tbody.innerHTML = `<tr><td colspan="12" class="text-error text-xs text-center py-4">${esc(e.message)}</td></tr>`;
+      return;
+    }
+    const liveByAccount = {};
+    for (const acc of new Set(dbRows.map(p => p.accountId))) {
+      try {
+        const r = await api(`/api/v1/accounts/${acc}/live-positions`);
+        liveByAccount[acc] = r.error ? [] : r.positions;
+      } catch (e) { liveByAccount[acc] = []; }
+    }
+    allPositions = dbRows.map(p => {
+      const live = (liveByAccount[p.accountId] || []).find(l => l.symbol === p.symbol && !l.flat);
+      // No live row = flat on the exchange (the live-positions endpoint already filters flat rows
+      // out server-side). The DB row can still say OPEN for up to a minute (MinutePoller hasn't
+      // reconciled yet) — falling back to its now-stale qty would show a "ghost" position that's
+      // actually fully closed. Drop it instead; it disappears from the table the moment the
+      // exchange itself shows it flat, not a minute later.
+      if (!live) return null;
+      const exchange = (accounts.find(a => a.id === p.accountId) || {}).exchange || '';
+      const notional = live.markPrice != null ? live.qty * live.markPrice : null;
+      const margin = notional != null && live.leverage ? notional / live.leverage : null;
+      return {
+        positionId: p.id, accountId: p.accountId, exchange, symbol: p.symbol, side: p.side,
+        qty: live.qty, entry: parseFloat(p.entryPrice), mark: live.markPrice, leverage: live.leverage,
+        notional, margin, upnl: live.unrealizedPnl,
+        sl: p.slPrice != null ? parseFloat(p.slPrice) : null,
+        tp: p.tpPrice != null ? parseFloat(p.tpPrice) : null,
+      };
+    }).filter(Boolean);
+    populateSymbolFilter();
+    renderPositionsTable();
+  }
+
+  /** Dropdown only ever lists symbols that currently have an open position — a free-text filter
+   *  made it too easy to type a symbol that isn't open and stare at an empty table. */
+  function populateSymbolFilter() {
+    const sel = document.getElementById('filterSymbol');
+    const prev = sel.value;
+    const symbols = [...new Set(allPositions.map(p => p.symbol))].sort();
+    sel.innerHTML = '<option value="">Все символы</option>' + symbols.map(s => `<option value="${s}">${s}</option>`).join('');
+    if (symbols.includes(prev)) sel.value = prev;
+    else posFilterSymbol = '';
+  }
+
+  function renderPositionsTable() {
+    let rows = allPositions.filter(p =>
+      (!posFilterAccount || p.accountId === posFilterAccount) &&
+      (!posFilterSymbol || p.symbol.toLowerCase().includes(posFilterSymbol.toLowerCase())));
+    if (posSortKey) {
+      rows = rows.slice().sort((a, b) => {
+        const av = a[posSortKey], bv = b[posSortKey];
+        if (av == null) return 1;
+        if (bv == null) return -1;
+        return (av > bv ? 1 : av < bv ? -1 : 0) * posSortDir;
+      });
+    }
+    const tbody = document.getElementById('posTbody');
+    tbody.innerHTML = rows.map(p => `
+      <tr data-position-id="${p.positionId}">
+        <td><input type="checkbox" class="checkbox checkbox-xs pos-select" value="${p.positionId}" /></td>
+        <td class="mono text-xs">${p.accountId}</td>
+        <td class="mono">${p.symbol} <span class="badge badge-ghost badge-xs">${p.exchange}</span></td>
+        <td><span class="badge badge-success badge-xs">${p.side}</span></td>
+        <td class="text-right mono">${p.qty}</td>
+        <td class="text-right mono">${p.notional != null ? '$' + fmt(p.notional) : '—'}</td>
+        <td class="text-right mono text-base-content/60">${p.margin != null ? '$' + fmt(p.margin) : '—'}</td>
+        <td class="text-right mono">${fmt(p.entry)}</td>
+        <td class="text-right mono">${p.mark != null ? fmt(p.mark) : '—'}</td>
+        <td class="text-right mono text-xs"><span class="text-error">${p.sl != null ? fmt(p.sl) : '—'}</span> / <span class="text-success">${p.tp != null ? fmt(p.tp) : '—'}</span></td>
+        <td class="text-right mono ${p.upnl != null ? (p.upnl >= 0 ? 'pnl-pos' : 'pnl-neg') : ''}">${p.upnl != null ? (p.upnl >= 0 ? '+' : '') + fmt(p.upnl) : '—'}</td>
+        <td class="text-center"><button class="btn btn-xs btn-outline btn-error open-close" data-position-id="${p.positionId}">Закрыть</button></td>
+      </tr>`).join('') || '<tr><td colspan="12" class="text-center text-base-content/40 py-6">нет открытых позиций</td></tr>';
+
+    tbody.querySelectorAll('.open-close').forEach(b => b.addEventListener('click', () => openCloseModal(+b.dataset.positionId)));
+    tbody.querySelectorAll('.pos-select').forEach(cb => cb.addEventListener('change', updateBulkBar));
+    updateBulkBar();
+  }
+
+  document.getElementById('filterAccount').addEventListener('change', e => { posFilterAccount = e.target.value; renderPositionsTable(); });
+  document.getElementById('filterSymbol').addEventListener('change', e => { posFilterSymbol = e.target.value; renderPositionsTable(); });
+  document.getElementById('refreshPositionsBtn').addEventListener('click', loadPositions);
+  document.querySelectorAll('th.sortable').forEach(th => th.addEventListener('click', () => {
+    const key = th.dataset.key;
+    posSortDir = (posSortKey === key) ? -posSortDir : 1;
+    posSortKey = key;
+    renderPositionsTable();
+  }));
+  document.getElementById('selectAllPos').addEventListener('change', e => {
+    document.querySelectorAll('.pos-select').forEach(cb => cb.checked = e.target.checked);
+    updateBulkBar();
+  });
+
+  function updateBulkBar() {
+    const checked = document.querySelectorAll('.pos-select:checked');
+    document.getElementById('bulkBar').classList.toggle('hidden', checked.length < 1);
+    document.getElementById('bulkCount').textContent = checked.length;
+  }
+
+  // ---- Single close modal ----
+  const closeModal = document.getElementById('closeModal');
+  let closeTarget = null;
+  let closeType = 'MARKET';
+  function openCloseModal(positionId) {
+    closeTarget = allPositions.find(p => p.positionId === positionId);
+    if (!closeTarget) return;
+    document.getElementById('closeModalSymbol').textContent = closeTarget.symbol;
+    document.getElementById('closeModalQty').textContent = closeTarget.qty + ' (' + closeTarget.side + ')';
+    document.getElementById('closeModalAccount').textContent = closeTarget.accountId;
+    document.getElementById('closeQtyInput').value = closeTarget.qty;
+    document.getElementById('closePctSlider').value = 100;
+    document.getElementById('closePctLabel').textContent = 100;
+    document.getElementById('closeConfirmPct').textContent = '100%';
+    document.getElementById('closeLimitPrice').value = closeTarget.entry;
+    document.getElementById('closeModalError').classList.add('hidden');
+    setCloseType('MARKET');
+    paintSlider('closeFillBar', 100);
+    closeModal.showModal();
+  }
+  function setCloseType(t) {
+    closeType = t;
+    document.getElementById('closeTypeMarket').classList.toggle('btn-active', t === 'MARKET');
+    document.getElementById('closeTypeLimit').classList.toggle('btn-active', t === 'LIMIT');
+    document.getElementById('closeLimitPriceWrap').classList.toggle('hidden', t !== 'LIMIT');
+    updateCloseConfirmLabel();
+  }
+  function updateCloseConfirmLabel() {
+    document.getElementById('closeConfirmPrefix').textContent = closeType === 'MARKET' ? 'Закрыть market' : 'Поставить limit';
+  }
+  document.getElementById('closeTypeMarket').addEventListener('click', () => setCloseType('MARKET'));
+  document.getElementById('closeTypeLimit').addEventListener('click', () => setCloseType('LIMIT'));
+  document.getElementById('closePctSlider').addEventListener('input', e => {
+    const pct = +e.target.value;
+    paintSlider('closeFillBar', pct);
+    document.getElementById('closePctLabel').textContent = pct;
+    document.getElementById('closeConfirmPct').textContent = pct + '%';
+    document.getElementById('closeQtyInput').value = closeTarget ? pctQty(closeTarget.qty, pct) : '';
+  });
+  document.getElementById('closeQtyInput').addEventListener('input', e => {
+    if (!closeTarget) return;
+    const pct = Math.max(0, Math.min(100, Math.round((+e.target.value / closeTarget.qty) * 100)));
+    const slider = document.getElementById('closePctSlider');
+    slider.value = pct;
+    paintSlider('closeFillBar', pct);
+    document.getElementById('closePctLabel').textContent = pct;
+    document.getElementById('closeConfirmPct').textContent = pct + '%';
+  });
+  document.getElementById('closeConfirmBtn').addEventListener('click', async () => {
+    if (!closeTarget) return;
+    const qty = parseFloat(document.getElementById('closeQtyInput').value);
+    const errEl = document.getElementById('closeModalError');
+    errEl.classList.add('hidden');
+    if (!qty || qty <= 0) { errEl.textContent = 'qty должен быть положительным'; errEl.classList.remove('hidden'); return; }
+    const price = closeType === 'LIMIT' ? document.getElementById('closeLimitPrice').value : null;
+    if (closeType === 'LIMIT' && !price) { errEl.textContent = 'укажи цену для limit'; errEl.classList.remove('hidden'); return; }
+    try {
+      const resp = await api(`/api/v1/positions/${closeTarget.positionId}/close`, {
+        method: 'POST',
+        body: JSON.stringify({ type: closeType, qty: String(qty), price: price ? String(price) : null }),
+      });
+      closeModal.close();
+      showError(resp.message || 'отправлено'); // reuse the banner for a success toast too — good enough for now
+      refreshPositionsSoon();
+    } catch (e) {
+      errEl.textContent = e.message;
+      errEl.classList.remove('hidden');
+    }
+  });
+
+  // ---- Bulk close modal (always market, one % applied to each position's own qty) ----
+  const bulkModal = document.getElementById('bulkCloseModal');
+  let bulkTargets = [];
+  document.getElementById('bulkCloseBtn').addEventListener('click', () => {
+    const ids = [...document.querySelectorAll('.pos-select:checked')].map(cb => +cb.value);
+    bulkTargets = allPositions.filter(p => ids.includes(p.positionId));
+    document.getElementById('bulkModalCount').textContent = bulkTargets.length;
+    const bulkSlider = document.getElementById('bulkPctSlider');
+    bulkSlider.value = 100;
+    paintSlider('bulkFillBar', 100);
+    document.getElementById('bulkPctLabel').textContent = 100;
+    document.getElementById('bulkConfirmPct').textContent = '100%';
+    document.getElementById('bulkModalStatus').textContent = '';
+    renderBulkPreview(100);
+    bulkModal.showModal();
+  });
+  document.getElementById('bulkPctSlider').addEventListener('input', e => {
+    const pct = +e.target.value;
+    paintSlider('bulkFillBar', pct);
+    document.getElementById('bulkPctLabel').textContent = pct;
+    document.getElementById('bulkConfirmPct').textContent = pct + '%';
+    renderBulkPreview(pct);
+  });
+  function renderBulkPreview(pct) {
+    document.getElementById('bulkPreviewTbody').innerHTML = bulkTargets.map(p => `
+      <tr><td class="mono">${p.symbol}</td><td class="mono text-xs">${p.accountId}</td>
+      <td class="text-right mono">${pctQty(p.qty, pct)}</td></tr>`).join('');
+  }
+  document.getElementById('bulkConfirmBtn').addEventListener('click', async () => {
+    const pct = +document.getElementById('bulkPctSlider').value;
+    const statusEl = document.getElementById('bulkModalStatus');
+    let ok = 0, fail = 0;
+    for (const p of bulkTargets) {
+      const qty = pctQty(p.qty, pct);
+      if (qty <= 0) { continue; }
+      try {
+        await api(`/api/v1/positions/${p.positionId}/close`, {
+          method: 'POST', body: JSON.stringify({ type: 'MARKET', qty: String(qty) }),
+        });
+        ok++;
+      } catch (e) { fail++; }
+      statusEl.textContent = `отправлено: ${ok} ок, ${fail} ошибок из ${bulkTargets.length}`;
+    }
+    setTimeout(() => { bulkModal.close(); refreshPositionsSoon(); }, 1200);
+  });
+
+  updateMarginEst();
+  init();
+</script>
+</body>
+</html>

@@ -1,10 +1,8 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Interval } from '@nestjs/schedule';
-import { TelegramClientService, InlineButton } from './telegram-client.service';
+import { TelegramClientService } from './telegram-client.service';
 import { isAllowedChat } from './access-guard';
-import { formatExecutionReport, formatProposalMessage } from './format';
 import { TradingApiService } from '../trading-client/trading-api.service';
-import { SearchOrchestratorService } from '../search/search-orchestrator.service';
 
 interface PendingPin {
   description: string;
@@ -13,16 +11,16 @@ interface PendingPin {
 }
 
 /**
- * 5: the whole Telegram state machine. Single poller (getUpdates), single bot — grabля #8.
- * Phase lives in trading.strategy_state (this service is stateless across restarts except for
- * in-memory-only concerns explicitly called out below).
+ * Manual ops only — the LLM candidate-search pipeline (/search, the cron/close-triggered
+ * "начать поиск?" prompt, proposal open/reject buttons) has been retired; this bot is now a thin
+ * remote control for balances/positions/stop moves, plus a relay for trading's own notifications.
+ * Single poller (getUpdates), single bot — grabля #8.
  */
 @Injectable()
 export class TelegramBotService implements OnModuleInit {
   private readonly logger = new Logger(TelegramBotService.name);
 
   private offset = 0;
-  private searching = false;
   /** In-memory only — a restart forgets a pending PIN confirmation; the operator just retries
    *  the command. Not worth persisting for a 60s confirmation window. */
   private readonly pendingPins = new Map<string, PendingPin>();
@@ -32,7 +30,6 @@ export class TelegramBotService implements OnModuleInit {
   constructor(
     private readonly telegram: TelegramClientService,
     private readonly tradingApi: TradingApiService,
-    private readonly search: SearchOrchestratorService,
   ) {}
 
   onModuleInit(): void {
@@ -90,9 +87,6 @@ export class TelegramBotService implements OnModuleInit {
     const [cmd, ...args] = text.split(/\s+/);
     try {
       switch (cmd) {
-        case '/search':
-          await this.cmdSearch(chatId);
-          break;
         case '/closeall':
           await this.cmdCloseAll(chatId, args[0]);
           break;
@@ -131,8 +125,7 @@ export class TelegramBotService implements OnModuleInit {
 
   private async cmdHelp(chatId: number): Promise<void> {
     const lines = [
-      'Команды:',
-      '/search — запустить поиск кандидатов вручную (иначе приходит по расписанию/закрытию позиции)',
+      'Команды (ручной режим — открытие позиций через REST /api/v1/strategy/proposals с accountId):',
       '/closeall <account> — закрыть все позиции аккаунта (нужен PIN)',
       '/be <symbol> — стоп в безубыток',
       '/move <symbol> sl|tp <price> — переставить SL или TP',
@@ -140,8 +133,6 @@ export class TelegramBotService implements OnModuleInit {
       '/unpause <account> — снять auto-pause',
       '/status — баланс по каждому аккаунту',
       '/positions <account> — открытые позиции с PnL в моменте',
-      '',
-      'Не реализовано пока: /analyze',
     ];
     await this.telegram.sendMessage(chatId, lines.join('\n'));
   }
@@ -176,14 +167,6 @@ export class TelegramBotService implements OnModuleInit {
       (p) => `${p.symbol} ${p.side} ${p.qty} @ ${p.avgPrice} · mark ${p.markPrice} · PnL ${p.unrealizedPnl}`,
     );
     await this.telegram.sendMessage(chatId, `${account}:\n${lines.join('\n')}`);
-  }
-
-  private async cmdSearch(chatId: number): Promise<void> {
-    if (this.searching) {
-      await this.telegram.sendMessage(chatId, 'уже ищу…');
-      return;
-    }
-    await this.runSearch(chatId);
   }
 
   private async cmdCloseAll(chatId: number, account?: string): Promise<void> {
@@ -249,151 +232,22 @@ export class TelegramBotService implements OnModuleInit {
   }
 
   // ---- Callback buttons ----
+  // Nothing sends inline-keyboard messages anymore (the search/proposal pipeline that used to is
+  // retired) — kept minimal in case an old message with buttons is still tapped.
 
   private async handleCallback(cb: any): Promise<void> {
     const chatId = cb.message?.chat?.id;
     if (!isAllowedChat(chatId)) return;
     await this.telegram.answerCallbackQuery(cb.id);
-
-    const [action, payload] = String(cb.data ?? '').split(':');
-    try {
-      if (action === 'prompt_accept') {
-        await this.runSearch(chatId, cb.message.message_id);
-      } else if (action === 'prompt_reject') {
-        await this.tradingApi.setState('IDLE', null, null);
-        await this.telegram.editMessageText(chatId, cb.message.message_id, 'поиск отклонён');
-      } else if (action === 'proposal_open') {
-        await this.confirmProposal(chatId, payload, cb.message.message_id);
-      } else if (action === 'proposal_reject') {
-        await this.tradingApi.rejectProposal(payload);
-        await this.telegram.editMessageText(chatId, cb.message.message_id, '❌ отклонено');
-      } else if (action === 'proposal_tv') {
-        await this.showInTv(chatId, payload);
-      }
-    } catch (e: any) {
-      // Safety net: a button tap must never die silently — the operator has no other signal
-      // that anything happened at all (this exact failure mode caught live 2026-08-21).
-      this.logger.error(`callback ${action} failed: ${e.message}`);
-      await this.telegram.sendMessage(chatId, `ошибка обработки кнопки: ${e.message}`);
-    }
   }
 
-  /**
-   * 7 (tv-bridge, Windows host process): draws the proposal's actual SL/TP on the chart and
-   * sends a screenshot. "Мостик недоступен -> strategy пишет «TradingView недоступен» и работает
-   * дальше — торговый контур от него не зависит никогда": any bridge failure degrades to that
-   * one message, never touches the trading path.
-   */
-  private async showInTv(chatId: number, proposalId: string): Promise<void> {
-    const bridgeUrl = process.env.TV_BRIDGE_URL;
-    if (!bridgeUrl) {
-      await this.telegram.sendMessage(chatId, 'TradingView недоступен (tv-bridge не настроен)');
-      return;
-    }
-    try {
-      const proposal = await this.tradingApi.getProposal(proposalId);
-      const levels = [
-        { price: parseFloat(proposal.slPrice), label: 'SL', kind: 'support' },
-        { price: parseFloat(proposal.tpPrice), label: 'TP', kind: 'resistance' },
-        { price: parseFloat(proposal.entryPrice), label: 'Entry', kind: 'hvn' },
-      ];
-      const drawResp = await fetch(`${bridgeUrl}/draw`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ symbol: proposal.symbol, levels }),
-        signal: AbortSignal.timeout(15_000),
-      });
-      if (!drawResp.ok) throw new Error(`draw failed: ${drawResp.status} ${await drawResp.text()}`);
-
-      const shotResp = await fetch(`${bridgeUrl}/screenshot`, { signal: AbortSignal.timeout(15_000) });
-      if (!shotResp.ok) throw new Error(`screenshot failed: ${shotResp.status}`);
-      const png = Buffer.from(await shotResp.arrayBuffer());
-
-      await this.telegram.sendPhoto(chatId, png, `${proposal.symbol}: SL ${proposal.slPrice} · TP ${proposal.tpPrice}`);
-    } catch (e: any) {
-      this.logger.warn(`showInTv failed: ${e.message}`);
-      await this.telegram.sendMessage(chatId, 'TradingView недоступен');
-    }
-  }
-
-  private async confirmProposal(chatId: number, proposalId: string, messageId: number): Promise<void> {
-    const proposal = await this.tradingApi.getProposal(proposalId);
-    if (proposal.status !== 'PENDING') {
-      await this.telegram.sendMessage(chatId, 'уже обработано');
-      return;
-    }
-    const ttlMs = (await this.tradingApi.getSettings()).proposalTtlMs;
-    if (Date.now() - proposal.createdAt > ttlMs) {
-      await this.telegram.sendMessage(chatId, 'предложение устарело — детерминированный пересчёт без LLM (не реализован в этой сессии, отклони и запусти /search заново)');
-      return;
-    }
-    let result;
-    try {
-      result = await this.tradingApi.confirmProposal(proposalId);
-    } catch (e: any) {
-      // trading answers ABORTED with HTTP 409 (price drift / exchange unreachable) — axios
-      // throws on that by default, so the body has to be read off the error, not a normal
-      // response. Bug caught live 2026-08-21: this used to be unhandled and the whole callback
-      // died silently — the operator tapped Открыть and nothing happened, no message at all.
-      const body = e?.response?.data;
-      const reason = body?.abortReason ?? e.message;
-      this.logger.warn(`confirmProposal ${proposalId} aborted: ${reason}`);
-      await this.telegram.editMessageText(chatId, messageId, `⛔ отменено: ${reason}`);
-      return;
-    }
-    await this.telegram.editMessageText(chatId, messageId, formatExecutionReport(result.accounts));
-  }
-
-  // ---- Search pipeline ----
-
-  private async runSearch(chatId: number, editMessageId?: number): Promise<void> {
-    this.searching = true;
-    await this.tradingApi.setState('SEARCHING', null, null);
-    const msg = editMessageId
-      ? (await this.telegram.editMessageText(chatId, editMessageId, 'Ищу…'), editMessageId)
-      : (await this.telegram.sendMessage(chatId, 'Ищу…')).message_id;
-
-    try {
-      const result = await this.search.run();
-      if (result.proposals.length === 0) {
-        await this.tradingApi.setState('IDLE', null, null);
-        await this.telegram.editMessageText(
-          chatId, msg,
-          `кандидатов нет (вселенная ${result.universeSize}, от LLM ${result.candidatesFromLlm}, стоимость $${result.costUsd.toFixed(4)})`,
-        );
-        return;
-      }
-      await this.tradingApi.setState('PROPOSALS_PENDING', null, null);
-      await this.telegram.editMessageText(chatId, msg, `найдено ${result.proposals.length} кандидат(ов), стоимость $${result.costUsd.toFixed(4)}`);
-
-      for (const p of result.proposals) {
-        const created = await this.tradingApi.createProposal(p.symbol, String(p.entry), String(p.sl), String(p.tp), p.rationale);
-        const text = formatProposalMessage(p.symbol, String(p.entry), String(p.sl), String(p.tp), p.rr, p.rationale, created.accounts, result.costUsd);
-        const buttons: InlineButton[][] = [
-          [
-            { text: 'Открыть', callback_data: `proposal_open:${created.proposalId}` },
-            { text: 'Показать в TV', callback_data: `proposal_tv:${created.proposalId}` },
-            { text: 'Отклонить', callback_data: `proposal_reject:${created.proposalId}` },
-          ],
-        ];
-        await this.telegram.sendMessage(chatId, text, buttons);
-      }
-    } catch (e: any) {
-      this.logger.error(`search failed: ${e.message}`);
-      await this.telegram.editMessageText(chatId, msg, `ошибка поиска: ${e.message}`);
-      await this.tradingApi.setState('IDLE', null, null);
-    } finally {
-      this.searching = false;
-    }
-  }
-
-  // ---- Minute tick: cron-gated search prompt + notification relay (both piggyback the same tick,
-  // trading's own poller stays the only *trading-side* periodic poll — 4.7) ----
+  // ---- Minute tick: notification relay only (trading's own poller stays the only *trading-side*
+  // periodic poll — 4.7; the LLM search-prompt gate that used to piggyback this tick is retired
+  // along with the rest of the search pipeline) ----
 
   @Interval(60_000)
   private async minuteTick(): Promise<void> {
     await this.relayNotifications().catch((e) => this.logger.error(`notification relay failed: ${e.message}`));
-    await this.checkPromptGate().catch((e) => this.logger.error(`prompt gate failed: ${e.message}`));
   }
 
   private async relayNotifications(): Promise<void> {
@@ -411,37 +265,6 @@ export class TelegramBotService implements OnModuleInit {
       for (const chatId of chatIds) {
         await this.telegram.sendMessage(chatId, `[${ev.kind}] ${ev.accountId ?? ''} ${ev.symbol ?? ''}: ${ev.message}`);
       }
-      if (ev.kind === 'POSITION_CLOSED') {
-        await this.maybePrompt(chatIds[0], true);
-      }
     }
-  }
-
-  private async checkPromptGate(): Promise<void> {
-    const hours = (await this.tradingApi.getSettings()).searchCronHours;
-    const nowHour = new Date().getUTCHours();
-    const allowed = hours === '*' || hours.split(',').map((h) => parseInt(h.trim(), 10)).includes(nowHour);
-    if (!allowed) return;
-    const chatIds = (process.env.TELEGRAM_ALLOWED_CHAT_IDS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
-    if (chatIds.length > 0) await this.maybePrompt(chatIds[0], false);
-  }
-
-  private async maybePrompt(chatId: string, forceRefresh: boolean): Promise<void> {
-    const state = await this.tradingApi.getState();
-    if (state.phase !== 'IDLE' && state.phase !== 'PROMPT_PENDING') return;
-
-    const slots = await this.tradingApi.getAccountSlots();
-    const withRoom = slots.filter((s) => s.tradable && s.freeSlots > 0);
-    if (withRoom.length === 0) return;
-
-    const text = `Свободно мест: ${withRoom.map((s) => `${s.accountId} ${s.freeSlots}`).join(', ')}. Начать поиск?`;
-    const buttons: InlineButton[][] = [[{ text: 'Принять', callback_data: 'prompt_accept' }, { text: 'Отклонить', callback_data: 'prompt_reject' }]];
-
-    if (state.phase === 'PROMPT_PENDING' && state.promptMessageId) {
-      await this.telegram.editMessageText(chatId, state.promptMessageId, text, buttons);
-      return;
-    }
-    const sent = await this.telegram.sendMessage(chatId, text, buttons);
-    await this.tradingApi.setState('PROMPT_PENDING', sent.message_id, Date.now());
   }
 }

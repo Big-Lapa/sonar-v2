@@ -241,6 +241,30 @@ public class BybitFuturesHttpService implements BybitFuturesClient {
         return body;
     }
 
+    /**
+     * {@code /v5/position/set-leverage} — one-way mode requires {@code buyLeverage == sellLeverage}.
+     * retCode 110043 ("leverage not modified") means the position is already at this leverage —
+     * treated as success, not an error, since the caller's intent (leverage == N) is already true.
+     */
+    public Map<String, Object> setLeverage(String symbol, int leverage) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("category", CATEGORY);
+        body.put("symbol", symbol);
+        body.put("buyLeverage", String.valueOf(leverage));
+        body.put("sellLeverage", String.valueOf(leverage));
+        try {
+            return parseJsonToMap(executeSignedJsonPost("/v5/position/set-leverage", body, false));
+        } catch (ExchangeException e) {
+            if (e.getError() != null && "110043".equals(e.getError().code())) {
+                Map<String, Object> out = new LinkedHashMap<>();
+                out.put("retCode", 0);
+                out.put("retMsg", "leverage not modified (already " + leverage + "x)");
+                return out;
+            }
+            throw e;
+        }
+    }
+
     // ---- Account / market endpoints ----
 
     /** All open orders for a symbol, including untriggered conditional TP/SL orders. */

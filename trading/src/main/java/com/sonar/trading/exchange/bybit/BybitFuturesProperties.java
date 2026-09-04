@@ -30,6 +30,11 @@ public class BybitFuturesProperties {
     private int readTimeoutMs = 5_000;
 
     public String getBaseUrl() { return baseUrl; }
+    /** Fixed the OTHER way (grilled review, PR #2): {@code docker-compose.yml} now defaults
+     *  {@code TRADING_BYBIT_BASE_URL} to this same testnet URL instead of blank, so a genuinely
+     *  blank value here is a real (if broken) configuration intent, not compose's env-var-always-
+     *  set quirk — swallowing it silently would let a real testnet/live misconfiguration through
+     *  unnoticed, which is the one place a quiet fallback is the wrong failure mode. */
     public void setBaseUrl(String baseUrl) { this.baseUrl = baseUrl; }
 
     public String getApiKey() { return apiKey; }

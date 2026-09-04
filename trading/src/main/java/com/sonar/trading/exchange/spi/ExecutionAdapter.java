@@ -1,9 +1,11 @@
 package com.sonar.trading.exchange.spi;
 
+import com.sonar.trading.exchange.dto.AdapterOpenOrder;
 import com.sonar.trading.exchange.dto.AdapterOrderRequest;
 import com.sonar.trading.exchange.dto.AdapterOrderResult;
 
 import java.math.BigDecimal;
+import java.util.List;
 
 /**
  * Venue-agnostic execution surface. Beyond entry/close, this also carries the reduce-only
@@ -18,6 +20,15 @@ public interface ExecutionAdapter {
     AdapterOrderResult getOrderStatus(String symbol, String clientOrderId);
 
     void cancelOrder(String symbol, String clientOrderId);
+
+    /** All resting orders for the symbol (manual panel's cancel-order screen) — every type, not
+     *  just reduce-only conditionals ({@link #hasOpenStopOrder}'s narrower concern). */
+    List<AdapterOpenOrder> listOpenOrders(String symbol);
+
+    /** Cancel by the exchange's own order id — for an order this system may not have created
+     *  itself (e.g. left over from hand-editing on the exchange), where no clientOrderId exists
+     *  to cancel by. */
+    void cancelOrderById(String symbol, String orderId);
 
     /** Force-close all positions for the symbol (kill-switch / FLIP support, ADR-0018/0019). */
     void closeAllPositions(String symbol);
