@@ -2,11 +2,13 @@ package com.sonar.trading.execution;
 
 import com.sonar.trading.config.AccountProps;
 import com.sonar.trading.config.AccountRegistry;
+import com.sonar.trading.domain.entity.FillEntity;
 import com.sonar.trading.domain.entity.NotificationEntity;
 import com.sonar.trading.domain.entity.OrderCommandEntity;
 import com.sonar.trading.domain.entity.OrderEntity;
 import com.sonar.trading.domain.entity.PositionEntity;
 import com.sonar.trading.domain.entity.ProposalEntity;
+import com.sonar.trading.domain.repository.FillRepository;
 import com.sonar.trading.domain.repository.NotificationRepository;
 import com.sonar.trading.domain.repository.OrderCommandRepository;
 import com.sonar.trading.domain.repository.OrderRepository;
@@ -35,9 +37,12 @@ import java.math.RoundingMode;
  * {@code trading/src/_stage3-pending/}).
  *
  * <p>This is that missing piece, scoped to exactly the gap: poll every still-active OPEN-action
- * order once a minute, and once it reaches a terminal state either fold the fill into
- * {@code positions} (same weighted-average-on-add-on logic {@code executeLeg} uses) or just record
- * the terminal state (REJECTED/CANCELED/FAILED — nothing to create). TP/SL is NOT re-attached here:
+ * order once a minute, and once it reaches a terminal state, fold whatever actually filled into
+ * {@code positions} (same weighted-average-on-add-on logic {@code executeLeg} uses) — decided by
+ * {@code filledQty}, not by the state being exactly FILLED, because a LIMIT order can partially
+ * fill and THEN be canceled (operator cancels from the orders tab, or the venue times it out); the
+ * filled part is a real position on the exchange regardless of how the rest of the order ended.
+ * Only a terminal state with nothing filled at all records no position. TP/SL is NOT re-attached here:
  * both venues accept {@code TpSlAttachment} on the LIMIT order at placement time and apply it once
  * the order fills, so protection is already live by the time this runs — this only verifies it,
  * the same as {@link StopGuard#verifyAndRepair} does for a MARKET fill.
@@ -55,11 +60,13 @@ public class PendingLimitOrderReconciler {
     private final PositionRepository positionRepository;
     private final NotificationRepository notificationRepository;
     private final StopGuard stopGuard;
+    private final FillRepository fillRepository;
 
     public PendingLimitOrderReconciler(AccountRegistry accountRegistry, ExecutionAdapterRegistry adapters,
                                        OrderRepository orderRepository, OrderCommandRepository orderCommandRepository,
                                        ProposalRepository proposalRepository, PositionRepository positionRepository,
-                                       NotificationRepository notificationRepository, StopGuard stopGuard) {
+                                       NotificationRepository notificationRepository, StopGuard stopGuard,
+                                       FillRepository fillRepository) {
         this.accountRegistry = accountRegistry;
         this.adapters = adapters;
         this.orderRepository = orderRepository;
@@ -68,6 +75,7 @@ public class PendingLimitOrderReconciler {
         this.positionRepository = positionRepository;
         this.notificationRepository = notificationRepository;
         this.stopGuard = stopGuard;
+        this.fillRepository = fillRepository;
     }
 
     @Scheduled(fixedRate = 60_000)
@@ -113,19 +121,34 @@ public class PendingLimitOrderReconciler {
                 result.avgPrice(), result.fee(), null, null, System.currentTimeMillis());
         orderRepository.save(order);
 
-        if (result.state() != AdapterOrderState.FILLED) {
-            log.info("[limit-reconcile] {} {} order {} ended {} — nothing to create",
+        // Terminal state alone isn't enough to decide whether to fold a position: a LIMIT order
+        // can be PARTIALLY filled and THEN reach a terminal state — cancel it after a partial fill
+        // (operator cancels from the new orders tab, or the venue times it out) and Bybit reports
+        // it as PartiallyFilledCanceled, which maps to plain CANCELED here (found in review: the
+        // first version treated every non-FILLED terminal state as "nothing happened", discarding
+        // whatever DID fill — the position sits live on the exchange with no row for it, same class
+        // of bug this whole class exists to fix). filledQty, not state, decides whether anything
+        // needs to be recorded; state only decided (above) whether to keep polling.
+        BigDecimal filledQty = result.filledQty();
+        if (filledQty == null || filledQty.signum() <= 0) {
+            log.info("[limit-reconcile] {} {} order {} ended {} with nothing filled — nothing to create",
                     account.id(), order.getSymbol(), order.getClientOrderId(), result.state());
             return;
         }
-
-        BigDecimal filledQty = result.filledQty() != null ? result.filledQty() : order.getQuantity();
         BigDecimal avgPrice = result.avgPrice();
         if (avgPrice == null) {
-            log.error("[limit-reconcile] {} {} order {} reports FILLED with no avgPrice — cannot record fill",
-                    account.id(), order.getSymbol(), order.getClientOrderId());
+            log.error("[limit-reconcile] {} {} order {} filled {} but reports no avgPrice — cannot record fill",
+                    account.id(), order.getSymbol(), order.getClientOrderId(), filledQty);
             return;
         }
+        if (result.state() != AdapterOrderState.FILLED) {
+            log.warn("[limit-reconcile] {} {} order {} ended {} after a partial fill of {} @ {} — folding the "
+                            + "filled part into the position, the rest of the original qty never happened",
+                    account.id(), order.getSymbol(), order.getClientOrderId(), result.state(), filledQty, avgPrice);
+        }
+
+        fillRepository.save(new FillEntity(order.getId(), account.id(), order.getSymbol(), filledQty, avgPrice,
+                result.fee(), System.currentTimeMillis()));
 
         OrderCommandEntity command = orderCommandRepository.findByCommandId(order.getCommandId()).orElse(null);
         ProposalEntity proposal = command != null ? proposalRepository.findById(command.getProposalId()).orElse(null) : null;
