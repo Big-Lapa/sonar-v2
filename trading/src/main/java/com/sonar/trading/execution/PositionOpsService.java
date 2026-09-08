@@ -121,7 +121,7 @@ public class PositionOpsService {
         }
 
         var account = accountRegistry.byId(position.getAccountId()).orElse(null);
-        ExecutionAdapter adapter = account != null ? adapters.forExchange(account.exchange()).orElse(null) : null;
+        ExecutionAdapter adapter = account != null ? adapters.forAccount(account.id()).orElse(null) : null;
         if (adapter == null) {
             return new OpResult.Failed("venue аккаунта '" + position.getAccountId() + "' не подключена");
         }
@@ -139,7 +139,7 @@ public class PositionOpsService {
         // one-account-per-exchange config it can't misfire, but a second account on the same venue
         // would read that OTHER account's live qty here. Fixing this for real means per-account API
         // client wiring throughout the execution layer, not a local patch to this one clamp.
-        BigDecimal liveQty = accountReaders.forExchange(account.exchange())
+        BigDecimal liveQty = accountReaders.forAccount(account.id())
                 .map(reader -> reader.getPositions().stream()
                         .filter(p -> position.getSymbol().equals(p.symbol()) && !p.isFlat())
                         .findFirst().map(p -> p.qty()).orElse(BigDecimal.ZERO))
@@ -152,7 +152,7 @@ public class PositionOpsService {
         // Floor (never bump up) to the exchange's lot step — a requested %/qty that rounds down
         // below one step must fail loudly, not silently close more (or nothing at all, which is
         // what most exchanges do when they just reject a misaligned qty outright).
-        BigDecimal normalizedQty = quantityNormalizer.floorForClose(account.exchange(), position.getSymbol(),
+        BigDecimal normalizedQty = quantityNormalizer.floorForClose(account.id(), position.getSymbol(),
                 clampedQty, price != null ? price : position.getEntryPrice());
         if (normalizedQty == null) {
             return new OpResult.Failed("qty " + clampedQty + " меньше шага лота биржи для " + position.getSymbol());
@@ -262,7 +262,7 @@ public class PositionOpsService {
 
     private ExecutionAdapter resolveAdapter(String accountId) {
         return accountRegistry.byId(accountId)
-                .flatMap(account -> adapters.forExchange(account.exchange()))
+                .flatMap(account -> adapters.forAccount(account.id()))
                 .orElse(null);
     }
 }

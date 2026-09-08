@@ -96,7 +96,7 @@ public class PendingLimitOrderReconciler {
         if (pending.isEmpty()) {
             return;
         }
-        ExecutionAdapter adapter = adapters.forExchange(account.exchange()).orElse(null);
+        ExecutionAdapter adapter = adapters.forAccount(account.id()).orElse(null);
         if (adapter == null) {
             return;
         }
@@ -189,7 +189,7 @@ public class PendingLimitOrderReconciler {
         position.setPlannedRiskAmount(riskAmount != null ? riskAmount.toPlainString() : null);
         positionRepository.save(position);
 
-        boolean stopVerified = stopGuard.hasStopOrder(account.exchange(), order.getSymbol());
+        boolean stopVerified = stopGuard.hasStopOrder(account.id(), order.getSymbol());
         if (!stopVerified) {
             notificationRepository.save(new NotificationEntity(NotificationEntity.MISSING_STOP, account.id(), order.getSymbol(),
                     "лимитная заявка исполнилась (" + finalQty + " @ " + avgPrice

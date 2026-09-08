@@ -38,7 +38,7 @@ import static org.mockito.Mockito.when;
 class PendingLimitOrderReconcilerTest {
 
     private static final String ACCOUNT_ID = "acct-1";
-    private static final AccountProps ACCOUNT = new AccountProps(ACCOUNT_ID, "bybit");
+    private static final AccountProps ACCOUNT = new AccountProps(ACCOUNT_ID, "bybit", "key-bybit", "secret", "https://api-demo.bybit.com");
 
     private AccountRegistry accountRegistry;
     private ExecutionAdapterRegistry adapters;
@@ -71,7 +71,7 @@ class PendingLimitOrderReconcilerTest {
                 stopGuard, fillRepository);
 
         when(accountRegistry.all()).thenReturn(List.of(ACCOUNT));
-        when(adapters.forExchange("bybit")).thenReturn(Optional.of(adapter));
+        when(adapters.forAccount(ACCOUNT_ID)).thenReturn(Optional.of(adapter));
         when(positionRepository.findByAccountIdAndSymbol(ACCOUNT_ID, "BTCUSDT")).thenReturn(Optional.empty());
         when(orderCommandRepository.findByCommandId(anyString())).thenReturn(Optional.empty());
     }
@@ -117,7 +117,7 @@ class PendingLimitOrderReconcilerTest {
         ProposalEntity proposal = ProposalEntity.pending("prop-1", "BTCUSDT", "LONG",
                 "100", "90", "110", "test", System.currentTimeMillis(), ACCOUNT_ID, "1000", 10, "LIMIT", "100");
         when(proposalRepository.findById("prop-1")).thenReturn(Optional.of(proposal));
-        when(stopGuard.hasStopOrder("bybit", "BTCUSDT")).thenReturn(true);
+        when(stopGuard.hasStopOrder(ACCOUNT_ID, "BTCUSDT")).thenReturn(true);
 
         reconciler.tick();
 

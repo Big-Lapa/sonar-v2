@@ -79,6 +79,13 @@ public class PositionEntity {
     @Column(name = "qty_mismatch", nullable = false)
     private boolean qtyMismatch = false;
 
+    /** {@code SONAR} (opened through this system) or {@code EXCHANGE} (found open on the venue
+     *  with no matching row — opened directly on the exchange, adopted by the poller). Purely
+     *  informational: never read by risk gates, StopGuard, or notification logic — the exchange
+     *  is the source of truth for "is this open" regardless of origin. */
+    @Column(name = "opened_via", nullable = false, length = 10)
+    private String openedVia = "SONAR";
+
     protected PositionEntity() {}
 
     public static PositionEntity newFlat(String accountId, String exchange, String symbol) {
@@ -133,4 +140,6 @@ public class PositionEntity {
     public void setPlannedRiskAmount(String plannedRiskAmount) { this.plannedRiskAmount = plannedRiskAmount; }
     public boolean isQtyMismatch() { return qtyMismatch; }
     public void setQtyMismatch(boolean qtyMismatch) { this.qtyMismatch = qtyMismatch; }
+    public String getOpenedVia() { return openedVia; }
+    public void setOpenedVia(String openedVia) { this.openedVia = openedVia; }
 }

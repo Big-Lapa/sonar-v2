@@ -38,7 +38,7 @@ import java.util.Map;
  *
  * <p>Uses plain {@link HttpURLConnection} (no third-party HTTP client dependency), matching
  * {@code BingxFuturesHttpService}. Not a Spring bean by itself — wired conditionally for
- * {@code trading.exchange=LIVE} via {@code BybitClientConfig}.
+ * per account by {@code AccountWiring} from that account's own credentials.
  */
 public class BybitFuturesHttpService implements BybitFuturesClient {
 

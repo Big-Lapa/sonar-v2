@@ -30,12 +30,10 @@ trading:
   ops:
     token: ${ADMIN_TOKEN:}
   exchange: LIVE
-  bingx:
-    api-key: ${BINGX_API_KEY:}
-    api-secret: ${BINGX_API_SECRET:}
+  # Credentials and base URLs are per ACCOUNT (TRADING_ACCOUNTS_N_API_KEY/_API_SECRET/_BASE_URL),
+  # not per venue — the same exchange can host a demo and a production account on different
+  # domains. Only venue-wide behaviour knobs remain here.
   bybit:
-    api-key: ${BYBIT_API_KEY:}
-    api-secret: ${BYBIT_API_SECRET:}
     trigger-by: MarkPrice
   tp-sl:
     working-type: MARK_PRICE

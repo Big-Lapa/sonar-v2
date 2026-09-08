@@ -1,6 +1,5 @@
 package com.sonar.trading.config;
 
-import com.sonar.trading.exchange.bybit.BybitFuturesProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -10,14 +9,33 @@ import java.math.BigDecimal;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Exchange contract specs (stepSize/minQty/minNotional/tickSize), fetched directly from each
- * venue's public REST (no config-service in v2 — decided 2026-08-21). Cached in memory per
- * venue with a 1h TTL, same pattern as the universe cache (4.4): these endpoints are unauthenticated
- * and change rarely, so a per-call fetch would be wasteful and adds latency to sizing.
+ * venue's public REST (no config-service in v2 — decided 2026-08-21). Cached in memory with a 1h
+ * TTL, same pattern as the universe cache (4.4): these endpoints are unauthenticated and change
+ * rarely, so a per-call fetch would be wasteful and adds latency to sizing.
+ *
+ * <p><b>Keyed by resolved HOST, not by venue name.</b> Credentials and base URL moved to being
+ * per-account (multi-account refactor), and BingX/Bybit each already have — or will soon have —
+ * more than one account on genuinely different domains (BingX VST demo vs production; more Bybit
+ * accounts are coming). A venue-keyed cache with one shared client silently answered every
+ * account's sizing query from whichever domain that one client happened to point at: this class
+ * used to hardcode BingX to production regardless of account (so even the sole existing bingx-vst
+ * demo account was sized off PRODUCTION instrument filters, not the VST demo ones it actually
+ * trades against — a live bug, not hypothetical), and Bybit's client resolved once at startup from
+ * whichever Bybit account happened to be configured first — correct only by accident, and wrong
+ * the moment a second Bybit account on a different host exists. Keying by host means two accounts
+ * on the SAME domain share one fetch (no wasted calls), and two accounts on DIFFERENT domains never
+ * share a set of specs that don't apply to them.
+ *
+ * <p>{@link #get} takes an <b>account id</b>, resolved here via {@link AccountRegistry} into
+ * (venue, host) — callers (sizing) don't need to know account structure, just which account they're
+ * sizing for. An id absent from the registry is a caller bug (every real caller has a live
+ * {@code AccountProps} in hand already), so it throws rather than guessing a fallback host.
  */
 @Component
 public class SymbolRulesCache {
@@ -25,65 +43,90 @@ public class SymbolRulesCache {
     private static final Logger log = LoggerFactory.getLogger(SymbolRulesCache.class);
     private static final Duration TTL = Duration.ofHours(1);
 
-    private final RestClient binanceClient = RestClient.create("https://fapi.binance.com");
-    private final RestClient bingxClient = RestClient.create("https://open-api.bingx.com");
-    // Same host as the trading client (testnet by default) — mainnet's instrument set/filters
-    // differ from testnet's, so the contract specs used for sizing must come from wherever orders
-    // actually go, not a hardcoded mainnet host.
-    private final RestClient bybitClient;
+    /** No live Binance accounts exist yet (parked in {@code _stage3-pending}) — left on the public
+     *  API host rather than account-resolved; revisit once a real Binance account is wired. */
+    private static final String BINANCE_HOST = "https://fapi.binance.com";
 
-    private final ConcurrentHashMap<String, VenueCache> byVenue = new ConcurrentHashMap<>();
+    private final AccountRegistry accounts;
+    private final Map<String, RestClient> clientsByHost = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, VenueCache> byHost = new ConcurrentHashMap<>();
 
-    public SymbolRulesCache(BybitFuturesProperties bybitProps) {
-        this.bybitClient = RestClient.create(bybitProps.getBaseUrl());
+    public SymbolRulesCache(AccountRegistry accounts) {
+        this.accounts = accounts;
     }
 
     private record VenueCache(Instant fetchedAt, Map<String, SymbolRules> rules) {}
 
-    /** {@code venue} is BINANCE or BINGX (case-insensitive); {@code symbol} in canonical Binance form. */
-    public SymbolRules get(String venue, String symbol) {
-        String key = venue == null ? "BINANCE" : venue.toUpperCase();
-        VenueCache cache = byVenue.get(key);
+    /** {@code symbol} in canonical Binance form (e.g. {@code BTCUSDT}). */
+    public SymbolRules get(String accountId, String symbol) {
+        AccountProps account = accounts.byId(accountId)
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "SymbolRulesCache.get: unknown account id '" + accountId + "'"));
+        String venue = venueOf(account);
+        String host = hostOf(account, venue);
+
+        VenueCache cache = byHost.get(host);
         if (cache == null || Duration.between(cache.fetchedAt(), Instant.now()).compareTo(TTL) > 0) {
-            cache = refresh(key);
+            cache = refresh(venue, host);
         }
         SymbolRules rules = cache.rules().get(symbol);
         if (rules == null) {
-            log.warn("SymbolRulesCache: no contract spec for {}/{} — falling back to conservative default",
-                    key, symbol);
+            log.warn("SymbolRulesCache: no contract spec for {}/{} ({}) — falling back to conservative default",
+                    venue, symbol, host);
             return SymbolRules.DEFAULT;
         }
         return rules;
     }
 
-    private synchronized VenueCache refresh(String venue) {
-        VenueCache existing = byVenue.get(venue);
+    private RestClient clientFor(String host) {
+        return clientsByHost.computeIfAbsent(host, RestClient::create);
+    }
+
+    static String venueOf(AccountProps account) {
+        return account.exchange() == null ? "" : account.exchange().toUpperCase(Locale.ROOT);
+    }
+
+    /**
+     * The cache/client key for one account — a pure function, package-private specifically so the
+     * account→host resolution (the whole point of this class's rewrite) can be unit-tested without
+     * a network call. No live Binance account exists, so it stays on the fixed public host
+     * regardless of what {@code account.baseUrl()} says; BingX and Bybit both resolve to the
+     * account's own domain, which is what makes two accounts on different domains get different
+     * specs instead of silently sharing one client's answer.
+     */
+    static String hostOf(AccountProps account, String venue) {
+        return "BINANCE".equals(venue) ? BINANCE_HOST : account.baseUrl();
+    }
+
+    private synchronized VenueCache refresh(String venue, String host) {
+        VenueCache existing = byHost.get(host);
         if (existing != null && Duration.between(existing.fetchedAt(), Instant.now()).compareTo(TTL) <= 0) {
             return existing; // another thread refreshed while we waited for the lock
         }
         Map<String, SymbolRules> rules;
         try {
+            RestClient client = clientFor(host);
             rules = switch (venue) {
-                case "BINGX" -> fetchBingx();
-                case "BYBIT" -> fetchBybit();
-                default -> fetchBinance();
+                case "BINGX" -> fetchBingx(client);
+                case "BYBIT" -> fetchBybit(client);
+                default -> fetchBinance(client);
             };
         } catch (RuntimeException e) {
-            log.error("SymbolRulesCache: refresh failed for {} — keeping stale cache if any: {}",
-                    venue, e.toString());
+            log.error("SymbolRulesCache: refresh failed for {} ({}) — keeping stale cache if any: {}",
+                    venue, host, e.toString());
             if (existing != null) {
                 return existing;
             }
             rules = Map.of();
         }
         VenueCache fresh = new VenueCache(Instant.now(), rules);
-        byVenue.put(venue, fresh);
+        byHost.put(host, fresh);
         return fresh;
     }
 
     @SuppressWarnings("unchecked")
-    private Map<String, SymbolRules> fetchBinance() {
-        Map<String, Object> body = binanceClient.get().uri("/fapi/v1/exchangeInfo")
+    private Map<String, SymbolRules> fetchBinance(RestClient client) {
+        Map<String, Object> body = client.get().uri("/fapi/v1/exchangeInfo")
                 .retrieve().body(Map.class);
         List<Map<String, Object>> symbols = (List<Map<String, Object>>) body.get("symbols");
         Map<String, SymbolRules> out = new ConcurrentHashMap<>();
@@ -114,8 +157,8 @@ public class SymbolRulesCache {
     /** BingX canonical symbol form is {@code BASE-QUOTE}; keyed here by the platform's canonical
      *  Binance form ({@code BASEQUOTE}, 4.0) so callers never juggle two symbol spellings. */
     @SuppressWarnings("unchecked")
-    private Map<String, SymbolRules> fetchBingx() {
-        Map<String, Object> body = bingxClient.get().uri("/openApi/swap/v2/quote/contracts")
+    private Map<String, SymbolRules> fetchBingx(RestClient client) {
+        Map<String, Object> body = client.get().uri("/openApi/swap/v2/quote/contracts")
                 .retrieve().body(Map.class);
         List<Map<String, Object>> contracts = (List<Map<String, Object>>) body.get("data");
         Map<String, SymbolRules> out = new ConcurrentHashMap<>();
@@ -143,12 +186,12 @@ public class SymbolRulesCache {
      * so a missed row means wrong lot/price rounding rather than just a missing lookup).
      */
     @SuppressWarnings("unchecked")
-    private Map<String, SymbolRules> fetchBybit() {
+    private Map<String, SymbolRules> fetchBybit(RestClient client) {
         Map<String, SymbolRules> out = new ConcurrentHashMap<>();
         String cursor = null;
         for (int page = 0; page < 10; page++) {
             String pageCursor = cursor;
-            Map<String, Object> body = bybitClient.get()
+            Map<String, Object> body = client.get()
                     .uri(uri -> {
                         var b = uri.path("/v5/market/instruments-info").queryParam("category", "linear");
                         if (pageCursor != null && !pageCursor.isBlank()) {

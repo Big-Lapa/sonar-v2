@@ -13,6 +13,7 @@ import com.sonar.trading.exchange.bingx.BingxWorkingType;
 import com.sonar.trading.exchange.dto.AdapterOpenOrder;
 import com.sonar.trading.exchange.dto.AdapterOrderRequest;
 import com.sonar.trading.exchange.dto.AdapterOrderResult;
+import com.sonar.trading.exchange.dto.StopInspection;
 import com.sonar.trading.exchange.dto.TpSlAttachment;
 import com.sonar.trading.exchange.model.AdapterOrderState;
 import com.sonar.trading.exchange.model.AdapterOrderType;
@@ -46,8 +47,6 @@ import java.util.UUID;
  * follow-up to capture an immediate fill; if the order is not yet terminal, the result stays NEW and
  * fill confirmation is left to the reconciliation worker.
  */
-@Component("liveExecutionAdapter")
-@ConditionalOnProperty(name = "trading.exchange", havingValue = "LIVE")
 public class LiveExecutionAdapter implements ExecutionAdapter {
 
     private static final Logger log = LoggerFactory.getLogger(LiveExecutionAdapter.class);
@@ -56,8 +55,14 @@ public class LiveExecutionAdapter implements ExecutionAdapter {
     private final TradingProperties props;
     private final BingxFuturesClient bingxFuturesClient;
 
-    public LiveExecutionAdapter(BingxExecutionGateway gateway, TradingProperties props,
+    /** {@code accountId} is this adapter's identity: one instance per account, since two
+     *  accounts on the same venue have different credentials and may even sit on different
+     *  domains (BingX VST demo vs production). */
+    private final String accountId;
+
+    public LiveExecutionAdapter(String accountId, BingxExecutionGateway gateway, TradingProperties props,
                                 BingxFuturesClient bingxFuturesClient) {
+        this.accountId = accountId;
         this.gateway = gateway;
         this.props = props;
         this.bingxFuturesClient = bingxFuturesClient;
@@ -174,7 +179,7 @@ public class LiveExecutionAdapter implements ExecutionAdapter {
 
     @Override
     public String adapterName() {
-        return "BINGX";
+        return "BINGX:" + accountId;
     }
 
     @Override
@@ -183,6 +188,38 @@ public class LiveExecutionAdapter implements ExecutionAdapter {
         String bingxSymbol = BingxOrderMapper.toBingxSymbol(symbol);
         Map<String, Object> resp = bingxFuturesClient.getOpenOrders(bingxSymbol);
         return openOrders(resp).stream().anyMatch(o -> matchesType(o, true));
+    }
+
+    /**
+     * BingX's protective orders are ordinary reduce-only conditionals (STOP_MARKET /
+     * TAKE_PROFIT_MARKET) that show up in the same open-orders list {@link #listOpenOrders} already
+     * reads — one call answers presence and levels together (conditional orders carry
+     * {@code price=0}; the real level is {@code stopPrice}, surfaced here as
+     * {@link AdapterOpenOrder#triggerPrice()}).
+     */
+    @Override
+    public StopInspection inspectStops(String symbol) {
+        BigDecimal sl = null;
+        BigDecimal tp = null;
+        boolean hasStop = false;
+        for (AdapterOpenOrder o : listOpenOrders(symbol)) {
+            if (o.type() == null) {
+                continue;
+            }
+            String type = o.type().toUpperCase(java.util.Locale.ROOT);
+            boolean isTakeProfit = type.contains("TAKE") || type.contains("PROFIT");
+            boolean isStop = !isTakeProfit && type.contains("STOP");
+            BigDecimal level = o.triggerPrice();
+            if (isStop) {
+                hasStop = true;
+                if (level != null && level.signum() != 0) {
+                    sl = level;
+                }
+            } else if (isTakeProfit && level != null && level.signum() != 0) {
+                tp = level;
+            }
+        }
+        return new StopInspection(hasStop, sl, tp);
     }
 
     @Override
@@ -197,6 +234,7 @@ public class LiveExecutionAdapter implements ExecutionAdapter {
                 BingxOrderMapper.extractString(o, "type"),
                 BingxOrderMapper.extractDecimal(o, "origQty", "quantity"),
                 BingxOrderMapper.extractDecimal(o, "price"),
+                BingxOrderMapper.extractDecimal(o, "stopPrice", "triggerPrice"),
                 BingxOrderMapper.extractString(o, "status", "orderStatus")
         )).toList();
     }

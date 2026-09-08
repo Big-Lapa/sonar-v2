@@ -1,29 +1,30 @@
 package com.sonar.trading.reconciliation;
 
-import org.springframework.stereotype.Component;
-
-import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
 
-/** Resolves the {@link AccountReader} for an account's venue — mirrors {@code ExecutionAdapterRegistry}. */
-@Component
+/**
+ * Resolves the {@link AccountReader} for one account — mirrors {@code ExecutionAdapterRegistry}.
+ *
+ * <p>Keyed by <b>account id</b>, not venue: the same exchange can host several accounts with
+ * different credentials and even different domains (BingX VST demo vs production), so a
+ * venue-keyed lookup would silently hand one account's client to another. Built by
+ * {@code AccountWiring}, one client stack per configured account.
+ */
 public class AccountReaderRegistry {
 
-    private final Map<String, AccountReader> byExchange = new ConcurrentHashMap<>();
+    private final Map<String, AccountReader> byAccountId;
 
-    public AccountReaderRegistry(List<AccountReader> readers) {
-        for (AccountReader reader : readers) {
-            byExchange.put(reader.exchange().toUpperCase(Locale.ROOT), reader);
-        }
+    public AccountReaderRegistry(Map<String, AccountReader> byAccountId) {
+        this.byAccountId = Map.copyOf(byAccountId);
     }
 
-    public Optional<AccountReader> forExchange(String exchange) {
-        if (exchange == null) {
+    /** Empty when the account has no credentials configured, or its venue has no reader wired. */
+    public Optional<AccountReader> forAccount(String accountId) {
+        if (accountId == null) {
             return Optional.empty();
         }
-        return Optional.ofNullable(byExchange.get(exchange.toUpperCase(Locale.ROOT)));
+        return Optional.ofNullable(byAccountId.get(accountId.toLowerCase(Locale.ROOT)));
     }
 }

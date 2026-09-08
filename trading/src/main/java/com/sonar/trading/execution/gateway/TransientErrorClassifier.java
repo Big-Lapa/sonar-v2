@@ -17,11 +17,11 @@ import com.sonar.trading.exchange.exception.ExchangeException;
  * so a blind retry could double the position. Resolution is left to PendingSubmitRecovery /
  * reconciliation, which query the actual order state.
  */
-final class TransientErrorClassifier {
+public final class TransientErrorClassifier {
 
     private TransientErrorClassifier() {}
 
-    static boolean isTransient(Throwable t) {
+    public static boolean isTransient(Throwable t) {
         if (!(t instanceof ExchangeException ee) || ee.getError() == null) {
             return false;
         }

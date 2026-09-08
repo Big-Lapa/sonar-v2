@@ -11,6 +11,7 @@ import com.sonar.trading.exchange.bybit.BybitTriggerBy;
 import com.sonar.trading.exchange.dto.AdapterOpenOrder;
 import com.sonar.trading.exchange.dto.AdapterOrderRequest;
 import com.sonar.trading.exchange.dto.AdapterOrderResult;
+import com.sonar.trading.exchange.dto.StopInspection;
 import com.sonar.trading.exchange.dto.TpSlAttachment;
 import com.sonar.trading.exchange.model.AdapterOrderSide;
 import com.sonar.trading.exchange.model.AdapterOrderState;
@@ -41,8 +42,6 @@ import java.util.Optional;
  * {@code positionSide=BOTH}. The platform is currently LONG-only (ProposalExecutionService always
  * enters BUY), so every reduce-only leg here is a SELL, same assumption BingX's adapter makes.
  */
-@Component("bybitExecutionAdapter")
-@ConditionalOnProperty(name = "trading.exchange", havingValue = "LIVE")
 public class BybitExecutionAdapter implements ExecutionAdapter {
 
     private static final Logger log = LoggerFactory.getLogger(BybitExecutionAdapter.class);
@@ -51,8 +50,12 @@ public class BybitExecutionAdapter implements ExecutionAdapter {
     private final TradingProperties props;
     private final BybitFuturesClient bybitFuturesClient;
 
-    public BybitExecutionAdapter(BybitExecutionGateway gateway, TradingProperties props,
+    /** One instance per account — see {@code LiveExecutionAdapter}'s note on why. */
+    private final String accountId;
+
+    public BybitExecutionAdapter(String accountId, BybitExecutionGateway gateway, TradingProperties props,
                                  BybitFuturesClient bybitFuturesClient) {
+        this.accountId = accountId;
         this.gateway = gateway;
         this.props = props;
         this.bybitFuturesClient = bybitFuturesClient;
@@ -151,7 +154,7 @@ public class BybitExecutionAdapter implements ExecutionAdapter {
 
     @Override
     public String adapterName() {
-        return "BYBIT";
+        return "BYBIT:" + accountId;
     }
 
     @Override
@@ -165,6 +168,21 @@ public class BybitExecutionAdapter implements ExecutionAdapter {
         // fill that just created it (same eventual consistency close-all has to wait out), and this
         // runs immediately after entry. A position that IS visible without a stop is a real answer
         // — nothing to wait for — so that case falls straight through to the order check.
+        List<Map<String, Object>> rows = positionRowsWithRetry(bybitSymbol);
+        boolean positionLevelStop = rows.stream().anyMatch(row -> {
+            String sl = BybitOrderMapper.extractString(row, "stopLoss");
+            return sl != null && !sl.isBlank() && !"0".equals(sl);
+        });
+        if (positionLevelStop) {
+            return true;
+        }
+        Map<String, Object> resp = bybitFuturesClient.getOpenOrders(bybitSymbol);
+        return BybitOrderMapper.resultList(resp).stream().anyMatch(o -> matchesType(o, true));
+    }
+
+    /** {@code /v5/position/list} rows, retried while empty — same eventual-consistency window
+     *  {@link #hasOpenStopOrder}'s javadoc explains (a just-filled entry can be briefly invisible). */
+    private List<Map<String, Object>> positionRowsWithRetry(String bybitSymbol) {
         List<Map<String, Object>> rows = List.of();
         for (int attempt = 0; attempt < 3; attempt++) {
             if (attempt > 0) {
@@ -175,15 +193,58 @@ public class BybitExecutionAdapter implements ExecutionAdapter {
                 break;
             }
         }
-        boolean positionLevelStop = rows.stream().anyMatch(row -> {
-            String sl = BybitOrderMapper.extractString(row, "stopLoss");
-            return sl != null && !sl.isBlank() && !"0".equals(sl);
-        });
-        if (positionLevelStop) {
-            return true;
+        return rows;
+    }
+
+    /**
+     * Bybit's TP/SL attached at entry is a POSITION field, invisible to {@code /v5/order/realtime}
+     * until it triggers — a venue-agnostic reader that only looks at order rows (as an earlier
+     * version of this method's caller did) reports every freshly-entered position as unprotected,
+     * every tick, and then "repairs" a stop that was never missing. Position-level fields are
+     * checked first; a standalone conditional order (leftover from the older cancel-then-place
+     * path, or placed by hand in the Bybit terminal) is the fallback, since the position slot
+     * cannot represent two coexisting stops at once anyway.
+     */
+    @Override
+    public StopInspection inspectStops(String symbol) {
+        String bybitSymbol = BybitOrderMapper.toBybitSymbol(symbol);
+        List<Map<String, Object>> rows = positionRowsWithRetry(bybitSymbol);
+
+        BigDecimal sl = firstNonZeroDecimal(rows, "stopLoss");
+        BigDecimal tp = firstNonZeroDecimal(rows, "takeProfit");
+        boolean hasStop = sl != null;
+
+        if (!hasStop) {
+            Map<String, Object> resp = bybitFuturesClient.getOpenOrders(bybitSymbol);
+            for (Map<String, Object> o : BybitOrderMapper.resultList(resp)) {
+                String trigger = BybitOrderMapper.extractString(o, "triggerPrice");
+                BigDecimal level = (trigger == null || trigger.isBlank()) ? null : new BigDecimal(trigger);
+                if (matchesType(o, true)) {
+                    hasStop = true;
+                    if (level != null && level.signum() != 0) {
+                        sl = level;
+                    }
+                } else if (matchesType(o, false) && level != null && level.signum() != 0) {
+                    tp = level;
+                }
+            }
         }
-        Map<String, Object> resp = bybitFuturesClient.getOpenOrders(bybitSymbol);
-        return BybitOrderMapper.resultList(resp).stream().anyMatch(o -> matchesType(o, true));
+        return new StopInspection(hasStop, sl, tp);
+    }
+
+    /** First position row with a real (non-blank, non-zero) value for {@code field}, as a decimal. */
+    private static BigDecimal firstNonZeroDecimal(List<Map<String, Object>> rows, String field) {
+        for (Map<String, Object> row : rows) {
+            String v = BybitOrderMapper.extractString(row, field);
+            if (v != null && !v.isBlank() && !"0".equals(v)) {
+                try {
+                    return new BigDecimal(v);
+                } catch (NumberFormatException ignored) {
+                    // fall through to the next row
+                }
+            }
+        }
+        return null;
     }
 
     @Override
@@ -198,6 +259,7 @@ public class BybitExecutionAdapter implements ExecutionAdapter {
                 BybitOrderMapper.extractString(o, "orderType", "stopOrderType"),
                 BybitOrderMapper.extractDecimal(o, "qty"),
                 BybitOrderMapper.extractDecimal(o, "price"),
+                BybitOrderMapper.extractDecimal(o, "triggerPrice", "stopPrice"),
                 BybitOrderMapper.extractString(o, "orderStatus")
         )).toList();
     }

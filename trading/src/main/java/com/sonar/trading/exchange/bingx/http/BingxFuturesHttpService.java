@@ -31,7 +31,7 @@ import java.util.Map;
  * {@code AdapterOrderResult} happens in {@code BingxOrderMapper} / {@code LiveExecutionAdapter} (T13).
  *
  * <p>Uses plain {@link HttpURLConnection} (no third-party HTTP client dependency). Not a Spring
- * bean by itself — wired conditionally for {@code trading.exchange=LIVE} via {@code BingxClientConfig}.
+ * bean by itself — built per account by {@code AccountWiring} from that account's own credentials.
  */
 public class BingxFuturesHttpService implements BingxFuturesClient {
 

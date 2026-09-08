@@ -24,6 +24,13 @@ public class AccountRegistry {
         this.env = env;
     }
 
+    /**
+     * Indices must be contiguous from 0 — the loop stops at the first gap, so a hole in the
+     * numbering silently truncates the registry: every account after it disappears along with its
+     * balance, positions and monitoring. Credentials live per account alongside the id
+     * ({@code TRADING_ACCOUNTS_N_API_KEY} / {@code _API_SECRET} / {@code _BASE_URL}), never as a
+     * venue-wide default — see {@link AccountProps}.
+     */
     @PostConstruct
     void load() {
         for (int i = 0; ; i++) {
@@ -31,8 +38,12 @@ public class AccountRegistry {
             if (id == null || id.isBlank()) {
                 break;
             }
-            String exchange = env.getProperty("trading.accounts[" + i + "].exchange");
-            accounts.add(new AccountProps(id, exchange));
+            accounts.add(new AccountProps(
+                    id,
+                    env.getProperty("trading.accounts[" + i + "].exchange"),
+                    env.getProperty("trading.accounts[" + i + "].api-key"),
+                    env.getProperty("trading.accounts[" + i + "].api-secret"),
+                    env.getProperty("trading.accounts[" + i + "].base-url")));
         }
     }
 

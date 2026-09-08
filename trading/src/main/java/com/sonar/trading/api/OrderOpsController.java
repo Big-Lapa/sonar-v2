@@ -67,7 +67,7 @@ public class OrderOpsController {
 
     private ExecutionAdapter resolveAdapter(String accountId) {
         return accountRegistry.byId(accountId)
-                .flatMap(account -> adapters.forExchange(account.exchange()))
+                .flatMap(account -> adapters.forAccount(account.id()))
                 .orElse(null);
     }
 }
