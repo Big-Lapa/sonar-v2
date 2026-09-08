@@ -1,5 +1,6 @@
 package com.sonar.trading.execution;
 
+import com.sonar.trading.exchange.dto.AdapterOpenOrder;
 import com.sonar.trading.exchange.spi.ExecutionAdapter;
 import com.sonar.trading.execution.adapter.ExecutionAdapterRegistry;
 import org.slf4j.Logger;
@@ -29,30 +30,113 @@ public class StopGuard {
         this.adapters = adapters;
     }
 
-    /** True if a stop was already present, or the one remediation attempt placed one successfully. */
-    public boolean verifyAndRepair(String exchange, String coreSymbol, BigDecimal qty, BigDecimal slPrice) {
-        ExecutionAdapter adapter = adapters.forExchange(exchange).orElse(null);
+    /**
+     * One read of the venue's resting orders, answering both questions the poller has: is a stop
+     * present, and at what levels do the stop/take-profit sit. They used to be two separate calls
+     * against the same endpoint (once per position per tick each), which is what tripped BingX's
+     * trigger-endpoint frequency limit and, through the bug below, produced false MISSING_STOP
+     * alerts on positions that were protected the whole time.
+     */
+    public StopInspection inspect(String accountId, String coreSymbol) {
+        ExecutionAdapter adapter = adapters.forAccount(accountId).orElse(null);
         if (adapter == null) {
-            log.error("[STOP-MISSING] no execution adapter wired for venue '{}' — cannot verify stop for {}",
-                    exchange, coreSymbol);
+            return StopInspection.unreadable();
+        }
+        try {
+            BigDecimal sl = null;
+            BigDecimal tp = null;
+            boolean hasStop = false;
+            for (AdapterOpenOrder o : adapter.listOpenOrders(coreSymbol)) {
+                if (o.type() == null) {
+                    continue;
+                }
+                String type = o.type().toUpperCase(java.util.Locale.ROOT);
+                boolean isTakeProfit = type.contains("TAKE") || type.contains("PROFIT");
+                boolean isStop = !isTakeProfit && type.contains("STOP");
+                BigDecimal level = o.triggerPrice();
+                if (isStop) {
+                    hasStop = true;
+                    if (level != null && level.signum() != 0) {
+                        sl = level;
+                    }
+                } else if (isTakeProfit && level != null && level.signum() != 0) {
+                    tp = level;
+                }
+            }
+            return new StopInspection(true, hasStop, sl, tp);
+        } catch (RuntimeException e) {
+            // Could not ask — NOT the same as "there is no stop". Conflating the two is what made a
+            // transient rate limit look like an unprotected position, which in turn drove the
+            // remediation path towards placing a duplicate stop order on a real-money account.
+            log.warn("[stop-check] {} {} could not read resting orders: {}", accountId, coreSymbol, e.toString());
+            return StopInspection.unreadable();
+        }
+    }
+
+    /**
+     * What the venue told us about a symbol's protective orders. {@code readable=false} means the
+     * question could not be asked at all (no adapter, API error, rate limit) — callers must treat
+     * that as "unknown", never as "unprotected".
+     */
+    public record StopInspection(boolean readable, boolean hasStop, BigDecimal stopLoss, BigDecimal takeProfit) {
+        public static StopInspection unreadable() {
+            return new StopInspection(false, false, null, null);
+        }
+    }
+
+    /**
+     * True if a stop was already present, or the one remediation attempt placed one successfully.
+     *
+     * <p>{@code known} tells this method what the caller already learned from {@link #inspect}: a
+     * position whose orders could not be read is left alone (no remediation, no alert), because
+     * placing a "replacement" stop for one that may well exist is worse than the gap it pretends
+     * to close.
+     */
+    public boolean verifyAndRepair(String accountId, String coreSymbol, BigDecimal qty, BigDecimal slPrice,
+                                   StopInspection known) {
+        if (!known.readable()) {
+            return true; // unknown, not unprotected — say nothing rather than raise a false alarm
+        }
+        if (known.hasStop()) {
+            return true;
+        }
+        ExecutionAdapter adapter = adapters.forAccount(accountId).orElse(null);
+        if (adapter == null) {
+            return false;
+        }
+        if (slPrice == null) {
+            log.error("[STOP-MISSING] {}/{} has no stop on the venue and no SL level on record — "
+                    + "cannot place a remediation order", accountId, coreSymbol);
             return false;
         }
         try {
-            if (adapter.hasOpenStopOrder(coreSymbol)) {
-                return true;
-            }
             log.error("[STOP-MISSING] no conditional stop found for {}/{} — placing remediation order",
-                    exchange, coreSymbol);
+                    accountId, coreSymbol);
             adapter.placeReduceOnlyStop(coreSymbol, qty, slPrice);
-            return adapter.hasOpenStopOrder(coreSymbol);
+            return inspect(accountId, coreSymbol).hasStop();
         } catch (RuntimeException e) {
-            log.error("[STOP-MISSING] remediation failed for {}/{}: {}", exchange, coreSymbol, e.toString());
+            log.error("[STOP-MISSING] remediation failed for {}/{}: {}", accountId, coreSymbol, e.toString());
             return false;
         }
     }
 
     /** Read-only check, no remediation — used by the poller to decide whether to even call {@link #verifyAndRepair}. */
-    public boolean hasStopOrder(String exchange, String coreSymbol) {
-        return adapters.forExchange(exchange).map(a -> a.hasOpenStopOrder(coreSymbol)).orElse(false);
+    public boolean hasStopOrder(String accountId, String coreSymbol) {
+        return adapters.forAccount(accountId).map(a -> a.hasOpenStopOrder(coreSymbol)).orElse(false);
+    }
+
+    /**
+     * False for a venue with no {@link ExecutionAdapter} wired at all (today: Pionex — and not
+     * merely "not implemented yet": its Futures API, still Beta, exposes no TP/SL surface at all,
+     * verified against Pionex's published OpenAPI specs — no field on the order schema, no
+     * endpoint, no WebSocket topic; the feature exists only inside their web UI).
+     *
+     * <p>The poller uses this to skip the stop check <b>and its alert</b> entirely for such venues.
+     * Everywhere the question can be answered, a missing stop stays a loud, every-tick
+     * {@code MISSING_STOP} — SL/TP are mandatory. Silence here is not a relaxed rule, it is the
+     * absence of any signal to raise it from.
+     */
+    public boolean isSupported(String accountId) {
+        return adapters.forAccount(accountId).isPresent();
     }
 }

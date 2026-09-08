@@ -38,6 +38,15 @@
   .slider-input::-moz-range-track { background: transparent !important; height: 0.5rem !important; border: none !important; box-shadow: none !important; }
   .slider-input::-moz-range-thumb { width: 16px; height: 16px; border-radius: 9999px; background: #fff; border: 3px solid var(--color-error); cursor: pointer; box-shadow: none !important; }
   .slider-input::-moz-range-progress { background: transparent !important; }
+
+  /* SL/TP price stepper: hides the native number-input spinner (steps by a flat "1", meaningless
+     for BTC-sized prices) and replaces it with two buttons that step by 1% of mark price instead. */
+  .stepper-input input { padding-right: 1.4rem !important; -moz-appearance: textfield; }
+  .stepper-input input::-webkit-outer-spin-button, .stepper-input input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+  .stepper-btns { position: absolute; right: 2px; top: 2px; bottom: 2px; display: flex; flex-direction: column; width: 16px; }
+  .stepper-btns button { flex: 1; display: flex; align-items: center; justify-content: center; line-height: 1;
+    color: var(--color-base-content); opacity: .45; font-size: 9px; }
+  .stepper-btns button:hover { opacity: 1; background: var(--color-base-200); }
 </style>
 </head>
 <body class="min-h-screen text-base-content">
@@ -78,7 +87,17 @@
 
 <!-- ============ BALANCES ============ -->
 <div class="px-4 pt-4">
-  <h2 class="text-sm font-semibold text-base-content/60 mb-2">Балансы</h2>
+  <div class="flex items-center justify-between mb-2 flex-wrap gap-2">
+    <h2 class="text-sm font-semibold text-base-content/60">Балансы</h2>
+    <div class="flex items-center gap-2">
+      <span class="text-xs text-base-content/40" id="balanceAge"></span>
+      <label class="label cursor-pointer gap-1.5 text-xs text-base-content/60">
+        <input type="checkbox" id="balanceAutoRefresh" class="checkbox checkbox-xs checkbox-primary" />
+        автообновление 15с
+      </label>
+      <button id="refreshBalancesBtn" class="btn btn-xs btn-ghost">↻</button>
+    </div>
+  </div>
   <div id="balanceCards" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3"></div>
 </div>
 
@@ -143,10 +162,19 @@
         <input id="limitPrice" type="number" step="any" class="mono" placeholder="0.00" />
       </label>
 
-      <!-- Notional + leverage -->
+      <!-- Sizing mode -->
+      <fieldset class="fieldset py-0">
+        <legend class="fieldset-legend text-xs">Режим размера</legend>
+        <div class="join w-full">
+          <button type="button" id="sizeModeUsd" class="btn btn-sm join-item flex-1 btn-active">$ нотионал</button>
+          <button type="button" id="sizeModePct" class="btn btn-sm join-item flex-1">% от баланса</button>
+        </div>
+      </fieldset>
+
+      <!-- Notional/% + leverage -->
       <div class="grid grid-cols-2 gap-2">
         <label class="input input-sm w-full">
-          <span class="label text-xs">Нотионал $</span>
+          <span class="label text-xs" id="notionalLabel">Нотионал $</span>
           <input id="notional" type="number" step="any" value="500" class="mono" />
         </label>
         <label class="input input-sm w-full">
@@ -163,15 +191,26 @@
         <span id="marginEst" class="ml-auto text-xs text-base-content/60 self-center mono">маржа ≈ $25.00</span>
       </div>
 
-      <!-- SL / TP -->
+      <!-- SL / TP: start empty (0.00) — never auto-filled, so a stale/wrong mark never rides along
+           into a confirmed order by accident. First ▲/▼ click seeds the field to mark price with no
+           offset; every click after that moves it by 1% of the *current mark* (not of the field's
+           own value — otherwise repeated clicks drift and the on-screen % stops meaning anything). -->
       <div class="grid grid-cols-2 gap-2">
-        <label class="input input-sm w-full">
+        <label class="input input-sm w-full stepper-input">
           <span class="label text-xs text-error">SL</span>
           <input id="slPrice" type="number" step="any" placeholder="0.00" class="mono" />
+          <span class="stepper-btns">
+            <button type="button" class="price-step" data-target="slPrice" data-dir="1" title="+1% от mark">▲</button>
+            <button type="button" class="price-step" data-target="slPrice" data-dir="-1" title="-1% от mark">▼</button>
+          </span>
         </label>
-        <label class="input input-sm w-full">
+        <label class="input input-sm w-full stepper-input">
           <span class="label text-xs text-success">TP</span>
           <input id="tpPrice" type="number" step="any" placeholder="0.00" class="mono" />
+          <span class="stepper-btns">
+            <button type="button" class="price-step" data-target="tpPrice" data-dir="1" title="+1% от mark">▲</button>
+            <button type="button" class="price-step" data-target="tpPrice" data-dir="-1" title="-1% от mark">▼</button>
+          </span>
         </label>
       </div>
       <div id="rrHint" class="text-xs text-base-content/50 -mt-1">укажи SL и TP для расчёта R:R</div>
@@ -183,7 +222,7 @@
       </fieldset>
 
       <div role="alert" class="alert alert-info alert-soft py-2 text-xs">
-        Несколько аккаунтов ⇒ отдельный proposal на каждый, один и тот же нотионал/плечо на все.
+        <span id="sizeModeHint">Несколько аккаунтов ⇒ отдельный proposal на каждый, один и тот же нотионал/плечо на все.</span>
       </div>
 
       <button id="previewBtn" class="btn btn-primary btn-block mt-1">Проверить →</button>
@@ -223,6 +262,10 @@
       <select id="filterSymbol" class="select select-sm w-40 mono">
         <option value="">Все символы</option>
       </select>
+      <label class="label cursor-pointer gap-1.5 text-xs text-base-content/60">
+        <input type="checkbox" id="positionsAutoRefresh" class="checkbox checkbox-xs checkbox-primary" />
+        автообновление 15с
+      </label>
       <button id="refreshPositionsBtn" class="btn btn-sm btn-ghost">↻</button>
     </div>
   </div>
@@ -266,8 +309,12 @@
   <div class="flex items-center justify-between mb-2 flex-wrap gap-2">
     <h2 class="text-sm font-semibold text-base-content/60">Открытые ордера</h2>
     <div class="flex items-center gap-2">
-      <select id="ordersAccount" class="select select-sm w-40"></select>
-      <input id="ordersSymbol" class="input input-sm w-32 mono" placeholder="Символ" value="BTCUSDT" />
+      <select id="ordersAccount" class="select select-sm w-44"></select>
+      <select id="ordersSymbol" class="select select-sm w-40 mono"></select>
+      <label class="label cursor-pointer gap-1.5 text-xs text-base-content/60">
+        <input type="checkbox" id="ordersAutoRefresh" class="checkbox checkbox-xs checkbox-primary" />
+        автообновление 15с
+      </label>
       <button id="refreshOrdersBtn" class="btn btn-sm btn-ghost">↻</button>
     </div>
   </div>
@@ -277,11 +324,11 @@
         <table class="table table-sm">
           <thead>
             <tr>
-              <th>Тип</th><th>Side</th><th class="text-right">Qty</th><th class="text-right">Цена</th>
-              <th>Статус</th><th class="text-center">Отмена</th>
+              <th>Аккаунт</th><th>Контракт</th><th>Тип</th><th>Side</th><th class="text-right">Qty</th>
+              <th class="text-right">Цена / триггер</th><th>Статус</th><th class="text-center">Отмена</th>
             </tr>
           </thead>
-          <tbody id="ordersTbody"><tr><td colspan="6" class="text-center text-base-content/40 py-6">укажи аккаунт и символ</td></tr></tbody>
+          <tbody id="ordersTbody"><tr><td colspan="8" class="text-center text-base-content/40 py-6">загрузка…</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -453,13 +500,36 @@
       showError('не удалось загрузить аккаунты: ' + e.message);
       return;
     }
-    renderAccountBar();
+    renderAccountBarSkeleton();
     renderAccountChecks();
-    renderBalanceCards();
+    renderBalanceCardsSkeleton();
     populateAccountFilter();
     populateOrdersAccount();
     refreshPrice();
     loadPositions();
+    refreshAllBalances();
+    setupAutoRefresh('balanceAutoRefresh', 15000, refreshAllBalances);
+    setupAutoRefresh('ordersAutoRefresh', 15000, loadOpenOrders);
+    setupAutoRefresh('positionsAutoRefresh', 15000, loadPositions, () => !closeModal.open && !bulkModal.open);
+  }
+
+  // Generic 15s-on-checkbox auto-refresh: paused while the tab isn't focused (no point burning
+  // exchange rate-limit on a background tab) and while an optional guard says not to run right now
+  // (e.g. a close/bulk-close modal is open — a table repaint under the user's cursor mid-action is
+  // the last thing we want). Off by default; the checkbox is per-tab state, not persisted.
+  function setupAutoRefresh(checkboxId, intervalMs, fn, canRunNow) {
+    const cb = document.getElementById(checkboxId);
+    let timer = null;
+    function tick() {
+      if (!document.hidden && cb.checked && (!canRunNow || canRunNow())) fn();
+    }
+    function restart() {
+      if (timer) { clearInterval(timer); timer = null; }
+      if (cb.checked) timer = setInterval(tick, intervalMs);
+    }
+    cb.addEventListener('change', restart);
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) tick(); });
+    restart();
   }
 
   function populateAccountFilter() {
@@ -487,44 +557,97 @@
     tabBtnTrading.classList.remove('tab-active');
     tabManagement.classList.remove('hidden');
     tabTrading.classList.add('hidden');
-    if (!managementFrame.getAttribute('src')) managementFrame.src = '/admin.html';
+    // Cache-bust every load — this is an internal single-operator tool, not a page worth trading
+    // staleness for HTTP caching on, and a stale iframe here has already cost a "still shows the
+    // old percent labels" round-trip once.
+    if (!managementFrame.getAttribute('src')) managementFrame.src = '/admin.html?v=' + Date.now();
   });
 
   // ---- Open orders (cancel-order screen) ----
   function populateOrdersAccount() {
     const sel = document.getElementById('ordersAccount');
-    sel.innerHTML = accounts.map(a => `<option value="${a.id}">${a.id} (${a.exchange})</option>`).join('');
+    const prev = sel.value;
+    sel.innerHTML = '<option value="">Все аккаунты</option>'
+      + accounts.map(a => `<option value="${a.id}">${a.id} (${a.exchange})</option>`).join('');
+    sel.value = prev || '';
   }
+
+  /** Symbols worth asking about: both venues require a symbol per open-orders call, so "all
+   *  symbols" means one request per symbol per account. Offering every contract the exchange
+   *  lists would be hundreds of calls; the ones with an open position are the ones whose stops
+   *  the operator came here to check. Same reasoning as the positions filter, which dropped its
+   *  free-text box because a typo just showed an empty table. */
+  function populateOrdersSymbol() {
+    const sel = document.getElementById('ordersSymbol');
+    const prev = sel.value;
+    const symbols = [...new Set(allPositions.map(p => p.symbol))].sort();
+    sel.innerHTML = '<option value="">Все символы</option>'
+      + symbols.map(sym => `<option value="${sym}">${sym}</option>`).join('');
+    sel.value = symbols.includes(prev) ? prev : '';
+  }
+  /** A conditional order (STOP_MARKET / TAKE_PROFIT_MARKET) carries price=0 — the level that
+   *  matters is its trigger. Show whichever one this order actually uses, flagged so the two
+   *  aren't read as the same thing. */
+  function orderLevel(o) {
+    const trigger = parseFloat(o.triggerPrice);
+    if (Number.isFinite(trigger) && trigger !== 0) return fmt(trigger) + ' ⛳';
+    const price = parseFloat(o.price);
+    return Number.isFinite(price) && price !== 0 ? fmt(price) : '—';
+  }
+
   async function loadOpenOrders() {
-    const accountId = document.getElementById('ordersAccount').value;
-    const symbol = document.getElementById('ordersSymbol').value.trim().toUpperCase();
+    const accountFilter = document.getElementById('ordersAccount').value;
+    const symbolFilter = document.getElementById('ordersSymbol').value;
     const tbody = document.getElementById('ordersTbody');
-    if (!accountId || !symbol) {
-      tbody.innerHTML = '<tr><td colspan="6" class="text-center text-base-content/40 py-6">укажи аккаунт и символ</td></tr>';
+
+    // Both venues require a symbol per call, so "all" fans out over accounts × symbols. The
+    // symbol list is bounded to symbols that actually hold a position (populateOrdersSymbol).
+    const targetAccounts = accountFilter ? [accountFilter] : accounts.map(a => a.id);
+    const targetSymbols = symbolFilter ? [symbolFilter] : [...new Set(allPositions.map(p => p.symbol))];
+    if (!targetSymbols.length) {
+      tbody.innerHTML = '<tr><td colspan="8" class="text-center text-base-content/40 py-6">нет открытых позиций — нечего запрашивать</td></tr>';
       return;
     }
-    tbody.innerHTML = '<tr><td colspan="6" class="text-center text-base-content/40 py-6">загрузка…</td></tr>';
-    try {
-      const resp = await api(`/api/v1/accounts/${accountId}/orders?symbol=${encodeURIComponent(symbol)}`);
-      if (resp.error) { tbody.innerHTML = `<tr><td colspan="6" class="text-center text-error text-xs py-6">${esc(resp.error)}</td></tr>`; return; }
-      if (!resp.orders.length) { tbody.innerHTML = '<tr><td colspan="6" class="text-center text-base-content/40 py-6">нет открытых ордеров</td></tr>'; return; }
-      tbody.innerHTML = resp.orders.map(o => `
-        <tr>
-          <td class="mono text-xs">${esc(o.type ?? '—')}</td>
-          <td><span class="badge badge-ghost badge-xs">${esc(o.side ?? '—')}</span></td>
-          <td class="text-right mono">${o.qty ?? '—'}</td>
-          <td class="text-right mono">${o.price ?? '—'}</td>
-          <td class="text-xs">${esc(o.status ?? '—')}</td>
-          <td class="text-center"><button class="btn btn-xs btn-outline btn-error cancel-order" data-order-id="${esc(o.orderId)}">Отменить</button></td>
-        </tr>`).join('');
-      tbody.querySelectorAll('.cancel-order').forEach(btn => btn.addEventListener('click', () => cancelOrder(btn)));
-    } catch (e) {
-      tbody.innerHTML = `<tr><td colspan="6" class="text-center text-error text-xs py-6">${esc(e.message)}</td></tr>`;
+
+    tbody.innerHTML = '<tr><td colspan="8" class="text-center text-base-content/40 py-6">загрузка…</td></tr>';
+    const pairs = targetAccounts.flatMap(acc => targetSymbols.map(sym => ({ acc, sym })));
+    const results = await Promise.all(pairs.map(async ({ acc, sym }) => {
+      try {
+        const resp = await api(`/api/v1/accounts/${acc}/orders?symbol=${encodeURIComponent(sym)}`);
+        // An unwired account answers with the same error for every symbol — that's a property of
+        // the account, not of this query, so it stays out of the table instead of filling it with
+        // one identical error row per symbol.
+        return resp.error ? [] : resp.orders.map(o => ({ ...o, accountId: acc, symbol: o.symbol || sym }));
+      } catch (e) {
+        return [];
+      }
+    }));
+    const rows = results.flat();
+
+    if (!rows.length) {
+      tbody.innerHTML = '<tr><td colspan="8" class="text-center text-base-content/40 py-6">нет открытых ордеров</td></tr>';
+      return;
     }
+    tbody.innerHTML = rows.map(o => `
+      <tr>
+        <td class="mono text-xs">${esc(o.accountId)}</td>
+        <td class="mono">${esc(o.symbol ?? '—')}</td>
+        <td class="mono text-xs">${esc(o.type ?? '—')}</td>
+        <td><span class="badge badge-ghost badge-xs">${esc(o.side ?? '—')}</span></td>
+        <td class="text-right mono">${o.qty ?? '—'}</td>
+        <td class="text-right mono">${orderLevel(o)}</td>
+        <td class="text-xs">${esc(o.status ?? '—')}</td>
+        <td class="text-center"><button class="btn btn-xs btn-outline btn-error cancel-order"
+              data-order-id="${esc(o.orderId)}" data-account="${esc(o.accountId)}" data-symbol="${esc(o.symbol)}">Отменить</button></td>
+      </tr>`).join('');
+    tbody.querySelectorAll('.cancel-order').forEach(btn => btn.addEventListener('click', () => cancelOrder(btn)));
   }
   async function cancelOrder(btn) {
-    const accountId = document.getElementById('ordersAccount').value;
-    const symbol = document.getElementById('ordersSymbol').value.trim().toUpperCase();
+    // Account and symbol come from the ROW, not the filters: with "all accounts" selected the
+    // filters no longer identify which account this particular order belongs to, and cancelling
+    // against the wrong account is not a mistake worth risking on a real-money venue.
+    const accountId = btn.dataset.account;
+    const symbol = btn.dataset.symbol;
     const orderId = btn.dataset.orderId;
     btn.disabled = true;
     btn.textContent = '...';
@@ -540,9 +663,14 @@
   }
   document.getElementById('refreshOrdersBtn').addEventListener('click', loadOpenOrders);
   document.getElementById('ordersAccount').addEventListener('change', loadOpenOrders);
-  document.getElementById('ordersSymbol').addEventListener('keydown', e => { if (e.key === 'Enter') loadOpenOrders(); });
+  document.getElementById('ordersSymbol').addEventListener('change', loadOpenOrders);
 
-  async function renderBalanceCards() {
+  // Balances + top-bar account status share one fetch per account per refresh (was two separate
+  // requests before) — matters more now that this can fire every 15s on a timer, not just once.
+  let lastBalances = {};
+  let lastBalanceFetch = null;
+
+  function renderBalanceCardsSkeleton() {
     const wrap = document.getElementById('balanceCards');
     wrap.innerHTML = accounts.map(a => `
       <div class="card bg-base-100 border border-base-content/10" data-balance-card="${a.id}">
@@ -554,52 +682,84 @@
           <div class="text-xs text-base-content/50">загрузка…</div>
         </div>
       </div>`).join('');
-    for (const a of accounts) {
-      const card = wrap.querySelector(`[data-balance-card="${a.id}"] .card-body`);
-      try {
-        const b = await api(`/api/v1/accounts/${a.id}/balance?refresh=true`);
-        if (!card) continue;
-        if (b.error) {
-          card.querySelector('div:last-child').outerHTML = `<div class="text-error text-xs">${esc(b.error)}</div>`;
-          continue;
-        }
-        const upnl = parseFloat(b.unrealizedPnl);
-        card.querySelector('div:last-child').outerHTML = `
-          <div class="stats stats-horizontal bg-transparent p-0">
-            <div class="stat py-0 pl-1 pr-4">
-              <div class="stat-title text-xs">Equity</div>
-              <div class="stat-value text-lg mono">${fmt(b.equity ?? b.balance)}</div>
-              <div class="stat-desc text-xs">${b.asset ?? ''}</div>
-            </div>
-            <div class="stat py-0 pl-4 pr-1">
-              <div class="stat-title text-xs">uPnL</div>
-              <div class="stat-value text-lg mono ${Number.isFinite(upnl) ? (upnl >= 0 ? 'pnl-pos' : 'pnl-neg') : ''}">${Number.isFinite(upnl) ? (upnl >= 0 ? '+' : '') + fmt(upnl) : '—'}</div>
-            </div>
-          </div>`;
-      } catch (e) { /* card already shows a spinner-ish state; leave it */ }
-    }
   }
 
-  async function renderAccountBar() {
+  function renderAccountBarSkeleton() {
     const bar = document.getElementById('acctBar');
     bar.innerHTML = accounts.map(a =>
       `<span class="flex items-center gap-1.5" data-acct-status="${a.id}">
          <span class="inline-block w-2 h-2 rounded-full bg-base-content/20"></span>
          ${a.id} <span class="mono text-base-content/60">…</span>
        </span>`).join('');
-    for (const a of accounts) {
-      try {
-        const b = await api(`/api/v1/accounts/${a.id}/balance?refresh=true`);
-        const el = bar.querySelector(`[data-acct-status="${a.id}"]`);
-        if (!el) continue;
-        if (b.error) {
-          el.innerHTML = `<span class="inline-block w-2 h-2 rounded-full bg-error"></span>${a.id} <span class="text-error text-xs">${esc(b.error)}</span>`;
-        } else {
-          el.innerHTML = `<span class="inline-block w-2 h-2 rounded-full bg-success"></span>${a.id} <span class="mono text-base-content/60">${fmt(b.equity ?? b.balance)} ${b.asset ?? ''}</span>`;
-        }
-      } catch (e) { /* per-account failure already surfaced inline */ }
-    }
   }
+
+  function paintBalanceCards() {
+    const wrap = document.getElementById('balanceCards');
+    wrap.innerHTML = accounts.map(a => {
+      const b = lastBalances[a.id];
+      const body = !b
+        ? '<div class="text-xs text-base-content/50">загрузка…</div>'
+        : b.error
+        ? `<div class="text-error text-xs">${esc(b.error)}</div>`
+        : (() => {
+            const upnl = parseFloat(b.unrealizedPnl);
+            return `<div class="stats stats-horizontal bg-transparent p-0">
+              <div class="stat py-0 pl-1 pr-4">
+                <div class="stat-title text-xs">Equity</div>
+                <div class="stat-value text-lg mono">${fmt(b.equity ?? b.balance)}</div>
+                <div class="stat-desc text-xs">${b.asset ?? ''}</div>
+              </div>
+              <div class="stat py-0 pl-4 pr-1">
+                <div class="stat-title text-xs">uPnL</div>
+                <div class="stat-value text-lg mono ${Number.isFinite(upnl) ? (upnl >= 0 ? 'pnl-pos' : 'pnl-neg') : ''}">${Number.isFinite(upnl) ? (upnl >= 0 ? '+' : '') + fmt(upnl) : '—'}</div>
+              </div>
+            </div>`;
+          })();
+      return `<div class="card bg-base-100 border border-base-content/10" data-balance-card="${a.id}">
+        <div class="card-body p-4 gap-1">
+          <div class="flex items-center justify-between">
+            <span class="font-semibold">${a.id}</span>
+            <span class="badge badge-ghost badge-xs">${a.exchange}</span>
+          </div>
+          ${body}
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  function paintAccountBar() {
+    const bar = document.getElementById('acctBar');
+    bar.innerHTML = accounts.map(a => {
+      const b = lastBalances[a.id];
+      const inner = !b
+        ? `<span class="inline-block w-2 h-2 rounded-full bg-base-content/20"></span>${a.id} <span class="mono text-base-content/60">…</span>`
+        : b.error
+        ? `<span class="inline-block w-2 h-2 rounded-full bg-error"></span>${a.id} <span class="text-error text-xs">${esc(b.error)}</span>`
+        : `<span class="inline-block w-2 h-2 rounded-full bg-success"></span>${a.id} <span class="mono text-base-content/60">${fmt(b.equity ?? b.balance)} ${b.asset ?? ''}</span>`;
+      return `<span class="flex items-center gap-1.5" data-acct-status="${a.id}">${inner}</span>`;
+    }).join('');
+  }
+
+  function tickBalanceAge() {
+    const el = document.getElementById('balanceAge');
+    if (!el || lastBalanceFetch == null) return;
+    const sec = Math.round((Date.now() - lastBalanceFetch) / 1000);
+    el.textContent = `обновлено ${sec}с назад`;
+  }
+  setInterval(tickBalanceAge, 1000);
+
+  async function refreshAllBalances() {
+    const results = await Promise.all(accounts.map(a =>
+      api(`/api/v1/accounts/${a.id}/balance?refresh=true`).catch(e => ({ error: e.message }))));
+    accounts.forEach((a, i) => { lastBalances[a.id] = results[i]; });
+    lastBalanceFetch = Date.now();
+    paintBalanceCards();
+    paintAccountBar();
+    tickBalanceAge();
+    updateAccountSizeHints();
+    if (orderType === 'MARKET') updateMarginEst();
+  }
+  document.getElementById('refreshBalancesBtn').addEventListener('click', refreshAllBalances);
 
   function renderAccountChecks() {
     const wrap = document.getElementById('accountChecks');
@@ -607,7 +767,9 @@
       <label class="label cursor-pointer justify-start gap-2 px-2 py-1.5 rounded-btn hover:bg-base-200">
         <input type="checkbox" class="checkbox checkbox-sm account-cb" value="${a.id}" data-exchange="${a.exchange}" checked ${a.tradable ? '' : 'disabled'} />
         <span class="flex-1">${a.id} <span class="badge badge-ghost badge-xs">${a.exchange}</span>${a.tradable ? '' : ' <span class=\"badge badge-warning badge-xs\">not tradable</span>'}</span>
+        <span class="mono text-xs text-base-content/60 acct-size-hint" data-account="${a.id}"></span>
       </label>`).join('');
+    updateAccountSizeHints();
   }
 
   function fmt(v) { const n = parseFloat(v); return Number.isFinite(n) ? n.toLocaleString('en-US', { maximumFractionDigits: 4 }) : (v ?? '—'); }
@@ -665,14 +827,16 @@
   document.getElementById('refreshPriceBtn').addEventListener('click', refreshPrice);
   async function refreshPrice() {
     if (!token) return;
+    // Priced on the first checked ACCOUNT, not its venue — two accounts on one exchange can be
+    // on different domains (BingX VST demo vs production), each with its own client.
     const firstCb = document.querySelector('.account-cb:checked') || document.querySelector('.account-cb');
-    const exchange = firstCb ? firstCb.dataset.exchange : (accounts[0] && accounts[0].exchange);
-    if (!exchange) return;
+    const accountId = firstCb ? firstCb.value : (accounts[0] && accounts[0].id);
+    if (!accountId) return;
     try {
-      const r = await api(`/api/v1/market/price?symbol=${encodeURIComponent(currentSymbol)}&exchange=${encodeURIComponent(exchange)}`);
+      const r = await api(`/api/v1/market/price?symbol=${encodeURIComponent(currentSymbol)}&account=${encodeURIComponent(accountId)}`);
       if (r.error) { document.getElementById('markPriceLabel').textContent = r.error; return; }
       currentMarkPrice = parseFloat(r.price);
-      document.getElementById('markPriceLabel').textContent = r.price + ' (' + exchange + ')';
+      document.getElementById('markPriceLabel').textContent = r.price + ' (' + accountId + ')';
       if (orderType === 'MARKET') updateMarginEst();
       updateRr();
     } catch (e) { document.getElementById('markPriceLabel').textContent = 'н/д'; }
@@ -703,12 +867,67 @@
     updateMarginEst();
   }));
   function updateMarginEst() {
-    const n = parseFloat(notionalInput.value) || 0;
     const l = parseFloat(leverageInput.value) || 1;
+    if (sizeMode === 'PCT') {
+      marginEstEl.textContent = 'маржа — своя на каждый аккаунт (см. список ниже)';
+      return;
+    }
+    const n = parseFloat(notionalInput.value) || 0;
     marginEstEl.textContent = 'маржа ≈ $' + (n / l).toFixed(2);
   }
-  notionalInput.addEventListener('input', updateMarginEst);
+  notionalInput.addEventListener('input', () => { updateMarginEst(); updateAccountSizeHints(); });
   leverageInput.addEventListener('input', updateMarginEst);
+
+  // ---- Sizing mode: flat $ notional (unchanged) vs. % of each account's own current equity.
+  // % mode still sends a plain dollar `notional` to POST /proposals (that's all the endpoint
+  // understands — see ProposalController) — we just compute a different dollar figure per account
+  // from lastBalances instead of reusing one input value for everyone. ----
+  let sizeMode = 'USD'; // 'USD' | 'PCT'
+  const sizeModeUsdBtn = document.getElementById('sizeModeUsd');
+  const sizeModePctBtn = document.getElementById('sizeModePct');
+  const notionalLabel = document.getElementById('notionalLabel');
+  const sizeModeHint = document.getElementById('sizeModeHint');
+  const sizeModeValues = { USD: '500', PCT: '1' };
+  function setSizeMode(mode) {
+    sizeModeValues[sizeMode] = notionalInput.value;
+    sizeMode = mode;
+    sizeModeUsdBtn.classList.toggle('btn-active', mode === 'USD');
+    sizeModePctBtn.classList.toggle('btn-active', mode === 'PCT');
+    notionalLabel.textContent = mode === 'USD' ? 'Нотионал $' : '% от equity';
+    notionalInput.value = sizeModeValues[mode];
+    sizeModeHint.textContent = mode === 'USD'
+      ? 'Несколько аккаунтов ⇒ отдельный proposal на каждый, один и тот же нотионал/плечо на все.'
+      : 'Несколько аккаунтов ⇒ отдельный proposal на каждый; нотионал считается от equity каждого аккаунта отдельно (equity × %), плечо и % — одни на все.';
+    updateMarginEst();
+    updateAccountSizeHints();
+  }
+  sizeModeUsdBtn.addEventListener('click', () => setSizeMode('USD'));
+  sizeModePctBtn.addEventListener('click', () => setSizeMode('PCT'));
+
+  /** Per-account $ preview next to each account checkbox when in % mode — reads the equity already
+   *  fetched into lastBalances, doesn't hit the API itself. Blank in $ mode. */
+  function updateAccountSizeHints() {
+    document.querySelectorAll('.acct-size-hint').forEach(el => {
+      if (sizeMode !== 'PCT') { el.textContent = ''; return; }
+      const b = lastBalances[el.dataset.account];
+      const equity = b && !b.error ? parseFloat(b.equity ?? b.balance) : null;
+      const pct = parseFloat(notionalInput.value);
+      if (!Number.isFinite(equity) || !Number.isFinite(pct)) { el.textContent = '—'; return; }
+      el.textContent = '≈ $' + (equity * pct / 100).toFixed(2);
+    });
+  }
+
+  /** Resolves the dollar notional to send for one account's proposal. In % mode this is the whole
+   *  point of the feature: each account sizes off its own equity, not a number typed once and
+   *  blasted at every account. Returns null (bad-input for this account) or a numeric string. */
+  function resolveNotionalFor(accountId) {
+    if (sizeMode === 'USD') return notionalInput.value || null;
+    const b = lastBalances[accountId];
+    const equity = b && !b.error ? parseFloat(b.equity ?? b.balance) : null;
+    const pct = parseFloat(notionalInput.value);
+    if (!Number.isFinite(equity) || !Number.isFinite(pct)) return null;
+    return (equity * pct / 100).toFixed(2);
+  }
 
   // ---- R:R hint ----
   const slInput = document.getElementById('slPrice');
@@ -728,6 +947,22 @@
   slInput.addEventListener('input', updateRr);
   tpInput.addEventListener('input', updateRr);
   document.getElementById('limitPrice').addEventListener('input', updateRr);
+
+  // ---- SL/TP stepper: first click on an empty field seeds it to mark price (no offset); every
+  // click after that nudges it by 1% of the current mark. toFixed(8) then parseFloat just kills
+  // float noise (63588.199999999997) without hard-coding a decimal count per symbol. ----
+  function roundPrice(n) { return parseFloat(n.toFixed(8)); }
+  function stepPrice(input, dir) {
+    if (!Number.isFinite(currentMarkPrice)) { showError('нет mark price — обнови котировку (↻)'); return; }
+    const cur = parseFloat(input.value);
+    input.value = (input.value === '' || !Number.isFinite(cur))
+      ? roundPrice(currentMarkPrice)
+      : roundPrice(cur + dir * currentMarkPrice * 0.01);
+    updateRr();
+  }
+  document.querySelectorAll('.price-step').forEach(btn => btn.addEventListener('click', () => {
+    stepPrice(document.getElementById(btn.dataset.target), parseInt(btn.dataset.dir, 10));
+  }));
 
   // ---- Preview: creates one proposal per checked account, shows risk-preview rows ----
   const previewSection = document.getElementById('previewSection');
@@ -752,12 +987,20 @@
       const accountId = cb.value;
       const row = document.createElement('tr');
       row.className = 'preview-row';
+      const manualNotional = resolveNotionalFor(accountId);
+      if (sizeMode === 'PCT' && manualNotional == null) {
+        row.innerHTML = `<td class="mono">${accountId}</td><td><span class="badge badge-error badge-sm">error</span></td>
+             <td colspan="3" class="text-xs text-error">нет баланса для расчёта % — обнови балансы (↻ у «Балансы»)</td><td></td>`;
+        if (previewTbody.querySelector('td[colspan]')) previewTbody.innerHTML = '';
+        previewTbody.appendChild(row);
+        continue;
+      }
       try {
         const resp = await api('/api/v1/strategy/proposals', {
           method: 'POST',
           body: JSON.stringify({
             accountId, symbol: currentSymbol, entryPrice: String(entry), slPrice: sl, tpPrice: tp,
-            rationale: 'manual panel', notional: notionalInput.value || null,
+            rationale: 'manual panel', notional: manualNotional,
             leverage: Number.isFinite(parseInt(leverageInput.value, 10)) ? parseInt(leverageInput.value, 10) : null,
             orderType,
           }),
@@ -872,9 +1115,11 @@
         notional, margin, upnl: live.unrealizedPnl,
         sl: p.slPrice != null ? parseFloat(p.slPrice) : null,
         tp: p.tpPrice != null ? parseFloat(p.tpPrice) : null,
+        openedVia: p.openedVia,
       };
     }).filter(Boolean);
     populateSymbolFilter();
+    populateOrdersSymbol();
     renderPositionsTable();
   }
 
@@ -906,7 +1151,7 @@
       <tr data-position-id="${p.positionId}">
         <td><input type="checkbox" class="checkbox checkbox-xs pos-select" value="${p.positionId}" /></td>
         <td class="mono text-xs">${p.accountId}</td>
-        <td class="mono">${p.symbol} <span class="badge badge-ghost badge-xs">${p.exchange}</span></td>
+        <td class="mono">${p.symbol} <span class="badge badge-ghost badge-xs">${p.exchange}</span>${p.openedVia === 'EXCHANGE' ? ' <span class="badge badge-warning badge-outline badge-xs" title="открыта на бирже напрямую, SL/TP неизвестны">биржа</span>' : ''}</td>
         <td><span class="badge badge-success badge-xs">${p.side}</span></td>
         <td class="text-right mono">${p.qty}</td>
         <td class="text-right mono">${p.notional != null ? '$' + fmt(p.notional) : '—'}</td>

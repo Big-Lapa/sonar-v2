@@ -64,6 +64,17 @@ public class PollerTransactions {
         });
     }
 
+    /** Writes back SL/TP read from the exchange — for a position Sonar opened these were already
+     *  known at entry, for an adopted one this is the only way they are ever learned. */
+    @Transactional
+    public void saveStopLevels(Long positionId, String slPrice, String tpPrice) {
+        positionRepository.findById(positionId).ifPresent(p -> {
+            p.setSlPrice(slPrice);
+            p.setTpPrice(tpPrice);
+            positionRepository.save(p);
+        });
+    }
+
     @Transactional
     public void saveQtyMismatch(Long positionId, boolean mismatch) {
         positionRepository.findById(positionId).ifPresent(p -> {
