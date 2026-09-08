@@ -177,6 +177,14 @@ public class MinutePoller {
             position.setLeverage(live.leverage());
             position.setLiquidationPrice(live.liquidationPrice());
             position.setStatus("OPEN");
+            // KNOWN LIMITATION (PR review #3, not fixed — low severity, revisit if it bites):
+            // openedAt is the ADOPTION moment, not when the position was actually opened on the
+            // venue. handleClosed() later does reader.sumIncomeSince(openedAt) for the close PnL —
+            // so any PnL/funding that accrued between the real entry and this tick's discovery is
+            // silently excluded from the close notification and daily_baseline. Wrong number, not
+            // a missing one. Venues do return their own open time (BingX/Bybit position payloads
+            // carry createdTime/updatedTime) — pull that instead of System.currentTimeMillis() if
+            // this ever needs to be exact.
             position.setOpenedAt(System.currentTimeMillis());
             position.setOpenedVia("EXCHANGE");
             position.setUpdatedAt(System.currentTimeMillis());
