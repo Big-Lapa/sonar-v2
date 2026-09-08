@@ -32,6 +32,7 @@ public class AccountRiskController {
             Integer maxOpenPositions,
             Integer maxLeverage,
             Boolean tradable,
+            Boolean active,
             int version
     ) {}
 
@@ -51,6 +52,7 @@ public class AccountRiskController {
         if (req.maxOpenPositions() != null) entity.setMaxOpenPositions(req.maxOpenPositions());
         if (req.maxLeverage() != null) entity.setMaxLeverage(req.maxLeverage());
         if (req.tradable() != null) entity.setTradable(req.tradable());
+        if (req.active() != null) entity.setActive(req.active());
         entity.setUpdatedAt(System.currentTimeMillis());
         return ResponseEntity.ok(repository.save(entity));
     }
