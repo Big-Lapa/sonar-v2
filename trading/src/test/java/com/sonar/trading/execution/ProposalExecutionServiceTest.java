@@ -86,11 +86,11 @@ class ProposalExecutionServiceTest {
                 orderCommandRepository, orderRepository, fillRepository, signalInboxRepository, adapters,
                 stopGuard, claimer, accountRiskRepository, dailyBaselineRepository);
 
-        AccountProps account = new AccountProps(ACCOUNT_ID, "bingx");
+        AccountProps account = new AccountProps(ACCOUNT_ID, "bingx", "key-bingx", "secret", "https://open-api-vst.bingx.com");
         when(accountRegistry.byId(ACCOUNT_ID)).thenReturn(Optional.of(account));
         // checkPriceDrift's account scan (confirm()'s pre-preview sanity gate) — same account list.
         when(accountRegistry.all()).thenReturn(List.of(account));
-        when(adapters.forExchange("bingx")).thenReturn(Optional.of(adapter));
+        when(adapters.forAccount(ACCOUNT_ID)).thenReturn(Optional.of(adapter));
         when(adapter.getMarkPrice(anyString())).thenReturn(new BigDecimal("100"));
         when(claimer.claim(anyString())).thenReturn(true);
         when(signalInboxRepository.findByIdempotencyKeyAndAccountId(anyString(), anyString())).thenReturn(Optional.empty());
@@ -179,10 +179,10 @@ class ProposalExecutionServiceTest {
         existing.setSlPrice("90");
         when(positionRepository.findByAccountIdAndSymbol(ACCOUNT_ID, "BTCUSDT")).thenReturn(Optional.of(existing));
 
-        AccountProps bybitAccount = new AccountProps(ACCOUNT_ID, "bybit");
+        AccountProps bybitAccount = new AccountProps(ACCOUNT_ID, "bybit", "key-bybit", "secret", "https://api-demo.bybit.com");
         when(accountRegistry.byId(ACCOUNT_ID)).thenReturn(Optional.of(bybitAccount));
         when(accountRegistry.all()).thenReturn(List.of(bybitAccount));
-        when(adapters.forExchange("bybit")).thenReturn(Optional.of(adapter));
+        when(adapters.forAccount(ACCOUNT_ID)).thenReturn(Optional.of(adapter));
 
         ProposalEntity p = proposal("100", "90", "110", "100", "MARKET", null); // small add-on, well under cap
         stubProposal(p);
@@ -191,7 +191,7 @@ class ProposalExecutionServiceTest {
         when(adapter.placeOrder(any())).thenReturn(new AdapterOrderResult(
                 "ex-1", "cid-1", "BTCUSDT", AdapterOrderState.FILLED,
                 new BigDecimal("1"), new BigDecimal("100"), BigDecimal.ZERO, System.currentTimeMillis()));
-        when(stopGuard.hasStopOrder("bybit", "BTCUSDT")).thenReturn(true);
+        when(stopGuard.hasStopOrder(ACCOUNT_ID, "BTCUSDT")).thenReturn(true);
 
         service.confirm(p.getProposalId());
 

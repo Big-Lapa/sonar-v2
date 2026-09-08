@@ -58,10 +58,12 @@ public class AccountLivePositionsController {
         if (account.isEmpty()) {
             return new LivePositionsResponse(id, List.of(), "аккаунт не найден");
         }
-        var reader = accountReaders.forExchange(account.get().exchange());
+        var reader = accountReaders.forAccount(id);
         if (reader.isEmpty()) {
             return new LivePositionsResponse(id, List.of(),
-                    "venue '" + account.get().exchange() + "' не подключена в этой версии");
+                    account.get().isConfigured()
+                            ? "venue '" + account.get().exchange() + "' не подключена в этой версии"
+                            : "у аккаунта не заданы API-ключи");
         }
         try {
             List<ExchangePosition> positions = reader.get().getPositions().stream()

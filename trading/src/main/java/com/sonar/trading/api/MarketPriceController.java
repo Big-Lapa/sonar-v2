@@ -26,23 +26,25 @@ public class MarketPriceController {
         this.adapters = adapters;
     }
 
-    public record PriceResponse(String symbol, String exchange, String price, String error) {}
+    public record PriceResponse(String symbol, String account, String price, String error) {}
 
+    /** Quoted per <b>account</b>, not per venue: two accounts on the same exchange can sit on
+     *  different domains (BingX VST demo vs production), so each one is asked on its own client. */
     @GetMapping("/price")
-    public PriceResponse price(@RequestParam String symbol, @RequestParam String exchange) {
-        ExecutionAdapter adapter = adapters.forExchange(exchange).orElse(null);
+    public PriceResponse price(@RequestParam String symbol, @RequestParam String account) {
+        ExecutionAdapter adapter = adapters.forAccount(account).orElse(null);
         if (adapter == null) {
-            return new PriceResponse(symbol, exchange, null, "venue '" + exchange + "' не подключена");
+            return new PriceResponse(symbol, account, null, "аккаунт '" + account + "' не подключён");
         }
         try {
             var price = adapter.getMarkPrice(symbol);
             if (price == null) {
-                return new PriceResponse(symbol, exchange, null, "цена недоступна");
+                return new PriceResponse(symbol, account, null, "цена недоступна");
             }
-            return new PriceResponse(symbol, exchange, price.toPlainString(), null);
+            return new PriceResponse(symbol, account, price.toPlainString(), null);
         } catch (RuntimeException e) {
-            log.warn("[{}] getMarkPrice({}) failed: {}", exchange, symbol, e.toString());
-            return new PriceResponse(symbol, exchange, null, "цена недоступна");
+            log.warn("[{}] getMarkPrice({}) failed: {}", account, symbol, e.toString());
+            return new PriceResponse(symbol, account, null, "цена недоступна");
         }
     }
 }

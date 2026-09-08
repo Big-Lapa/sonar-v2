@@ -4,50 +4,63 @@ import com.sonar.trading.exchange.spi.ExecutionAdapter;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
-import java.util.List;
+import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.Mockito.when;
 
-/** Multi-venue routing (grilled plan): registry resolves per-venue adapters by name. */
+/**
+ * Per-account routing: the registry resolves an adapter by ACCOUNT id, not venue — two accounts on
+ * the same exchange (BingX VST demo and BingX production) each get their own client, so a lookup
+ * can never hand a real-money order the demo adapter.
+ */
 class ExecutionAdapterRegistryTest {
 
-    private static ExecutionAdapter adapterNamed(String name) {
-        ExecutionAdapter adapter = Mockito.mock(ExecutionAdapter.class);
-        when(adapter.adapterName()).thenReturn(name);
-        return adapter;
+    private static ExecutionAdapter adapter() {
+        return Mockito.mock(ExecutionAdapter.class);
     }
 
     @Test
-    void resolvesByExchangeNameCaseInsensitively() {
-        ExecutionAdapter bingx = adapterNamed("BINGX");
-        ExecutionAdapter bybit = adapterNamed("BYBIT");
-        ExecutionAdapterRegistry registry = new ExecutionAdapterRegistry(List.of(bingx, bybit));
+    void resolvesByAccountIdCaseInsensitively() {
+        ExecutionAdapter vst = adapter();
+        ExecutionAdapter prod = adapter();
+        ExecutionAdapterRegistry registry = new ExecutionAdapterRegistry(
+                Map.of("bingx-vst", vst, "bingx-prod", prod));
 
-        assertThat(registry.forExchange("bingx")).contains(bingx);
-        assertThat(registry.forExchange("BingX")).contains(bingx);
-        assertThat(registry.forExchange("bybit")).contains(bybit);
+        assertThat(registry.forAccount("bingx-vst")).contains(vst);
+        assertThat(registry.forAccount("BingX-VST")).contains(vst);
+        assertThat(registry.forAccount("bingx-prod")).contains(prod);
     }
 
     @Test
-    void unknownOrNullExchangeIsEmpty() {
-        ExecutionAdapterRegistry registry = new ExecutionAdapterRegistry(List.of(adapterNamed("BINGX")));
+    void twoAccountsOnTheSameVenueStayDistinct() {
+        ExecutionAdapter vst = adapter();
+        ExecutionAdapter prod = adapter();
+        ExecutionAdapterRegistry registry = new ExecutionAdapterRegistry(
+                Map.of("bingx-vst", vst, "bingx-prod", prod));
 
-        assertThat(registry.forExchange("binance")).isEmpty();
-        assertThat(registry.forExchange(null)).isEmpty();
+        assertThat(registry.forAccount("bingx-vst")).contains(vst);
+        assertThat(registry.forAccount("bingx-prod")).contains(prod);
+    }
+
+    @Test
+    void unknownOrNullAccountIsEmpty() {
+        ExecutionAdapterRegistry registry = new ExecutionAdapterRegistry(Map.of("bingx-vst", adapter()));
+
+        assertThat(registry.forAccount("pionex-demo")).isEmpty();
+        assertThat(registry.forAccount(null)).isEmpty();
     }
 
     @Test
     void emptyRegistryResolvesNothing_paperModeSafe() {
-        ExecutionAdapterRegistry registry = new ExecutionAdapterRegistry(List.of());
+        ExecutionAdapterRegistry registry = new ExecutionAdapterRegistry(Map.of());
 
-        assertThat(registry.forExchange("bingx")).isEmpty();
+        assertThat(registry.forAccount("bingx-vst")).isEmpty();
         assertThat(registry.any()).isEmpty();
     }
 
     @Test
     void anyReturnsSomeWiredAdapterWhenAtLeastOneExists() {
-        ExecutionAdapterRegistry registry = new ExecutionAdapterRegistry(List.of(adapterNamed("BYBIT")));
+        ExecutionAdapterRegistry registry = new ExecutionAdapterRegistry(Map.of("bybit-demo", adapter()));
 
         assertThat(registry.any()).isPresent();
     }

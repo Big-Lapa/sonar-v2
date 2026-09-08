@@ -154,7 +154,7 @@ public class ProposalExecutionService {
      */
     private String checkPriceDrift(String symbol, BigDecimal proposalEntry) {
         ExecutionAdapter adapter = accountRegistry.all().stream()
-                .flatMap(a -> adapters.forExchange(a.exchange()).stream())
+                .flatMap(a -> adapters.forAccount(a.id()).stream())
                 .findFirst()
                 .orElse(null);
         if (adapter == null) {
@@ -195,7 +195,7 @@ public class ProposalExecutionService {
         if (account == null) {
             return ExecutionLegResult.failed(accountId, "аккаунт не найден в реестре");
         }
-        ExecutionAdapter adapter = adapters.forExchange(account.exchange()).orElse(null);
+        ExecutionAdapter adapter = adapters.forAccount(account.id()).orElse(null);
         if (adapter == null) {
             return ExecutionLegResult.failed(accountId,
                     "venue '" + account.exchange() + "' не подключена в этой версии");
@@ -347,7 +347,7 @@ public class ProposalExecutionService {
                 adapter.placeReduceOnlyTakeProfit(proposal.getSymbol(), finalQty, tp);
                 position.setSlPrice(sl.toPlainString());
                 position.setTpPrice(tp.toPlainString());
-                stopVerified = stopGuard.hasStopOrder(account.exchange(), proposal.getSymbol());
+                stopVerified = stopGuard.hasStopOrder(account.id(), proposal.getSymbol());
             } catch (RuntimeException e) {
                 log.error("[{}] add-on stop resize failed for {}: {}", accountId, proposal.getSymbol(), e.toString());
                 stopVerified = false;
@@ -355,14 +355,15 @@ public class ProposalExecutionService {
         } else if (isAddOn) {
             // Bybit add-on: exchange-side stop is untouched, so the DB keeps whatever sl/tp is
             // actually still active on the position rather than claiming the new ticket's values.
-            stopVerified = stopGuard.hasStopOrder(account.exchange(), proposal.getSymbol());
+            stopVerified = stopGuard.hasStopOrder(account.id(), proposal.getSymbol());
         } else {
             position.setOpenedAt(System.currentTimeMillis());
             position.setSlPrice(sl.toPlainString());
             position.setTpPrice(tp.toPlainString());
             // 4.6 step 5 / 3rd invariant: the venue attaches TP/SL atomically at entry, but we
             // verify it actually landed rather than trusting the attach silently succeeded.
-            stopVerified = stopGuard.verifyAndRepair(account.exchange(), proposal.getSymbol(), finalQty, sl);
+            stopVerified = stopGuard.verifyAndRepair(account.id(), proposal.getSymbol(), finalQty, sl,
+                    stopGuard.inspect(account.id(), proposal.getSymbol()));
         }
 
         // plannedRiskAmount feeds openPortfolioRisk (ProposalPreviewService sums it across open

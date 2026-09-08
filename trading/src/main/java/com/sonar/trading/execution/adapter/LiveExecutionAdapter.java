@@ -46,8 +46,6 @@ import java.util.UUID;
  * follow-up to capture an immediate fill; if the order is not yet terminal, the result stays NEW and
  * fill confirmation is left to the reconciliation worker.
  */
-@Component("liveExecutionAdapter")
-@ConditionalOnProperty(name = "trading.exchange", havingValue = "LIVE")
 public class LiveExecutionAdapter implements ExecutionAdapter {
 
     private static final Logger log = LoggerFactory.getLogger(LiveExecutionAdapter.class);
@@ -56,8 +54,14 @@ public class LiveExecutionAdapter implements ExecutionAdapter {
     private final TradingProperties props;
     private final BingxFuturesClient bingxFuturesClient;
 
-    public LiveExecutionAdapter(BingxExecutionGateway gateway, TradingProperties props,
+    /** {@code accountId} is this adapter's identity: one instance per account, since two
+     *  accounts on the same venue have different credentials and may even sit on different
+     *  domains (BingX VST demo vs production). */
+    private final String accountId;
+
+    public LiveExecutionAdapter(String accountId, BingxExecutionGateway gateway, TradingProperties props,
                                 BingxFuturesClient bingxFuturesClient) {
+        this.accountId = accountId;
         this.gateway = gateway;
         this.props = props;
         this.bingxFuturesClient = bingxFuturesClient;
@@ -174,7 +178,7 @@ public class LiveExecutionAdapter implements ExecutionAdapter {
 
     @Override
     public String adapterName() {
-        return "BINGX";
+        return "BINGX:" + accountId;
     }
 
     @Override
@@ -197,6 +201,7 @@ public class LiveExecutionAdapter implements ExecutionAdapter {
                 BingxOrderMapper.extractString(o, "type"),
                 BingxOrderMapper.extractDecimal(o, "origQty", "quantity"),
                 BingxOrderMapper.extractDecimal(o, "price"),
+                BingxOrderMapper.extractDecimal(o, "stopPrice", "triggerPrice"),
                 BingxOrderMapper.extractString(o, "status", "orderStatus")
         )).toList();
     }

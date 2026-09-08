@@ -41,8 +41,6 @@ import java.util.Optional;
  * {@code positionSide=BOTH}. The platform is currently LONG-only (ProposalExecutionService always
  * enters BUY), so every reduce-only leg here is a SELL, same assumption BingX's adapter makes.
  */
-@Component("bybitExecutionAdapter")
-@ConditionalOnProperty(name = "trading.exchange", havingValue = "LIVE")
 public class BybitExecutionAdapter implements ExecutionAdapter {
 
     private static final Logger log = LoggerFactory.getLogger(BybitExecutionAdapter.class);
@@ -51,8 +49,12 @@ public class BybitExecutionAdapter implements ExecutionAdapter {
     private final TradingProperties props;
     private final BybitFuturesClient bybitFuturesClient;
 
-    public BybitExecutionAdapter(BybitExecutionGateway gateway, TradingProperties props,
+    /** One instance per account — see {@code LiveExecutionAdapter}'s note on why. */
+    private final String accountId;
+
+    public BybitExecutionAdapter(String accountId, BybitExecutionGateway gateway, TradingProperties props,
                                  BybitFuturesClient bybitFuturesClient) {
+        this.accountId = accountId;
         this.gateway = gateway;
         this.props = props;
         this.bybitFuturesClient = bybitFuturesClient;
@@ -151,7 +153,7 @@ public class BybitExecutionAdapter implements ExecutionAdapter {
 
     @Override
     public String adapterName() {
-        return "BYBIT";
+        return "BYBIT:" + accountId;
     }
 
     @Override
@@ -198,6 +200,7 @@ public class BybitExecutionAdapter implements ExecutionAdapter {
                 BybitOrderMapper.extractString(o, "orderType", "stopOrderType"),
                 BybitOrderMapper.extractDecimal(o, "qty"),
                 BybitOrderMapper.extractDecimal(o, "price"),
+                BybitOrderMapper.extractDecimal(o, "triggerPrice", "stopPrice"),
                 BybitOrderMapper.extractString(o, "orderStatus")
         )).toList();
     }

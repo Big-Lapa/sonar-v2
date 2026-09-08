@@ -27,7 +27,7 @@ import static org.mockito.Mockito.when;
 class BybitExecutionAdapterTest {
 
     private static BybitExecutionAdapter adapter(BybitFuturesClient client) {
-        return new BybitExecutionAdapter(Mockito.mock(BybitExecutionGateway.class), new TradingProperties(), client);
+        return new BybitExecutionAdapter("bybit-demo", Mockito.mock(BybitExecutionGateway.class), new TradingProperties(), client);
     }
 
     // ---- hasOpenStopOrder: position-level attached SL (TP/SL set on the entry order itself) ----
@@ -116,7 +116,7 @@ class BybitExecutionAdapterTest {
                 Map.of("symbol", "BTCUSDT", "orderId", "tp-order-1", "stopOrderType", "Stop",
                         "triggerPrice", "70000", "triggerDirection", "1")))));
         BybitExecutionGateway gateway = Mockito.mock(BybitExecutionGateway.class);
-        BybitExecutionAdapter adapter = new BybitExecutionAdapter(gateway, new TradingProperties(), client);
+        BybitExecutionAdapter adapter = new BybitExecutionAdapter("bybit-demo", gateway, new TradingProperties(), client);
 
         adapter.cancelReduceOnlyOrder("BTCUSDT", false);
 
@@ -128,7 +128,7 @@ class BybitExecutionAdapterTest {
         BybitFuturesClient client = Mockito.mock(BybitFuturesClient.class);
         when(client.getOpenOrders("BTCUSDT")).thenReturn(Map.of("result", Map.of("list", List.of())));
         BybitExecutionGateway gateway = Mockito.mock(BybitExecutionGateway.class);
-        BybitExecutionAdapter adapter = new BybitExecutionAdapter(gateway, new TradingProperties(), client);
+        BybitExecutionAdapter adapter = new BybitExecutionAdapter("bybit-demo", gateway, new TradingProperties(), client);
 
         adapter.cancelReduceOnlyOrder("BTCUSDT", true);
 
@@ -165,7 +165,7 @@ class BybitExecutionAdapterTest {
     void placeReduceOnlyStopSetsPositionLevelStopLossAndPlacesNoOrder() {
         BybitFuturesClient client = Mockito.mock(BybitFuturesClient.class);
         BybitExecutionGateway gateway = Mockito.mock(BybitExecutionGateway.class);
-        BybitExecutionAdapter adapter = new BybitExecutionAdapter(gateway, new TradingProperties(), client);
+        BybitExecutionAdapter adapter = new BybitExecutionAdapter("bybit-demo", gateway, new TradingProperties(), client);
 
         adapter.placeReduceOnlyStop("BTCUSDT", new BigDecimal("0.5"), new BigDecimal("60000.0"));
 
@@ -180,7 +180,7 @@ class BybitExecutionAdapterTest {
     void placeReduceOnlyTakeProfitSetsPositionLevelTakeProfitOnly() {
         BybitFuturesClient client = Mockito.mock(BybitFuturesClient.class);
         BybitExecutionGateway gateway = Mockito.mock(BybitExecutionGateway.class);
-        BybitExecutionAdapter adapter = new BybitExecutionAdapter(gateway, new TradingProperties(), client);
+        BybitExecutionAdapter adapter = new BybitExecutionAdapter("bybit-demo", gateway, new TradingProperties(), client);
 
         adapter.placeReduceOnlyTakeProfit("BTCUSDT", new BigDecimal("0.5"), new BigDecimal("70000"));
 
@@ -194,7 +194,7 @@ class BybitExecutionAdapterTest {
         BybitExecutionGateway gateway = Mockito.mock(BybitExecutionGateway.class);
         TradingProperties props = new TradingProperties();
         props.getBybit().setTriggerBy("LastPrice");
-        BybitExecutionAdapter adapter = new BybitExecutionAdapter(gateway, props, client);
+        BybitExecutionAdapter adapter = new BybitExecutionAdapter("bybit-demo", gateway, props, client);
 
         adapter.placeReduceOnlyStop("BTCUSDT", new BigDecimal("0.5"), new BigDecimal("60000"));
 
@@ -209,7 +209,7 @@ class BybitExecutionAdapterTest {
         BybitFuturesClient client = Mockito.mock(BybitFuturesClient.class);
         when(client.getOpenOrders("BTCUSDT")).thenReturn(Map.of("result", Map.of("list", List.of())));
         BybitExecutionGateway gateway = Mockito.mock(BybitExecutionGateway.class);
-        BybitExecutionAdapter adapter = new BybitExecutionAdapter(gateway, new TradingProperties(), client);
+        BybitExecutionAdapter adapter = new BybitExecutionAdapter("bybit-demo", gateway, new TradingProperties(), client);
 
         adapter.cancelReduceOnlyOrder("BTCUSDT", true);
 

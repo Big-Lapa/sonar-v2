@@ -6,8 +6,6 @@ import com.sonar.trading.reconciliation.model.ExchangeBalance;
 import com.sonar.trading.reconciliation.model.ExchangePosition;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
-import org.springframework.stereotype.Component;
 
 import java.math.BigDecimal;
 import java.time.Instant;
@@ -15,8 +13,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 
-@Component
-@ConditionalOnProperty(name = "trading.exchange", havingValue = "LIVE")
 public class BybitAccountReader implements AccountReader {
 
     private static final Logger log = LoggerFactory.getLogger(BybitAccountReader.class);

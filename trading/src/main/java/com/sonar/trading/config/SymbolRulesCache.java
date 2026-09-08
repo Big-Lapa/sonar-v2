@@ -1,6 +1,5 @@
 package com.sonar.trading.config;
 
-import com.sonar.trading.exchange.bybit.BybitFuturesProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -34,8 +33,19 @@ public class SymbolRulesCache {
 
     private final ConcurrentHashMap<String, VenueCache> byVenue = new ConcurrentHashMap<>();
 
-    public SymbolRulesCache(BybitFuturesProperties bybitProps) {
-        this.bybitClient = RestClient.create(bybitProps.getBaseUrl());
+    /**
+     * Bybit's host comes from the account registry rather than a venue-wide property — credentials
+     * and domains are per account now. Symbol rules are public, venue-level data, so the first
+     * configured Bybit account's host stands in for the venue; if several Bybit accounts ever sit
+     * on different hosts (demo vs mainnet), this picks the first and the specs could differ from
+     * the second account's venue — worth splitting the cache per host if that day comes.
+     */
+    public SymbolRulesCache(AccountRegistry accounts) {
+        this.bybitClient = RestClient.create(accounts.all().stream()
+                .filter(a -> "bybit".equalsIgnoreCase(a.exchange()) && a.hasBaseUrl())
+                .map(AccountProps::baseUrl)
+                .findFirst()
+                .orElse("https://api.bybit.com"));
     }
 
     private record VenueCache(Instant fetchedAt, Map<String, SymbolRules> rules) {}

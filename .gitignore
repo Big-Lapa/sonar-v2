@@ -1,4 +1,7 @@
 .env
+# Local backups of .env — they hold live keys just like the original.
+.env.bak*
+.env.*.bak
 .deploy-backups/
 
 # Java / Maven

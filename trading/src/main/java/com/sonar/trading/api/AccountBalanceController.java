@@ -58,10 +58,12 @@ public class AccountBalanceController {
         if (account.isEmpty()) {
             return new BalanceResponse(id, null, null, null, null, System.currentTimeMillis(), true, "аккаунт не найден");
         }
-        var reader = accountReaders.forExchange(account.get().exchange());
+        var reader = accountReaders.forAccount(id);
         if (reader.isEmpty()) {
             return new BalanceResponse(id, null, null, null, null, System.currentTimeMillis(), true,
-                    "venue '" + account.get().exchange() + "' не подключена в этой версии");
+                    account.get().isConfigured()
+                            ? "venue '" + account.get().exchange() + "' не подключена в этой версии"
+                            : "у аккаунта не заданы API-ключи");
         }
         try {
             var balance = reader.get().getBalance().orElse(null);
