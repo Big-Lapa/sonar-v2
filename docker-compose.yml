@@ -52,6 +52,10 @@ services:
       TRADING_ACCOUNTS_4_API_KEY: ${TRADING_ACCOUNTS_4_API_KEY}
       TRADING_ACCOUNTS_4_API_SECRET: ${TRADING_ACCOUNTS_4_API_SECRET}
       TRADING_ACCOUNTS_4_BASE_URL: ${TRADING_ACCOUNTS_4_BASE_URL}
+      # ^ hard-coded up to index 4 (5 accounts) — a 6th account (TRADING_ACCOUNTS_5_*) can exist
+      #   in .env, but Compose only passes through vars listed here, so it never reaches the
+      #   container: same silent-truncation failure mode as the numbering gap AccountRegistry
+      #   warns about. Add a TRADING_ACCOUNTS_5_* block (mirroring this one) before using a 6th.
     ports:
       - "127.0.0.1:8080:8080"
     healthcheck:

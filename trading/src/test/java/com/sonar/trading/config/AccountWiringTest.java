@@ -66,6 +66,20 @@ class AccountWiringTest {
     }
 
     @Test
+    void refusesToStartWhenTwoAccountsShareAnId() {
+        // Both registries key by (lower-cased) account id — a duplicate silently makes the second
+        // entry win the map slot while AccountRegistry.byId() (a first-match scan) keeps returning
+        // the first, so the panel and execution would disagree about whose credentials are in play.
+        AccountRegistry accounts = registryOf(
+                "bybit-demo", "bybit", "key-a", "secret-a", "https://api-demo.bybit.com",
+                "BYBIT-DEMO", "bingx", "key-b", "secret-b", "https://open-api-vst.bingx.com");
+
+        assertThatThrownBy(() -> wire(accounts))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("duplicate account id");
+    }
+
+    @Test
     void refusesToStartWhenCredentialsHaveNoBaseUrl() {
         AccountRegistry accounts = registryOf(
                 "bingx-prod", "bingx", "key-prod", "secret-prod", null);

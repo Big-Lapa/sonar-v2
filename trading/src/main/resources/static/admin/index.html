@@ -223,6 +223,7 @@
 
       <div role="alert" class="alert alert-info alert-soft py-2 text-xs">
         <span id="sizeModeHint">Несколько аккаунтов ⇒ отдельный proposal на каждый, один и тот же нотионал/плечо на все.</span>
+        <span id="pctStalenessHint" class="hidden text-warning block mt-1"></span>
       </div>
 
       <button id="previewBtn" class="btn btn-primary btn-block mt-1">Проверить →</button>
@@ -742,9 +743,13 @@
 
   function tickBalanceAge() {
     const el = document.getElementById('balanceAge');
-    if (!el || lastBalanceFetch == null) return;
-    const sec = Math.round((Date.now() - lastBalanceFetch) / 1000);
-    el.textContent = `обновлено ${sec}с назад`;
+    if (el && lastBalanceFetch != null) {
+      const sec = Math.round((Date.now() - lastBalanceFetch) / 1000);
+      el.textContent = `обновлено ${sec}с назад`;
+    }
+    // % sizing goes stale on the same clock — the balance card's own age readout ticks every
+    // second regardless of mode, so piggyback on it instead of a second interval.
+    updatePctStalenessHint();
   }
   setInterval(tickBalanceAge, 1000);
 
@@ -915,6 +920,22 @@
       if (!Number.isFinite(equity) || !Number.isFinite(pct)) { el.textContent = '—'; return; }
       el.textContent = '≈ $' + (equity * pct / 100).toFixed(2);
     });
+    updatePctStalenessHint();
+  }
+
+  /** % sizing reads lastBalances, which is only as fresh as the last manual ↻ or the 15s
+   *  auto-refresh — off by default. A stale equity after a drawdown sizes the position off a
+   *  number that no longer exists, and unlike $ mode the operator has no reason to notice: the
+   *  "≈ $…" preview looks exactly as confident whether it's 2 seconds or 20 minutes old. Surfacing
+   *  the age here is the cheap half of the fix; the other half is turning balance auto-refresh on. */
+  const PCT_STALE_WARN_MS = 30_000;
+  function updatePctStalenessHint() {
+    const hint = document.getElementById('pctStalenessHint');
+    if (sizeMode !== 'PCT' || lastBalanceFetch == null) { hint.classList.add('hidden'); return; }
+    const ageSec = Math.round((Date.now() - lastBalanceFetch) / 1000);
+    if (Date.now() - lastBalanceFetch < PCT_STALE_WARN_MS) { hint.classList.add('hidden'); return; }
+    hint.textContent = `баланс обновлялся ${ageSec}с назад — % считается от него, включи автообновление баланса или обнови вручную (↻ у «Балансы»)`;
+    hint.classList.remove('hidden');
   }
 
   /** Resolves the dollar notional to send for one account's proposal. In % mode this is the whole

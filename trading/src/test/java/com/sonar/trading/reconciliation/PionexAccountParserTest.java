@@ -47,13 +47,35 @@ class PionexAccountParserTest {
     }
 
     @Test
-    void fallsBackToTheFirstRowWhenTheRequestedAssetIsAbsent() {
+    void fallsBackToAnotherQuoteAssetWhenTheRequestedOneIsAbsent() {
         // The account also holds a separate PUSD paper-trading pool; an unknown requested asset
-        // must not yield "no balance at all" when the venue clearly returned rows.
+        // must not yield "no balance at all" when the venue clearly returned rows. But the
+        // fallback is deliberately narrow (PR review fix): it picks USDT here, NOT the first row
+        // (BTC) — a coin wallet's row order is arbitrary, and reporting 0.003 BTC as "equity" would
+        // size a % position off a number two orders of magnitude away from the truth.
         Optional<ExchangeBalance> balance = PionexAccountParser.parseBalance(balancesResponse(), "EUR");
 
         assertThat(balance).isPresent();
-        assertThat(balance.get().asset()).isEqualTo("BTC");
+        assertThat(balance.get().asset()).isEqualTo("USDT");
+    }
+
+    @Test
+    void emptyWhenNoRowMatchesEitherTheRequestedOrAFallbackAsset() {
+        Map<String, Object> resp = Map.of("result", true, "data", Map.of("balances", List.of(
+                Map.of("coin", "BTC", "free", "0.003", "frozen", "0", "debts", "0"))));
+
+        assertThat(PionexAccountParser.parseBalance(resp, "EUR")).isEmpty();
+    }
+
+    @Test
+    void aRowWithNoCoinFieldNeverImpersonatesTheRequestedAsset() {
+        // A malformed row (missing "coin") used to match ANY requested asset via a `a == null`
+        // wildcard — worse than an empty result, since the number then flows into
+        // equity/daily_baseline/% sizing as if it were real.
+        Map<String, Object> resp = Map.of("result", true, "data", Map.of("balances", List.of(
+                Map.of("free", "999999", "frozen", "0", "debts", "0"))));
+
+        assertThat(PionexAccountParser.parseBalance(resp, "USDT")).isEmpty();
     }
 
     @Test
@@ -89,12 +111,31 @@ class PionexAccountParserTest {
     }
 
     @Test
-    void demoPusdPairsCollapseOntoTheSameCoreSymbolAsTheirUsdtTwin() {
+    void demoPusdPositionsAreDroppedRatherThanCollapsedOntoTheUsdtCoreSymbol() {
+        // PR review fix: BTC_PUSD_PERP (paper) and BTC_USDT_PERP (real) both reduce to the core
+        // symbol BTCUSDT. If this account ever held both, adoptUntracked matches by core symbol and
+        // one would silently overwrite the other's qty/side/entry in the same DB row. This reader
+        // reflects the account's real state, so paper contracts are filtered out entirely instead.
         Map<String, Object> resp = Map.of("result", true, "data", Map.of("positions", List.of(
                 Map.of("symbol", "BTC_PUSD_PERP", "positionSide", "LONG", "netSize", "1",
                         "avgPrice", "70000", "unrealizedPnL", "0"))));
 
-        assertThat(PionexAccountParser.parsePositions(resp).get(0).symbol()).isEqualTo("BTCUSDT");
+        assertThat(PionexAccountParser.parsePositions(resp)).isEmpty();
+    }
+
+    @Test
+    void aRealUsdtPositionIsUnaffectedWhenAPusdTwinAlsoExists() {
+        Map<String, Object> resp = Map.of("result", true, "data", Map.of("positions", List.of(
+                Map.of("symbol", "BTC_PUSD_PERP", "positionSide", "LONG", "netSize", "1",
+                        "avgPrice", "70000", "unrealizedPnL", "0"),
+                Map.of("symbol", "BTC_USDT_PERP", "positionSide", "LONG", "netSize", "0.012",
+                        "avgPrice", "79264.1", "unrealizedPnL", "4.87"))));
+
+        List<ExchangePosition> positions = PionexAccountParser.parsePositions(resp);
+
+        assertThat(positions).hasSize(1);
+        assertThat(positions.get(0).symbol()).isEqualTo("BTCUSDT");
+        assertThat(positions.get(0).qty()).isEqualByComparingTo("0.012");
     }
 
     @Test

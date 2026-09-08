@@ -13,6 +13,7 @@ import com.sonar.trading.exchange.bingx.BingxWorkingType;
 import com.sonar.trading.exchange.dto.AdapterOpenOrder;
 import com.sonar.trading.exchange.dto.AdapterOrderRequest;
 import com.sonar.trading.exchange.dto.AdapterOrderResult;
+import com.sonar.trading.exchange.dto.StopInspection;
 import com.sonar.trading.exchange.dto.TpSlAttachment;
 import com.sonar.trading.exchange.model.AdapterOrderState;
 import com.sonar.trading.exchange.model.AdapterOrderType;
@@ -187,6 +188,38 @@ public class LiveExecutionAdapter implements ExecutionAdapter {
         String bingxSymbol = BingxOrderMapper.toBingxSymbol(symbol);
         Map<String, Object> resp = bingxFuturesClient.getOpenOrders(bingxSymbol);
         return openOrders(resp).stream().anyMatch(o -> matchesType(o, true));
+    }
+
+    /**
+     * BingX's protective orders are ordinary reduce-only conditionals (STOP_MARKET /
+     * TAKE_PROFIT_MARKET) that show up in the same open-orders list {@link #listOpenOrders} already
+     * reads — one call answers presence and levels together (conditional orders carry
+     * {@code price=0}; the real level is {@code stopPrice}, surfaced here as
+     * {@link AdapterOpenOrder#triggerPrice()}).
+     */
+    @Override
+    public StopInspection inspectStops(String symbol) {
+        BigDecimal sl = null;
+        BigDecimal tp = null;
+        boolean hasStop = false;
+        for (AdapterOpenOrder o : listOpenOrders(symbol)) {
+            if (o.type() == null) {
+                continue;
+            }
+            String type = o.type().toUpperCase(java.util.Locale.ROOT);
+            boolean isTakeProfit = type.contains("TAKE") || type.contains("PROFIT");
+            boolean isStop = !isTakeProfit && type.contains("STOP");
+            BigDecimal level = o.triggerPrice();
+            if (isStop) {
+                hasStop = true;
+                if (level != null && level.signum() != 0) {
+                    sl = level;
+                }
+            } else if (isTakeProfit && level != null && level.signum() != 0) {
+                tp = level;
+            }
+        }
+        return new StopInspection(hasStop, sl, tp);
     }
 
     @Override

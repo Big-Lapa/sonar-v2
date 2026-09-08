@@ -180,6 +180,17 @@ public class MinutePoller {
             position.setOpenedAt(System.currentTimeMillis());
             position.setOpenedVia("EXCHANGE");
             position.setUpdatedAt(System.currentTimeMillis());
+            // The reused-row branch above can hand back a row from a PREVIOUS trade on this
+            // symbol — its SL/TP/planned-risk/qty-mismatch are leftovers from that old position,
+            // not "genuinely unknown". Left alone, verifyAndRepair falls back to
+            // dbPosition.getSlPrice() when the venue has none and would place a reduce-only stop
+            // at a stale price from a different trade — on a real account, potentially above the
+            // current price on a long, closing it immediately. Blanking these is what actually
+            // makes the "SL/TP unknown" claim in this method's own javadoc true.
+            position.setSlPrice(null);
+            position.setTpPrice(null);
+            position.setPlannedRiskAmount(null);
+            position.setQtyMismatch(false);
             positionRepository.save(position);
             dbOpenPositions.add(position);
 
@@ -240,7 +251,7 @@ public class MinutePoller {
             // ONE read of the venue's resting orders feeds both the level sync and the stop check.
             // They were two calls on the same endpoint per position per tick, which is what earned
             // a frequency-limit ban from BingX.
-            StopGuard.StopInspection stops = stopGuard.inspect(accountId, dbPosition.getSymbol());
+            StopGuard.Check stops = stopGuard.inspect(accountId, dbPosition.getSymbol());
             syncStopLevels(accountId, dbPosition, stops);
             BigDecimal slForRepair = stops.stopLoss() != null ? stops.stopLoss()
                     : dbPosition.getSlPrice() != null ? new BigDecimal(dbPosition.getSlPrice()) : null;
@@ -265,7 +276,7 @@ public class MinutePoller {
      * is the source of truth here too: if the operator moved a stop by hand, this picks that up on
      * the next tick rather than leaving our copy stale.
      */
-    private void syncStopLevels(String accountId, PositionEntity dbPosition, StopGuard.StopInspection stops) {
+    private void syncStopLevels(String accountId, PositionEntity dbPosition, StopGuard.Check stops) {
         if (!stops.readable() || (stops.stopLoss() == null && stops.takeProfit() == null)) {
             return; // nothing learned — keep whatever is on record rather than blanking it
         }
@@ -288,8 +299,15 @@ public class MinutePoller {
 
         transactions.closePosition(dbPosition.getId());
 
+        // An adopted position's openedAt is when the poller FOUND it, not when it was actually
+        // opened on the exchange — no venue in this codebase's ExchangePosition model exposes a
+        // real creation timestamp yet. Income/funding that accrued before discovery is real but
+        // invisible to sumIncomeSince, so the PnL figure below understates the true result for
+        // EXCHANGE-origin positions. Flagging that in the message beats a confidently wrong number.
+        String pnlCaveat = "EXCHANGE".equals(dbPosition.getOpenedVia())
+                ? " (с момента обнаружения, не открытия)" : "";
         notify(NotificationEntity.POSITION_CLOSED, accountId, dbPosition.getSymbol(),
-                dbPosition.getSymbol() + " закрыт, PnL=" + (pnl != null ? pnl : "уточняется")
+                dbPosition.getSymbol() + " закрыт, PnL=" + (pnl != null ? pnl : "уточняется") + pnlCaveat
                         + ", удержание=" + held.toHours() + "ч" + (held.toMinutesPart()) + "м");
         log.info("[poller] {} {} detected closed (pnl={}, held={})", accountId, dbPosition.getSymbol(), pnl, held);
     }

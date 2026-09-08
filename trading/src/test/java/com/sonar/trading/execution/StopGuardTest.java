@@ -1,7 +1,7 @@
 package com.sonar.trading.execution;
 
-import com.sonar.trading.exchange.dto.AdapterOpenOrder;
 import com.sonar.trading.exchange.dto.ExchangeError;
+import com.sonar.trading.exchange.dto.StopInspection;
 import com.sonar.trading.exchange.exception.ExchangeException;
 import com.sonar.trading.exchange.spi.ExecutionAdapter;
 import com.sonar.trading.execution.adapter.ExecutionAdapterRegistry;
@@ -9,7 +9,6 @@ import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
 
 import java.math.BigDecimal;
-import java.util.List;
 import java.util.Optional;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -19,12 +18,14 @@ import static org.mockito.Mockito.when;
 
 /**
  * Per-account since credentials moved off the venue: StopGuard resolves whichever
- * {@link ExecutionAdapter} the ACCOUNT is wired to via {@link ExecutionAdapterRegistry}.
- *
- * <p>The central rule under test is that "could not ask the venue" and "the position has no stop"
- * are different answers. Collapsing them once turned a transient BingX rate limit into
- * MISSING_STOP alerts on protected positions — and would have driven remediation to place a
- * duplicate stop on a real-money account had the endpoint not been banned outright.
+ * {@link ExecutionAdapter} the ACCOUNT is wired to via {@link ExecutionAdapterRegistry}, then reads
+ * that adapter's {@link ExecutionAdapter#inspectStops}. StopGuard itself is deliberately
+ * adapter-agnostic about HOW a stop is recognised — that used to be a shared type-string scan here,
+ * which worked for BingX (a separate STOP_MARKET order) and silently misread Bybit (a position-level
+ * field, with its own conditional orders splitting the type across two response fields). That
+ * classification now lives in each adapter (covered per-venue in
+ * {@code BybitExecutionAdapterTest}/{@code LiveExecutionAdapter}'s own tests); what belongs here is
+ * the venue-agnostic contract: "could not ask" is not "unprotected".
  */
 class StopGuardTest {
 
@@ -37,45 +38,38 @@ class StopGuardTest {
         return new StopGuard(registry);
     }
 
-    private static AdapterOpenOrder order(String type, String trigger) {
-        return new AdapterOpenOrder("id-" + type, null, "BTCUSDT", "SELL", type,
-                QTY, BigDecimal.ZERO, trigger == null ? null : new BigDecimal(trigger), "NEW");
-    }
-
     // ---- inspect() ----
 
     @Test
-    void inspectReadsStopAndTakeProfitLevelsFromOneCall() {
+    void inspectDelegatesToTheAccountsAdapter() {
         ExecutionAdapter adapter = Mockito.mock(ExecutionAdapter.class);
-        when(adapter.listOpenOrders("BTCUSDT")).thenReturn(List.of(
-                order("STOP_MARKET", "75000"), order("TAKE_PROFIT_MARKET", "81000")));
+        when(adapter.inspectStops("BTCUSDT")).thenReturn(new StopInspection(true, SL, new BigDecimal("70000")));
 
-        StopGuard.StopInspection stops = stopGuardWith("bingx-prod", adapter).inspect("bingx-prod", "BTCUSDT");
+        StopGuard.Check check = stopGuardWith("bingx-prod", adapter).inspect("bingx-prod", "BTCUSDT");
 
-        assertThat(stops.readable()).isTrue();
-        assertThat(stops.hasStop()).isTrue();
-        assertThat(stops.stopLoss()).isEqualByComparingTo("75000");
-        assertThat(stops.takeProfit()).isEqualByComparingTo("81000");
-        verify(adapter).listOpenOrders("BTCUSDT");
+        assertThat(check.readable()).isTrue();
+        assertThat(check.hasStop()).isTrue();
+        assertThat(check.stopLoss()).isEqualByComparingTo(SL);
+        assertThat(check.takeProfit()).isEqualByComparingTo("70000");
     }
 
     @Test
-    void inspectIsUnreadableWhenTheVenueCallFails_notAnAbsentStop() {
+    void inspectIsUnreadableWhenTheAdapterCallFails_notAnAbsentStop() {
         ExecutionAdapter adapter = Mockito.mock(ExecutionAdapter.class);
-        when(adapter.listOpenOrders("BTCUSDT"))
+        when(adapter.inspectStops("BTCUSDT"))
                 .thenThrow(new ExchangeException(new ExchangeError("100410", "rate limited")));
 
-        StopGuard.StopInspection stops = stopGuardWith("bingx-prod", adapter).inspect("bingx-prod", "BTCUSDT");
+        StopGuard.Check check = stopGuardWith("bingx-prod", adapter).inspect("bingx-prod", "BTCUSDT");
 
-        assertThat(stops.readable()).isFalse();
-        assertThat(stops.hasStop()).isFalse();
+        assertThat(check.readable()).isFalse();
+        assertThat(check.hasStop()).isFalse();
     }
 
     @Test
     void inspectIsUnreadableWhenNoAdapterWired() {
-        StopGuard.StopInspection stops = stopGuardWith("pionex-prod", null).inspect("pionex-prod", "BTCUSDT");
+        StopGuard.Check check = stopGuardWith("pionex-prod", null).inspect("pionex-prod", "BTCUSDT");
 
-        assertThat(stops.readable()).isFalse();
+        assertThat(check.readable()).isFalse();
     }
 
     // ---- verifyAndRepair() ----
@@ -84,7 +78,7 @@ class StopGuardTest {
     void trueWithoutRemediationWhenStopAlreadyOpen() {
         ExecutionAdapter adapter = Mockito.mock(ExecutionAdapter.class);
         StopGuard stopGuard = stopGuardWith("bybit-demo", adapter);
-        var known = new StopGuard.StopInspection(true, true, SL, null);
+        var known = new StopGuard.Check(true, true, SL, null);
 
         assertThat(stopGuard.verifyAndRepair("bybit-demo", "BTCUSDT", QTY, SL, known)).isTrue();
         verify(adapter, never()).placeReduceOnlyStop(Mockito.any(), Mockito.any(), Mockito.any());
@@ -95,8 +89,7 @@ class StopGuardTest {
         ExecutionAdapter adapter = Mockito.mock(ExecutionAdapter.class);
         StopGuard stopGuard = stopGuardWith("bingx-prod", adapter);
 
-        boolean result = stopGuard.verifyAndRepair("bingx-prod", "BTCUSDT", QTY, SL,
-                StopGuard.StopInspection.unreadable());
+        boolean result = stopGuard.verifyAndRepair("bingx-prod", "BTCUSDT", QTY, SL, StopGuard.Check.unreadable());
 
         assertThat(result).isTrue(); // "unknown" must not raise MISSING_STOP
         verify(adapter, never()).placeReduceOnlyStop(Mockito.any(), Mockito.any(), Mockito.any());
@@ -104,10 +97,13 @@ class StopGuardTest {
 
     @Test
     void placesRemediationStopWhenGenuinelyMissingThenRechecks() {
+        // `known` (passed in below) is what the caller already learned from an EARLIER inspect()
+        // call — verifyAndRepair itself calls inspectStops() only once, to recheck AFTER placing
+        // the order, so the mock needs exactly one (successful) stubbed answer here.
         ExecutionAdapter adapter = Mockito.mock(ExecutionAdapter.class);
-        when(adapter.listOpenOrders("BTCUSDT")).thenReturn(List.of(order("STOP_MARKET", "60000")));
+        when(adapter.inspectStops("BTCUSDT")).thenReturn(new StopInspection(true, SL, null));
         StopGuard stopGuard = stopGuardWith("bingx-vst", adapter);
-        var known = new StopGuard.StopInspection(true, false, null, null);
+        var known = new StopGuard.Check(true, false, null, null);
 
         boolean result = stopGuard.verifyAndRepair("bingx-vst", "BTCUSDT", QTY, SL, known);
 
@@ -118,11 +114,11 @@ class StopGuardTest {
     @Test
     void falseWhenRemediationStillFindsNoStop() {
         ExecutionAdapter adapter = Mockito.mock(ExecutionAdapter.class);
-        when(adapter.listOpenOrders("BTCUSDT")).thenReturn(List.of());
+        when(adapter.inspectStops("BTCUSDT")).thenReturn(StopInspection.NONE);
         StopGuard stopGuard = stopGuardWith("bingx-vst", adapter);
 
         boolean result = stopGuard.verifyAndRepair("bingx-vst", "BTCUSDT", QTY, SL,
-                new StopGuard.StopInspection(true, false, null, null));
+                new StopGuard.Check(true, false, null, null));
 
         assertThat(result).isFalse();
     }
@@ -135,7 +131,7 @@ class StopGuardTest {
         StopGuard stopGuard = stopGuardWith("bingx-vst", adapter);
 
         boolean result = stopGuard.verifyAndRepair("bingx-vst", "BTCUSDT", QTY, SL,
-                new StopGuard.StopInspection(true, false, null, null));
+                new StopGuard.Check(true, false, null, null));
 
         assertThat(result).isFalse();
     }
@@ -146,18 +142,37 @@ class StopGuardTest {
         StopGuard stopGuard = stopGuardWith("bingx-prod", adapter);
 
         boolean result = stopGuard.verifyAndRepair("bingx-prod", "BTCUSDT", QTY, null,
-                new StopGuard.StopInspection(true, false, null, null));
+                new StopGuard.Check(true, false, null, null));
 
         assertThat(result).isFalse();
         verify(adapter, never()).placeReduceOnlyStop(Mockito.any(), Mockito.any(), Mockito.any());
     }
 
-    @Test
-    void hasStopOrderDelegatesToAdapterAndIsFalseWhenUnresolved() {
-        ExecutionAdapter adapter = Mockito.mock(ExecutionAdapter.class);
-        when(adapter.hasOpenStopOrder("ETHUSDT")).thenReturn(true);
+    // ---- hasStopOrder() ----
 
-        assertThat(stopGuardWith("bybit-demo", adapter).hasStopOrder("bybit-demo", "ETHUSDT")).isTrue();
-        assertThat(stopGuardWith("bybit-demo", null).hasStopOrder("bybit-demo", "ETHUSDT")).isFalse();
+    @Test
+    void hasStopOrderReflectsAReadableInspection() {
+        ExecutionAdapter present = Mockito.mock(ExecutionAdapter.class);
+        when(present.inspectStops("ETHUSDT")).thenReturn(new StopInspection(true, SL, null));
+        ExecutionAdapter absent = Mockito.mock(ExecutionAdapter.class);
+        when(absent.inspectStops("ETHUSDT")).thenReturn(StopInspection.NONE);
+
+        assertThat(stopGuardWith("bybit-demo", present).hasStopOrder("bybit-demo", "ETHUSDT")).isTrue();
+        assertThat(stopGuardWith("bybit-demo", absent).hasStopOrder("bybit-demo", "ETHUSDT")).isFalse();
+    }
+
+    @Test
+    void hasStopOrderDoesNotAlarmOnAnUnreadableInspection() {
+        // The bug this closes: PendingLimitOrderReconciler and ProposalExecutionService's add-on
+        // branches call hasStopOrder for a MISSING_STOP decision. The old implementation called
+        // adapter.hasOpenStopOrder directly and folded "no adapter" AND any exception into false —
+        // the exact "unknown looks unprotected" defect verifyAndRepair was fixed for, just reachable
+        // from a different caller.
+        ExecutionAdapter throwing = Mockito.mock(ExecutionAdapter.class);
+        when(throwing.inspectStops("ETHUSDT"))
+                .thenThrow(new ExchangeException(new ExchangeError("100410", "rate limited")));
+
+        assertThat(stopGuardWith("bingx-prod", throwing).hasStopOrder("bingx-prod", "ETHUSDT")).isTrue();
+        assertThat(stopGuardWith("pionex-prod", null).hasStopOrder("pionex-prod", "ETHUSDT")).isTrue();
     }
 }

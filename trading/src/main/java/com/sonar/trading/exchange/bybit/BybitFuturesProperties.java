@@ -1,14 +1,18 @@
 package com.sonar.trading.exchange.bybit;
 
-import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
  * Bybit V5 USDT-perpetual ({@code category=linear}) client properties.
  *
  * <p>Testnet domain by default (grilled: same principle as BingX's VST demo, ADR-0010) — mainnet
  * only via explicit {@code baseUrl} override. Secrets from environment / {@code .env} (ADR-0021).
+ *
+ * <p>Built per account by {@code AccountWiring}, not a Spring-managed
+ * {@code @ConfigurationProperties} bean — that annotation was removed because nothing registers
+ * this class via {@code @EnableConfigurationProperties} any more, so it was dead: a
+ * {@code trading.bybit.recv-window} entry in application.yml would silently never apply.
+ * {@code recvWindow}/timeouts below are fixed Java defaults for every account on this venue.
  */
-@ConfigurationProperties(prefix = "trading.bybit")
 public class BybitFuturesProperties {
 
     /** Base URL for Bybit V5 (testnet by default). */

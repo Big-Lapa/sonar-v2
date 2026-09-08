@@ -1,6 +1,5 @@
 package com.sonar.trading.exchange.pionex;
 
-import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
  * Pionex Futures ({@code /uapi/v1}) client properties — read-only account access for now
@@ -13,8 +12,13 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * by base URL — so there is no live/demo base-url split to get wrong here (ADR context: the
  * Bybit 401 investigation earlier in this project was exactly that class of bug for a different
  * venue).
+ *
+ * <p>Built per account by {@code AccountWiring}, not a Spring-managed
+ * {@code @ConfigurationProperties} bean — that annotation was removed because nothing registers
+ * this class via {@code @EnableConfigurationProperties} any more, so it was dead: a
+ * {@code trading.pionex.connect-timeout-ms} entry in application.yml would silently never apply.
+ * The timeouts below are fixed Java defaults for every account on this venue.
  */
-@ConfigurationProperties(prefix = "trading.pionex")
 public class PionexFuturesProperties {
 
     /** Base URL — Pionex has one API host for both live and demo-symbol trading. */

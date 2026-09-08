@@ -165,6 +165,33 @@ class MinutePollerAdoptionTest {
     }
 
     @Test
+    void clearsStaleFieldsFromThePreviousTradeOnTheReusedRow() {
+        // PR review fix: the row findByAccountIdAndSymbol hands back can carry SL/TP/planned-risk
+        // from a DIFFERENT, earlier trade on this symbol — a fresh newFlat() row (as the test above
+        // uses) never exposes this, because it's already blank. Without clearing them,
+        // verifyAndRepair would fall back to a stale SL price from a past position and place a
+        // reduce-only stop at that stale level on a real account.
+        givenRisk(true);
+        PositionEntity staleRow = PositionEntity.newFlat(ACCOUNT, "BINGX", "BTCUSDT");
+        staleRow.setSlPrice("999999");
+        staleRow.setTpPrice("1");
+        staleRow.setPlannedRiskAmount("500");
+        staleRow.setQtyMismatch(true);
+        when(reader.getPositions()).thenReturn(List.of(live("BTCUSDT", "0.012")));
+        when(positionRepository.findAllOpenByAccountId(ACCOUNT)).thenReturn(new java.util.ArrayList<>());
+        when(positionRepository.findByAccountIdAndSymbol(ACCOUNT, "BTCUSDT")).thenReturn(Optional.of(staleRow));
+
+        poller.tick();
+
+        ArgumentCaptor<PositionEntity> saved = ArgumentCaptor.forClass(PositionEntity.class);
+        verify(positionRepository).save(saved.capture());
+        assertThat(saved.getValue().getSlPrice()).isNull();
+        assertThat(saved.getValue().getTpPrice()).isNull();
+        assertThat(saved.getValue().getPlannedRiskAmount()).isNull();
+        assertThat(saved.getValue().isQtyMismatch()).isFalse();
+    }
+
+    @Test
     void skipsAnInactiveAccountEntirely() {
         givenRisk(false);
 

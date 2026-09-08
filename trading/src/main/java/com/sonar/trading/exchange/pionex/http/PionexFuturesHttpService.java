@@ -137,16 +137,22 @@ public class PionexFuturesHttpService implements PionexFuturesClient {
      * Same lesson as BingX {@code code!=0} — a rejected/failed call must never look like a
      * successful one.
      */
-    private static Map<String, Object> requireOk(Map<String, Object> root) {
+    static Map<String, Object> requireOk(Map<String, Object> root) {
         Object result = root.get("result");
-        if (result == null || Boolean.TRUE.equals(result) || "true".equals(String.valueOf(result))) {
+        if (Boolean.TRUE.equals(result) || "true".equals(String.valueOf(result))) {
             return root;
         }
         Object code = root.get("code");
         Object msg = root.get("message") != null ? root.get("message") : root.get("msg");
+        // The class javadoc treats `result` as present on every real response — its absence here
+        // is therefore not "ok by default" but an envelope this client doesn't recognise (an HTML
+        // error page, a proxy response, a schema change), which is exactly the shape of failure
+        // that must never be read as success.
         throw new ExchangeException(new ExchangeError(
-                code != null ? String.valueOf(code) : "PIONEX_ERROR",
-                msg != null ? String.valueOf(msg) : "Pionex business error" + (code != null ? " code=" + code : "")));
+                code != null ? String.valueOf(code) : "PIONEX_UNEXPECTED_RESPONSE",
+                msg != null ? String.valueOf(msg)
+                        : result == null ? "Pionex response missing 'result' field: " + root
+                        : "Pionex business error" + (code != null ? " code=" + code : "")));
     }
 
     private ExchangeException toExchangeException(int status, String body, String fallbackMsg) {

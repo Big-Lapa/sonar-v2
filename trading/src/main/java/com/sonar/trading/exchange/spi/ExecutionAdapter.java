@@ -3,6 +3,7 @@ package com.sonar.trading.exchange.spi;
 import com.sonar.trading.exchange.dto.AdapterOpenOrder;
 import com.sonar.trading.exchange.dto.AdapterOrderRequest;
 import com.sonar.trading.exchange.dto.AdapterOrderResult;
+import com.sonar.trading.exchange.dto.StopInspection;
 
 import java.math.BigDecimal;
 import java.util.List;
@@ -35,6 +36,15 @@ public interface ExecutionAdapter {
 
     /** True if a reduce-only conditional stop order is currently open for the symbol. */
     boolean hasOpenStopOrder(String symbol);
+
+    /**
+     * The venue's own record of this symbol's protective stop/take-profit — presence AND levels,
+     * read however this venue actually exposes them (see {@link StopInspection}'s javadoc for why
+     * that isn't the same mechanism across venues). Throws on a failed venue call; the caller
+     * ({@code StopGuard}) is responsible for treating "could not ask" as unknown, never as
+     * "unprotected".
+     */
+    StopInspection inspectStops(String symbol);
 
     /**
      * Cancel the existing open reduce-only stop ({@code stopType=true}) or take-profit

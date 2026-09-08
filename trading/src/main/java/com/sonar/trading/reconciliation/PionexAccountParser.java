@@ -48,6 +48,15 @@ public final class PionexAccountParser {
         if (rawSymbol == null) {
             return null;
         }
+        // BTC_PUSD_PERP (paper-trading) and BTC_USDT_PERP (real) both collapse to the core symbol
+        // BTCUSDT — fine for reading a single position, but adoptUntracked matches live positions
+        // to DB rows BY CORE SYMBOL, so if this account ever holds both at once, the second parsed
+        // here would overwrite the first's qty/side/entry in the very same row. This reader exists
+        // to reflect the account's real state, not the demo pool sitting unused beside it — drop
+        // paper contracts here rather than let two different positions fight over one DB row.
+        if (rawSymbol.toUpperCase(Locale.ROOT).contains("_PUSD_")) {
+            return null;
+        }
         // Pionex symbols are underscore-form (BTC_USDT_PERP / BTC_PUSD_PERP) — normalize to the
         // platform's core form (BTCUSDT) by dropping the quote-asset/contract-type segments.
         String symbol = toCoreSymbol(rawSymbol);
@@ -98,22 +107,35 @@ public final class PionexAccountParser {
     // summary — {coin, free, frozen, debts}; no equity/PnL here, see the unrealized-PnL fold-in
     // done by PionexAccountReader.getBalance()) ----
 
+    /** Quote-like assets worth falling back to when the requested one is absent — see the fallback
+     *  comment below for why this list exists at all instead of "any row". */
+    private static final java.util.Set<String> FALLBACK_ASSETS = java.util.Set.of("USDT", "PUSD", "USDC");
+
     public static Optional<ExchangeBalance> parseBalance(Map<String, Object> resp, String asset) {
         List<Map<String, Object>> rows = rowsUnder(resp, "balances");
         String want = asset == null ? null : asset.toUpperCase(Locale.ROOT);
 
         for (Map<String, Object> row : rows) {
             String a = str(row, "coin", "asset", "currency");
-            if (want == null || a == null || want.equals(a.toUpperCase(Locale.ROOT))) {
-                return Optional.of(parseBalanceRow(a == null ? want : a, row));
+            // a == null used to match here too, which meant a malformed row with no coin field at
+            // all silently impersonated whatever asset was requested — worse than admitting we
+            // don't know, since the number then flows into equity/daily_baseline/% sizing as if it
+            // were real USDT.
+            if (a != null && want != null && want.equals(a.toUpperCase(Locale.ROOT))) {
+                return Optional.of(parseBalanceRow(a, row));
             }
         }
-        // Requested asset absent but a balance row exists → fall back to it, same reasoning as
-        // BingxAccountParser's VST fallback (this account also holds a separate PUSD paper-trading
-        // pool alongside real USDT — falling back to whichever row exists beats an empty result).
-        if (!rows.isEmpty()) {
-            Map<String, Object> row = rows.get(0);
-            return Optional.of(parseBalanceRow(str(row, "coin", "asset", "currency"), row));
+        // Requested asset absent — fall back only to another quote-like asset (this account holds
+        // a separate PUSD paper-trading pool alongside real USDT), never to "whichever row happens
+        // to be first". Unlike BingX's VST fallback (a same-scale demo twin of the requested
+        // asset), Pionex's balances are a plain coin wallet — rows.get(0) can just as easily be
+        // 0.003 BTC, and reporting that as "equity" would size a % position off a number two
+        // orders of magnitude away from the truth.
+        for (Map<String, Object> row : rows) {
+            String a = str(row, "coin", "asset", "currency");
+            if (a != null && FALLBACK_ASSETS.contains(a.toUpperCase(Locale.ROOT))) {
+                return Optional.of(parseBalanceRow(a, row));
+            }
         }
         return Optional.empty();
     }

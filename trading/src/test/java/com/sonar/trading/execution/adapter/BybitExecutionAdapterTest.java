@@ -247,4 +247,75 @@ class BybitExecutionAdapterTest {
         assertThat(adapter(client).hasOpenStopOrder("BTCUSDT")).isFalse();
         verify(client, Mockito.times(1)).getPositions("BTCUSDT");
     }
+
+    // ---- inspectStops: PR review fix — StopGuard used to classify stop/take-profit from the
+    // {@code type} field of listOpenOrders(), which is exactly wrong for Bybit: TP/SL attached at
+    // entry never appears as an order at all (position-level field, same as hasOpenStopOrder above
+    // has to check first), and even a standalone conditional order splits its type across
+    // orderType ("Market"/"Limit") and stopOrderType ("StopLoss"/"TakeProfit") rather than putting
+    // "STOP"/"TAKE_PROFIT" in one place the way BingX does. A venue-agnostic reader built against
+    // BingX's shape read every Bybit position as unprotected, every tick. ----
+
+    @Test
+    void inspectStopsReadsPositionLevelStopAndTakeProfitWithoutTouchingOpenOrders() {
+        BybitFuturesClient client = Mockito.mock(BybitFuturesClient.class);
+        when(client.getPositions("BTCUSDT")).thenReturn(Map.of("result", Map.of("list", List.of(
+                Map.of("symbol", "BTCUSDT", "stopLoss", "58000", "takeProfit", "70000")))));
+
+        var stops = adapter(client).inspectStops("BTCUSDT");
+
+        assertThat(stops.hasStop()).isTrue();
+        assertThat(stops.stopLoss()).isEqualByComparingTo("58000");
+        assertThat(stops.takeProfit()).isEqualByComparingTo("70000");
+        verify(client, never()).getOpenOrders(any());
+    }
+
+    @Test
+    void inspectStopsIgnoresBlankOrZeroPositionLevelFields() {
+        BybitFuturesClient client = Mockito.mock(BybitFuturesClient.class);
+        when(client.getPositions("BTCUSDT")).thenReturn(Map.of("result", Map.of("list", List.of(
+                Map.of("symbol", "BTCUSDT", "stopLoss", "0", "takeProfit", "")))));
+        when(client.getOpenOrders("BTCUSDT")).thenReturn(Map.of("result", Map.of("list", List.of())));
+
+        var stops = adapter(client).inspectStops("BTCUSDT");
+
+        assertThat(stops.hasStop()).isFalse();
+        assertThat(stops.stopLoss()).isNull();
+    }
+
+    @Test
+    void inspectStopsFallsBackToAStandaloneConditionalOrderWhenPositionHasNone() {
+        // orderType is "Market"/"Limit" here, never "Stop" — classification must come from
+        // triggerDirection (2 = stop on a long, 1 = take-profit), the same rule hasOpenStopOrder's
+        // matchesType already uses. Reading the plain `type` field (as the pre-fix StopGuard did)
+        // would see "MARKET" and correctly find neither STOP nor TAKE/PROFIT in it.
+        BybitFuturesClient client = Mockito.mock(BybitFuturesClient.class);
+        when(client.getPositions("BTCUSDT")).thenReturn(Map.of("result", Map.of("list", List.of(
+                Map.of("symbol", "BTCUSDT", "stopLoss", "")))));
+        when(client.getOpenOrders("BTCUSDT")).thenReturn(Map.of("result", Map.of("list", List.of(
+                Map.of("orderId", "1", "orderType", "Market", "stopOrderType", "Stop",
+                        "triggerDirection", "2", "triggerPrice", "58000"),
+                Map.of("orderId", "2", "orderType", "Market", "stopOrderType", "Stop",
+                        "triggerDirection", "1", "triggerPrice", "70000")))));
+
+        var stops = adapter(client).inspectStops("BTCUSDT");
+
+        assertThat(stops.hasStop()).isTrue();
+        assertThat(stops.stopLoss()).isEqualByComparingTo("58000");
+        assertThat(stops.takeProfit()).isEqualByComparingTo("70000");
+    }
+
+    @Test
+    void inspectStopsReportsNoStopWhenNeitherPositionNorOrdersHaveOne() {
+        BybitFuturesClient client = Mockito.mock(BybitFuturesClient.class);
+        when(client.getPositions("BTCUSDT")).thenReturn(Map.of("result", Map.of("list", List.of(
+                Map.of("symbol", "BTCUSDT", "stopLoss", "")))));
+        when(client.getOpenOrders("BTCUSDT")).thenReturn(Map.of("result", Map.of("list", List.of())));
+
+        var stops = adapter(client).inspectStops("BTCUSDT");
+
+        assertThat(stops.hasStop()).isFalse();
+        assertThat(stops.stopLoss()).isNull();
+        assertThat(stops.takeProfit()).isNull();
+    }
 }

@@ -131,8 +131,16 @@ public class AccountWiring {
                     readers.put(id, new PionexAccountReader(client));
                 }
                 default -> {
-                    log.warn("[wiring] {} — venue '{}' is not implemented, account stays unconnected",
-                            account.id(), venue);
+                    if (venue.isBlank()) {
+                        // Configured credentials with a blank/missing TRADING_ACCOUNTS_N_EXCHANGE
+                        // reads as a typo in the .env entry, not "we haven't built that venue yet" —
+                        // the two want different operator reactions, so they get different words.
+                        log.warn("[wiring] {} — TRADING_ACCOUNTS_*_EXCHANGE is missing (has credentials, "
+                                + "but nothing to connect them to) — check the .env entry", account.id());
+                    } else {
+                        log.warn("[wiring] {} — venue '{}' is not implemented, account stays unconnected",
+                                account.id(), venue);
+                    }
                     continue;
                 }
             }
@@ -169,6 +177,23 @@ public class AccountWiring {
      * A blank-credential account is deliberately not an error: that is a placeholder row.
      */
     private static void validate(AccountRegistry accounts) {
+        // Duplicate id is the same failure class as duplicate key — both registries key by
+        // (lower-cased) account id, so a typo'd repeat silently makes the SECOND entry win the map
+        // slot and the FIRST vanish from execution/monitoring while AccountRegistry.byId() (a
+        // simple first-match scan) keeps returning the first — panel and execution would disagree
+        // about which account's credentials are actually in play. Checked for every account, not
+        // just configured ones: an unconfigured duplicate still shadows a configured one in the map.
+        Map<String, String> idSeen = new HashMap<>();
+        for (AccountProps account : accounts.all()) {
+            String idKey = account.id().toLowerCase(Locale.ROOT);
+            String previousId = idSeen.putIfAbsent(idKey, account.id());
+            if (previousId != null) {
+                throw new IllegalStateException("duplicate account id '" + account.id()
+                        + "' (TRADING_ACCOUNTS_N_ID) — registries are keyed by id, so one of these two"
+                        + " entries would silently disappear");
+            }
+        }
+
         Map<String, String> keyOwner = new HashMap<>();
         for (AccountProps account : accounts.all()) {
             if (!account.isConfigured()) {
