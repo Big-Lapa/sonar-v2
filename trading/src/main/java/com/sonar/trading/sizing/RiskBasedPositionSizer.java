@@ -37,7 +37,7 @@ public class RiskBasedPositionSizer {
         this.normalizer = normalizer;
     }
 
-    public SizingResult size(AccountRiskProfile profile, String venue, String symbol,
+    public SizingResult size(AccountRiskProfile profile, String accountId, String symbol,
                              BigDecimal equity, BigDecimal entry, BigDecimal sl) {
         if (equity == null || equity.signum() <= 0) {
             return new SizingResult.Rejected("эквити недоступно или неположительно");
@@ -63,7 +63,7 @@ public class RiskBasedPositionSizer {
 
         BigDecimal normalizedQty;
         try {
-            normalizedQty = normalizer.normalize(venue, symbol, qty, entry);
+            normalizedQty = normalizer.normalize(accountId, symbol, qty, entry);
         } catch (IllegalArgumentException e) {
             return new SizingResult.Rejected("не прошёл биржевые минималки: " + e.getMessage());
         }
@@ -88,7 +88,7 @@ public class RiskBasedPositionSizer {
      * account's configured limits. {@code actualRisk} is informational (from the given SL), not
      * something this method sized against.
      */
-    public SizingResult sizeManual(AccountRiskProfile profile, String venue, String symbol,
+    public SizingResult sizeManual(AccountRiskProfile profile, String accountId, String symbol,
                                    BigDecimal equity, BigDecimal notional, BigDecimal entry, BigDecimal sl) {
         if (notional == null || notional.signum() <= 0) {
             return new SizingResult.Rejected("нотионал должен быть положительным");
@@ -118,7 +118,7 @@ public class RiskBasedPositionSizer {
 
         BigDecimal normalizedQty;
         try {
-            normalizedQty = normalizer.normalize(venue, symbol, qty, entry);
+            normalizedQty = normalizer.normalize(accountId, symbol, qty, entry);
         } catch (IllegalArgumentException e) {
             return new SizingResult.Rejected("не прошёл биржевые минималки: " + e.getMessage());
         }

@@ -30,8 +30,8 @@ public class QuantityNormalizer {
         this.symbolRules = symbolRules;
     }
 
-    public BigDecimal normalize(String venue, String symbol, BigDecimal qty, BigDecimal price) {
-        SymbolRules rules = symbolRules.get(venue, symbol);
+    public BigDecimal normalize(String accountId, String symbol, BigDecimal qty, BigDecimal price) {
+        SymbolRules rules = symbolRules.get(accountId, symbol);
         BigDecimal normalized = floorToStep(qty, rules.stepSize());
         if (normalized == null || normalized.signum() <= 0) {
             normalized = rules.stepSize() != null && rules.stepSize().signum() > 0 ? rules.stepSize() : qty;
@@ -50,7 +50,7 @@ public class QuantityNormalizer {
 
         if (normalized.compareTo(qty) != 0) {
             log.debug("QuantityNormalizer {}/{}: {} -> {} (step={}, minQty={}, minNotional={})",
-                    venue, symbol, qty, normalized, rules.stepSize(), rules.minQty(), rules.minNotional());
+                    accountId, symbol, qty, normalized, rules.stepSize(), rules.minQty(), rules.minNotional());
         }
         return normalized;
     }
@@ -65,8 +65,8 @@ public class QuantityNormalizer {
      * for a close order — either way the exchange would reject it outright, and reporting "smaller
      * than the exchange minimum" here is more honest than letting the order round-trip and fail.
      */
-    public BigDecimal floorForClose(String venue, String symbol, BigDecimal qty, BigDecimal price) {
-        SymbolRules rules = symbolRules.get(venue, symbol);
+    public BigDecimal floorForClose(String accountId, String symbol, BigDecimal qty, BigDecimal price) {
+        SymbolRules rules = symbolRules.get(accountId, symbol);
         BigDecimal floored = floorToStep(qty, rules.stepSize());
         if (floored == null || floored.signum() <= 0) {
             return null;

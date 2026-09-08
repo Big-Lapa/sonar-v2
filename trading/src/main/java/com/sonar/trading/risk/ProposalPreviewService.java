@@ -112,8 +112,8 @@ public class ProposalPreviewService {
         boolean autoPaused = riskEngine.isAutoPauseActive(accountId);
 
         SizingResult sizing = manualNotional != null
-                ? sizer.sizeManual(profile, account.exchange(), symbol, equity, manualNotional, entry, sl)
-                : sizer.size(profile, account.exchange(), symbol, equity, entry, sl);
+                ? sizer.sizeManual(profile, account.id(), symbol, equity, manualNotional, entry, sl)
+                : sizer.size(profile, account.id(), symbol, equity, entry, sl);
         BigDecimal candidateRisk = sizing instanceof SizingResult.Approved a ? a.actualRisk() : null;
 
         RiskContext ctx = new RiskContext(

@@ -152,7 +152,7 @@ public class PositionOpsService {
         // Floor (never bump up) to the exchange's lot step — a requested %/qty that rounds down
         // below one step must fail loudly, not silently close more (or nothing at all, which is
         // what most exchanges do when they just reject a misaligned qty outright).
-        BigDecimal normalizedQty = quantityNormalizer.floorForClose(account.exchange(), position.getSymbol(),
+        BigDecimal normalizedQty = quantityNormalizer.floorForClose(account.id(), position.getSymbol(),
                 clampedQty, price != null ? price : position.getEntryPrice());
         if (normalizedQty == null) {
             return new OpResult.Failed("qty " + clampedQty + " меньше шага лота биржи для " + position.getSymbol());
