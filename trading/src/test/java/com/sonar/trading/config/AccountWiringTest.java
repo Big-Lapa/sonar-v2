@@ -117,14 +117,25 @@ class AccountWiringTest {
     }
 
     @Test
-    void unimplementedVenueIsSkippedWithoutFailingStartup() {
+    void binanceIsWiredWithBothReaderAndExecutionAdapter() {
         AccountRegistry accounts = registryOf(
                 "binance-demo", "binance", "key", "secret", "https://testnet.binancefuture.com");
 
         AccountWiring.AccountStacks stacks = wire(accounts);
 
-        assertThat(stacks.readers().forAccount("binance-demo")).isEmpty();
-        assertThat(stacks.adapters().forAccount("binance-demo")).isEmpty();
+        assertThat(stacks.readers().forAccount("binance-demo")).isPresent();
+        assertThat(stacks.adapters().forAccount("binance-demo")).isPresent();
+    }
+
+    @Test
+    void unimplementedVenueIsSkippedWithoutFailingStartup() {
+        AccountRegistry accounts = registryOf(
+                "made-up-demo", "made-up-exchange", "key", "secret", "https://example.invalid");
+
+        AccountWiring.AccountStacks stacks = wire(accounts);
+
+        assertThat(stacks.readers().forAccount("made-up-demo")).isEmpty();
+        assertThat(stacks.adapters().forAccount("made-up-demo")).isEmpty();
     }
 
     @Test
