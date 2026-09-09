@@ -8,7 +8,7 @@ export function formatProposalMessage(
   rr: number,
   rationale: string,
   legs: AccountLegPreview[],
-  costUsd: number,
+  costUsd: number | undefined,
 ): string {
   const slPct = (((parseFloat(sl) - parseFloat(entry)) / parseFloat(entry)) * 100).toFixed(2);
   const tpPct = (((parseFloat(tp) - parseFloat(entry)) / parseFloat(entry)) * 100).toFixed(2);
@@ -20,7 +20,7 @@ export function formatProposalMessage(
     '',
     rationale,
     '',
-    `стоимость прогона: $${costUsd.toFixed(4)}`,
+    `стоимость прогона: ${costUsd !== undefined ? '$' + costUsd.toFixed(4) : 'н/д'}`,
   ];
   return lines.join('\n');
 }

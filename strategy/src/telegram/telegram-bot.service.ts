@@ -355,16 +355,17 @@ export class TelegramBotService implements OnModuleInit {
 
     try {
       const result = await this.search.run();
+      const costLabel = result.costUsd !== undefined ? `$${result.costUsd.toFixed(4)}` : 'н/д';
       if (result.proposals.length === 0) {
         await this.tradingApi.setState('IDLE', null, null);
         await this.telegram.editMessageText(
           chatId, msg,
-          `кандидатов нет (вселенная ${result.universeSize}, от LLM ${result.candidatesFromLlm}, стоимость $${result.costUsd.toFixed(4)})`,
+          `кандидатов нет (вселенная ${result.universeSize}, от LLM ${result.candidatesFromLlm}, стоимость ${costLabel})`,
         );
         return;
       }
       await this.tradingApi.setState('PROPOSALS_PENDING', null, null);
-      await this.telegram.editMessageText(chatId, msg, `найдено ${result.proposals.length} кандидат(ов), стоимость $${result.costUsd.toFixed(4)}`);
+      await this.telegram.editMessageText(chatId, msg, `найдено ${result.proposals.length} кандидат(ов), стоимость ${costLabel}`);
 
       for (const p of result.proposals) {
         const created = await this.tradingApi.createProposal(p.symbol, String(p.entry), String(p.sl), String(p.tp), p.rationale);

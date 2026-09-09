@@ -140,6 +140,14 @@ $('#risk-save').onclick = async () => {
 
 // ---- Стратегия ----
 
+// keep in sync: StrategySettingsController.ALLOWED_MODELS (Java), model-pricing.ts RATES (TS), candidate-search.service.ts ADAPTIVE_THINKING_MODELS (TS)
+const LLM_MODELS = [
+  ['claude-opus-5', 'Opus 5'],
+  ['claude-sonnet-5', 'Sonnet 5'],
+  ['claude-fable-5', 'Fable 5'],
+  ['claude-haiku-4-5-20251001', 'Haiku 4.5'],
+];
+
 const STRATEGY_FIELDS = [
   ['minSlDistancePct', 'Мин. дистанция SL (доля)'],
   ['minSlCostMult', 'Мин. дистанция SL × cost'],
@@ -149,7 +157,7 @@ const STRATEGY_FIELDS = [
   ['maxMove24hPct', 'Макс. движение 24ч (доля)'],
   ['maxMove7dPct', 'Макс. движение 7д (доля)'],
   ['maxCandidates', 'Макс. кандидатов от LLM'],
-  ['llmModel', 'LLM модель'],
+  ['llmModel', 'LLM модель', 'select'],
   ['alwaysDrawTv', 'Всегда рисовать в TV (чекбокс)'],
   ['proposalTtlMs', 'TTL предложения (мс)'],
   ['holdReminderDays', 'Напоминание об удержании (дней)'],
@@ -161,9 +169,15 @@ let settingsEntity = null;
 async function loadStrategy() {
   settingsEntity = await api('/api/v1/strategy/settings');
   const form = $('#strategy-form');
-  form.innerHTML = STRATEGY_FIELDS.map(([key, label]) => {
+  form.innerHTML = STRATEGY_FIELDS.map(([key, label, type]) => {
     if (key === 'alwaysDrawTv') {
       return `<div class="form-row"><label>${label}</label><input type="checkbox" id="s-${key}" ${settingsEntity[key] ? 'checked' : ''}></div>`;
+    }
+    if (type === 'select' && key === 'llmModel') {
+      const options = LLM_MODELS.map(([value, optLabel]) =>
+        `<option value="${value}" ${settingsEntity[key] === value ? 'selected' : ''}>${optLabel}</option>`
+      ).join('');
+      return `<div class="form-row"><label>${label}</label><select id="s-${key}">${options}</select></div>`;
     }
     return `<div class="form-row"><label>${label}</label><input class="num" id="s-${key}" value="${settingsEntity[key]}" style="width:200px"></div>`;
   }).join('');

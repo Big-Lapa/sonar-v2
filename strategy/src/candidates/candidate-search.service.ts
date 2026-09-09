@@ -14,6 +14,9 @@ export interface SearchResult {
 
 const MAX_WEB_SEARCHES = 12;
 
+// keep in sync: admin.html LLM_MODELS, StrategySettingsController.ALLOWED_MODELS (Java), model-pricing.ts RATES (TS)
+const ADAPTIVE_THINKING_MODELS = new Set(['claude-opus-5', 'claude-sonnet-5']);
+
 /**
  * 4.5: one Sonnet 5 call over the whole prefiltered universe. The model picks symbols with a
  * bullish news backdrop where price hasn't moved yet — it NEVER computes price/qty/levels (1st
@@ -28,9 +31,11 @@ export class CandidateSearchService {
     const response = await this.client.messages.create({
       model,
       max_tokens: 4096,
-      thinking: { type: 'adaptive' } as any,
+      ...(ADAPTIVE_THINKING_MODELS.has(model) ? { thinking: { type: 'adaptive' } as any } : {}),
       tools: [
-        { type: 'web_search_20260209', name: 'web_search', max_uses: MAX_WEB_SEARCHES } as any,
+        // allowed_callers pinned to direct-only: some models (e.g. Haiku 4.5) don't support
+        // programmatic tool calling, and we never invoke this tool that way regardless of model.
+        { type: 'web_search_20260209', name: 'web_search', max_uses: MAX_WEB_SEARCHES, allowed_callers: ['direct'] } as any,
         {
           name: 'report_candidates',
           description:
@@ -81,6 +86,7 @@ export class CandidateSearchService {
       usage.input_tokens ?? 0,
       usage.output_tokens ?? 0,
       usage.server_tool_use?.web_search_requests ?? 0,
+      model,
     );
 
     return { candidates: validated, cost };
