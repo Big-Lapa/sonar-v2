@@ -39,6 +39,14 @@ public class AccountRiskEntity {
     @Column(nullable = false)
     private boolean tradable = false;
 
+    /** Gates {@code MinutePoller}'s monitoring (balance/positions/stop-verify/close-notify) —
+     *  separate from {@link #tradable}, which gates only whether Sonar may itself open a
+     *  position here. Default true: a freshly-registered account is watched immediately, same as
+     *  every other account, even before anyone decides whether Sonar should be allowed to trade
+     *  it (which stays opt-in via {@code tradable}, default false). */
+    @Column(nullable = false)
+    private boolean active = true;
+
     @Version
     @Column(nullable = false)
     private int version = 1;
@@ -72,6 +80,8 @@ public class AccountRiskEntity {
     public void setMaxLeverage(int v) { this.maxLeverage = v; }
     public boolean isTradable() { return tradable; }
     public void setTradable(boolean v) { this.tradable = v; }
+    public boolean isActive() { return active; }
+    public void setActive(boolean v) { this.active = v; }
     public int getVersion() { return version; }
     public long getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(long v) { this.updatedAt = v; }

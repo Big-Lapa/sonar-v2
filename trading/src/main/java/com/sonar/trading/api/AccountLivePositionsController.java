@@ -1,8 +1,7 @@
 package com.sonar.trading.api;
 
 import com.sonar.trading.config.AccountRegistry;
-import com.sonar.trading.exchange.bingx.BingxFuturesClient;
-import com.sonar.trading.reconciliation.BingxAccountParser;
+import com.sonar.trading.reconciliation.AccountReaderRegistry;
 import com.sonar.trading.reconciliation.model.ExchangePosition;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -12,13 +11,15 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.List;
-import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * {@code GET /api/v1/accounts/{id}/live-positions} — `/positions` (5): PnL in the moment, straight
  * from the exchange's own response, not the DB snapshot. Same 5s per-account throttle as balance
  * (6) — a live REST call per position check, not a poll.
+ *
+ * <p>Venue-agnostic: resolves the account's {@code AccountReader} by venue instead of a
+ * hardcoded BingX client.
  */
 @RestController
 @RequestMapping("/api/v1/accounts")
@@ -28,12 +29,12 @@ public class AccountLivePositionsController {
     private static final long THROTTLE_MS = 5_000;
 
     private final AccountRegistry accountRegistry;
-    private final BingxFuturesClient bingxFuturesClient;
+    private final AccountReaderRegistry accountReaders;
     private final ConcurrentHashMap<String, Cached> cache = new ConcurrentHashMap<>();
 
-    public AccountLivePositionsController(AccountRegistry accountRegistry, BingxFuturesClient bingxFuturesClient) {
+    public AccountLivePositionsController(AccountRegistry accountRegistry, AccountReaderRegistry accountReaders) {
         this.accountRegistry = accountRegistry;
-        this.bingxFuturesClient = bingxFuturesClient;
+        this.accountReaders = accountReaders;
     }
 
     private record Cached(long fetchedAt, LivePositionsResponse value) {}
@@ -57,13 +58,15 @@ public class AccountLivePositionsController {
         if (account.isEmpty()) {
             return new LivePositionsResponse(id, List.of(), "аккаунт не найден");
         }
-        if (!"bingx".equalsIgnoreCase(account.get().exchange())) {
+        var reader = accountReaders.forAccount(id);
+        if (reader.isEmpty()) {
             return new LivePositionsResponse(id, List.of(),
-                    "venue '" + account.get().exchange() + "' не подключена в этой версии");
+                    account.get().isConfigured()
+                            ? "venue '" + account.get().exchange() + "' не подключена в этой версии"
+                            : "у аккаунта не заданы API-ключи");
         }
         try {
-            Map<String, Object> resp = bingxFuturesClient.getPositions(null);
-            List<ExchangePosition> positions = BingxAccountParser.parsePositions(resp).stream()
+            List<ExchangePosition> positions = reader.get().getPositions().stream()
                     .filter(p -> !p.isFlat())
                     .toList();
             return new LivePositionsResponse(id, positions, null);

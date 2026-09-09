@@ -5,6 +5,12 @@
 <title>Sonar v2 Admin</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="stylesheet" href="app.css?v=2026-08-21">
+<style>
+  /* Doля-полей теперь показываются/вводятся в %, "%" — визуальный суффикс поверх обычного input.num. */
+  .pct-wrap { position: relative; display: inline-flex; align-items: center; }
+  .pct-wrap input { padding-right: 18px; }
+  .pct-wrap::after { content: "%"; position: absolute; right: 6px; color: var(--faint); font-size: 11px; pointer-events: none; }
+</style>
 </head>
 <body>
 <div class="appbar">
@@ -54,8 +60,8 @@
 const $ = (s, el) => (el || document).querySelector(s);
 const $$ = (s, el) => Array.from((el || document).querySelectorAll(s));
 
-function getToken() { return localStorage.getItem('adminToken') || ''; }
-function setToken(t) { localStorage.setItem('adminToken', t); }
+function getToken() { return localStorage.getItem('sonar_admin_token') || ''; }
+function setToken(t) { localStorage.setItem('sonar_admin_token', t); }
 
 $('#btn-token').onclick = (e) => {
   e.preventDefault();
@@ -86,15 +92,28 @@ async function api(path, opts) {
 // ---- Риск ----
 
 const RISK_FIELDS = [
-  ['riskPctPerTrade', 'Риск на сделку (доля эквити)'],
-  ['maxPortfolioRiskPct', 'Макс. портфельный риск (доля)'],
+  ['riskPctPerTrade', 'Риск на сделку, %', 'pct'],
+  ['maxPortfolioRiskPct', 'Макс. портфельный риск, %', 'pct'],
   ['maxPositionNotional', 'Макс. notional ($)'],
-  ['maxDailyRealizedLossPct', 'Дневной лимит убытка (доля)'],
-  ['maxEquityDrawdownPct', 'Лимит просадки от пика (доля)'],
+  ['maxDailyRealizedLossPct', 'Дневной лимит убытка, %', 'pct'],
+  ['maxEquityDrawdownPct', 'Лимит просадки от пика, %', 'pct'],
   ['maxOpenPositions', 'Макс. открытых позиций'],
   ['maxLeverage', 'Макс. плечо (клэмп sizing)'],
-  ['tradable', 'Торгует (чекбокс)'],
+  ['active', 'Активен — тянем баланс/позиции (чекбокс)', 'checkbox'],
+  ['tradable', 'Торгует — Sonar может открывать (чекбокс)', 'checkbox'],
 ];
+
+// Доля (0.008) в БД ⇄ проценты (0.8) на экране — только для полей, помеченных 'pct' выше. Округление
+// на выводе только чтобы не плодить 0.008000000000000001 из float-арифметики; в БД уходит обратно то,
+// что реально ввели (parseFloat/100), без повторного округления round-trip'ом.
+function pctToFraction(pctStr) {
+  const n = parseFloat(pctStr);
+  return Number.isFinite(n) ? String(n / 100) : pctStr;
+}
+function fractionToPctDisplay(fractionVal) {
+  const n = parseFloat(fractionVal);
+  return Number.isFinite(n) ? String(Math.round(n * 100 * 1e8) / 1e8) : fractionVal;
+}
 
 let riskEntity = null;
 
@@ -112,9 +131,12 @@ async function loadRisk() {
   if (!id) return;
   riskEntity = await api(`/api/v1/accounts/${id}/risk`);
   const form = $('#risk-form');
-  form.innerHTML = RISK_FIELDS.map(([key, label]) => {
-    if (key === 'tradable') {
+  form.innerHTML = RISK_FIELDS.map(([key, label, kind]) => {
+    if (kind === 'checkbox') {
       return `<div class="form-row"><label>${label}</label><input type="checkbox" id="f-${key}" ${riskEntity[key] ? 'checked' : ''}></div>`;
+    }
+    if (kind === 'pct') {
+      return `<div class="form-row"><label>${label}</label><span class="pct-wrap"><input class="num" id="f-${key}" value="${fractionToPctDisplay(riskEntity[key])}"></span></div>`;
     }
     return `<div class="form-row"><label>${label}</label><input class="num" id="f-${key}" value="${riskEntity[key]}"></div>`;
   }).join('');
@@ -124,10 +146,11 @@ async function loadRisk() {
 $('#risk-save').onclick = async () => {
   const id = $('#risk-account').value;
   const body = { version: riskEntity.version };
-  for (const [key] of RISK_FIELDS) {
+  for (const [key, , kind] of RISK_FIELDS) {
     const el = $(`#f-${key}`);
-    body[key] = key === 'tradable' ? el.checked
-      : (key === 'maxOpenPositions' || key === 'maxLeverage') ? parseInt(el.value, 10) : el.value;
+    body[key] = kind === 'checkbox' ? el.checked
+      : (key === 'maxOpenPositions' || key === 'maxLeverage') ? parseInt(el.value, 10)
+      : kind === 'pct' ? pctToFraction(el.value) : el.value;
   }
   try {
     riskEntity = await api(`/api/v1/accounts/${id}/risk`, { method: 'PUT', body: JSON.stringify(body) });
@@ -149,13 +172,13 @@ const LLM_MODELS = [
 ];
 
 const STRATEGY_FIELDS = [
-  ['minSlDistancePct', 'Мин. дистанция SL (доля)'],
+  ['minSlDistancePct', 'Мин. дистанция SL, %', 'pct'],
   ['minSlCostMult', 'Мин. дистанция SL × cost'],
-  ['maxSlDistancePct', 'Макс. дистанция SL (доля)'],
+  ['maxSlDistancePct', 'Макс. дистанция SL, %', 'pct'],
   ['minRr', 'Мин. R:R'],
   ['min24hVolumeUsd', 'Мин. 24ч объём ($)'],
-  ['maxMove24hPct', 'Макс. движение 24ч (доля)'],
-  ['maxMove7dPct', 'Макс. движение 7д (доля)'],
+  ['maxMove24hPct', 'Макс. движение 24ч, %', 'pct'],
+  ['maxMove7dPct', 'Макс. движение 7д, %', 'pct'],
   ['maxCandidates', 'Макс. кандидатов от LLM'],
   ['llmModel', 'LLM модель', 'select'],
   ['alwaysDrawTv', 'Всегда рисовать в TV (чекбокс)'],
@@ -169,15 +192,18 @@ let settingsEntity = null;
 async function loadStrategy() {
   settingsEntity = await api('/api/v1/strategy/settings');
   const form = $('#strategy-form');
-  form.innerHTML = STRATEGY_FIELDS.map(([key, label, type]) => {
+  form.innerHTML = STRATEGY_FIELDS.map(([key, label, kind]) => {
     if (key === 'alwaysDrawTv') {
       return `<div class="form-row"><label>${label}</label><input type="checkbox" id="s-${key}" ${settingsEntity[key] ? 'checked' : ''}></div>`;
     }
-    if (type === 'select' && key === 'llmModel') {
+    if (kind === 'select' && key === 'llmModel') {
       const options = LLM_MODELS.map(([value, optLabel]) =>
         `<option value="${value}" ${settingsEntity[key] === value ? 'selected' : ''}>${optLabel}</option>`
       ).join('');
       return `<div class="form-row"><label>${label}</label><select id="s-${key}">${options}</select></div>`;
+    }
+    if (kind === 'pct') {
+      return `<div class="form-row"><label>${label}</label><span class="pct-wrap"><input class="num" id="s-${key}" value="${fractionToPctDisplay(settingsEntity[key])}" style="width:200px"></span></div>`;
     }
     return `<div class="form-row"><label>${label}</label><input class="num" id="s-${key}" value="${settingsEntity[key]}" style="width:200px"></div>`;
   }).join('');
@@ -187,12 +213,12 @@ async function loadStrategy() {
 
 $('#strategy-save').onclick = async () => {
   const body = { version: settingsEntity.version };
-  for (const [key] of STRATEGY_FIELDS) {
+  for (const [key, , kind] of STRATEGY_FIELDS) {
     const el = $(`#s-${key}`);
     if (key === 'alwaysDrawTv') { body[key] = el.checked; continue; }
     if (key === 'maxCandidates' || key === 'holdReminderDays') { body[key] = parseInt(el.value, 10); continue; }
     if (key === 'proposalTtlMs') { body[key] = parseInt(el.value, 10); continue; }
-    body[key] = el.value;
+    body[key] = kind === 'pct' ? pctToFraction(el.value) : el.value;
   }
   try {
     settingsEntity = await api('/api/v1/strategy/settings', { method: 'PUT', body: JSON.stringify(body) });

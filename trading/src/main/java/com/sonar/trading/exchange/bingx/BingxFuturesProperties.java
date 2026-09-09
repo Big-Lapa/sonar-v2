@@ -1,14 +1,16 @@
 package com.sonar.trading.exchange.bingx;
 
-import org.springframework.boot.context.properties.ConfigurationProperties;
-
 /**
  * BingX USDT-M perpetual futures (Swap V2) client properties.
  *
- * <p>Demo (VST) domain by default per ADR-0010. Secrets ({@code apiKey}/{@code apiSecret})
- * are injected from environment / {@code .env} (git-ignored) per ADR-0021 — never committed.
+ * <p>Built per account by {@code AccountWiring} from that account's own credentials/base URL —
+ * NOT a Spring-managed {@code @ConfigurationProperties} bean (it was, before credentials moved
+ * off the venue; the annotation is gone because it was dead: nothing registers this class via
+ * {@code @EnableConfigurationProperties} any more, so a {@code trading.bingx.*} entry in
+ * application.yml — e.g. a custom {@code connect-timeout-ms} — would silently never apply).
+ * {@code connectTimeoutMs}/{@code readTimeoutMs} below are therefore fixed Java defaults for
+ * every account on this venue until per-account overrides are worth adding.
  */
-@ConfigurationProperties(prefix = "trading.bingx")
 public class BingxFuturesProperties {
 
     /** Base URL for BingX Futures Swap V2 (VST demo domain by default). */

@@ -22,6 +22,9 @@ public class NotificationEntity {
     public static final String HOLD_REMINDER = "HOLD_REMINDER";
     /** 10, грабля #2: equity dropped >50% in one tick — likely a demo-balance reset, not real loss. */
     public static final String ANOMALY_EQUITY = "ANOMALY_EQUITY";
+    /** Poller found a position open on the exchange with no matching DB row (opened directly on
+     *  the venue) and started tracking it — fires once, at discovery, not on every tick after. */
+    public static final String POSITION_ADOPTED = "POSITION_ADOPTED";
 
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)

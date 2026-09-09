@@ -34,7 +34,7 @@ public class BingxExecutionGateway extends ResilientExecutionGateway implements 
         this.client = client;
     }
 
-    @Override
+    /** Venue-typed — not on {@link ExecutionGateway}, see its class doc. */
     public Map<String, Object> placeOrder(BingxPlaceOrderRequest request, OrderIntent intent) {
         return invoke(intent, "place", true, () -> client.placeOrder(request));
     }
@@ -42,5 +42,10 @@ public class BingxExecutionGateway extends ResilientExecutionGateway implements 
     @Override
     public Map<String, Object> closeAllPositions(String symbol) {
         return invoke(OrderIntent.CLOSE_REDUCE, "close", true, () -> client.closeAllPositions(symbol));
+    }
+
+    /** Venue-typed — not on {@link ExecutionGateway}. Runs as ENTRY: it's part of opening a position. */
+    public Map<String, Object> setLeverage(String symbol, String positionSide, int leverage) {
+        return invoke(OrderIntent.ENTRY, "leverage", false, () -> client.setLeverage(symbol, positionSide, leverage));
     }
 }

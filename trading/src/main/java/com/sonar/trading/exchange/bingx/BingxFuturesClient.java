@@ -16,6 +16,12 @@ public interface BingxFuturesClient extends ExchangeRestClient {
 
     Map<String, Object> closeAllPositions(String symbol);
 
+    /**
+     * {@code POST /openApi/swap/v2/trade/leverage}. {@code positionSide} is required even in
+     * one-way mode — the platform is LONG-only, so callers always pass {@code LONG}.
+     */
+    Map<String, Object> setLeverage(String symbol, String positionSide, int leverage);
+
     /** All open orders for a symbol, including pending TP/SL conditional orders. */
     Map<String, Object> getOpenOrders(String symbol);
 

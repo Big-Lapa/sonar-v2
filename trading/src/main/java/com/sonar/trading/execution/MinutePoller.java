@@ -10,9 +10,8 @@ import com.sonar.trading.domain.repository.AccountRiskRepository;
 import com.sonar.trading.domain.repository.NotificationRepository;
 import com.sonar.trading.domain.repository.PositionRepository;
 import com.sonar.trading.domain.repository.StrategySettingsRepository;
-import com.sonar.trading.exchange.bingx.BingxFuturesClient;
-import com.sonar.trading.exchange.bingx.BingxOrderMapper;
-import com.sonar.trading.reconciliation.BingxAccountParser;
+import com.sonar.trading.reconciliation.AccountReader;
+import com.sonar.trading.reconciliation.AccountReaderRegistry;
 import com.sonar.trading.reconciliation.model.ExchangeBalance;
 import com.sonar.trading.reconciliation.model.ExchangePosition;
 import org.slf4j.Logger;
@@ -31,9 +30,17 @@ import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * 4.7: the ONE periodic poll in the system. Per tradable BingX account: pulls balance +
- * positions, detects closes, verifies stops, flags DB/exchange qty drift, reminds on long holds,
- * and maintains {@code daily_baseline} (4.2 — not a separate scheduler, this tick owns it).
+ * 4.7: the ONE periodic poll in the system. Per <b>active</b> account (not "tradable" — an
+ * account can be watched without Sonar being allowed to trade it): pulls balance + positions,
+ * adopts positions opened directly on the exchange that have no DB row yet (the exchange is the
+ * source of truth for "is this open", not our own execution history), detects closes, verifies
+ * stops, flags DB/exchange qty drift, reminds on long holds, and maintains {@code daily_baseline}
+ * (4.2 — not a separate scheduler, this tick owns it).
+ *
+ * <p>Venue-agnostic (grilled Q5/full multi-venue routing): resolves the account's
+ * {@link AccountReader} via {@link AccountReaderRegistry} instead of a hardcoded BingX-only
+ * filter — any account whose venue has no wired reader (venue not yet supported) is skipped with
+ * a log line, same posture the old "bingx"-only check had for everything else.
  */
 @Component
 public class MinutePoller {
@@ -43,11 +50,11 @@ public class MinutePoller {
     private static final BigDecimal QTY_EPSILON = new BigDecimal("0.0001");
 
     private final AccountRegistry accountRegistry;
+    private final AccountReaderRegistry accountReaders;
     private final AccountRiskRepository accountRiskRepository;
     private final PositionRepository positionRepository;
     private final StrategySettingsRepository strategySettingsRepository;
     private final NotificationRepository notificationRepository;
-    private final BingxFuturesClient bingxFuturesClient;
     private final StopGuard stopGuard;
     private final PollerTransactions transactions;
 
@@ -56,17 +63,17 @@ public class MinutePoller {
     private final Map<String, BigDecimal> lastSeenEquity = new ConcurrentHashMap<>();
     private final Map<String, LocalDate> lastHoldReminder = new ConcurrentHashMap<>();
 
-    public MinutePoller(AccountRegistry accountRegistry, AccountRiskRepository accountRiskRepository,
-                        PositionRepository positionRepository,
+    public MinutePoller(AccountRegistry accountRegistry, AccountReaderRegistry accountReaders,
+                        AccountRiskRepository accountRiskRepository, PositionRepository positionRepository,
                         StrategySettingsRepository strategySettingsRepository,
-                        NotificationRepository notificationRepository, BingxFuturesClient bingxFuturesClient,
-                        StopGuard stopGuard, PollerTransactions transactions) {
+                        NotificationRepository notificationRepository, StopGuard stopGuard,
+                        PollerTransactions transactions) {
         this.accountRegistry = accountRegistry;
+        this.accountReaders = accountReaders;
         this.accountRiskRepository = accountRiskRepository;
         this.positionRepository = positionRepository;
         this.strategySettingsRepository = strategySettingsRepository;
         this.notificationRepository = notificationRepository;
-        this.bingxFuturesClient = bingxFuturesClient;
         this.stopGuard = stopGuard;
         this.transactions = transactions;
     }
@@ -74,23 +81,34 @@ public class MinutePoller {
     @Scheduled(fixedRate = 60_000)
     public void tick() {
         for (AccountProps account : accountRegistry.all()) {
-            if (!"bingx".equalsIgnoreCase(account.exchange())) {
-                continue; // Binance execution not wired yet (parked, stage 3 scope was BingX-only)
+            Optional<AccountReader> reader = accountReaders.forAccount(account.id());
+            if (reader.isEmpty()) {
+                continue; // venue not wired (e.g. Binance — parked in _stage3-pending) or PAPER mode
             }
-            AccountRiskEntity risk = accountRiskRepository.findById(account.id()).orElse(null);
-            if (risk == null || !risk.isTradable()) {
+            // active gates monitoring (balance/positions/stop-verify/close-notify); tradable is a
+            // separate, narrower gate checked only where Sonar itself might open a position
+            // (ProposalPreviewService) — an account can be watched without being tradable, which
+            // is exactly the state a freshly-added read-only venue (e.g. Pionex) starts in.
+            // A freshly registered account has no risk row yet — that must not mean "unmonitored".
+            // The row was previously created lazily, only when someone opened the account's risk
+            // profile in the panel, so a new account silently got no balance polling, no position
+            // adoption and no close notifications until a human happened to click it. Create it
+            // here with its defaults (active=true, tradable=false) instead.
+            AccountRiskEntity risk = accountRiskRepository.findById(account.id())
+                    .orElseGet(() -> accountRiskRepository.save(AccountRiskEntity.defaultsFor(account.id())));
+            if (!risk.isActive()) {
                 continue;
             }
             try {
-                pollAccount(account.id());
+                pollAccount(account.id(), account.exchange(), reader.get());
             } catch (RuntimeException e) {
                 log.error("[poller] account {} tick failed: {}", account.id(), e.toString());
             }
         }
     }
 
-    private void pollAccount(String accountId) {
-        ExchangeBalance balance = fetchBalance();
+    private void pollAccount(String accountId, String exchange, AccountReader reader) {
+        ExchangeBalance balance = fetchBalance(accountId, reader);
         BigDecimal equity = balance == null ? null
                 : balance.equity() != null ? balance.equity()
                 : (balance.balance() != null && balance.unrealizedPnl() != null
@@ -112,68 +130,109 @@ public class MinutePoller {
         }
 
         if (equity != null && !anomalyDrop) {
-            updateDailyBaseline(accountId, equity);
+            updateDailyBaseline(accountId, equity, reader);
         }
 
-        Map<String, Object> positionsResp = bingxFuturesClient.getPositions(null);
-        List<ExchangePosition> exchangePositions = BingxAccountParser.parsePositions(positionsResp);
+        List<ExchangePosition> exchangePositions = reader.getPositions();
+        List<PositionEntity> dbOpenPositions = positionRepository.findAllOpenByAccountId(accountId);
 
-        for (PositionEntity dbPosition : positionRepository.findAllOpenByAccountId(accountId)) {
-            reconcilePosition(accountId, dbPosition, exchangePositions);
+        adoptUntracked(accountId, exchange, dbOpenPositions, exchangePositions);
+
+        for (PositionEntity dbPosition : dbOpenPositions) {
+            reconcilePosition(accountId, exchange, dbPosition, exchangePositions, reader);
         }
     }
 
-    private ExchangeBalance fetchBalance() {
+    /**
+     * The exchange is the source of truth for "is a position open", not our own execution
+     * history — a position opened directly on the venue (manual panel bypassed, another tool, a
+     * pre-existing account) gets exactly the same DB row a Sonar-opened one would, so it shows up
+     * in the panel and gets the same close/stop-missing notifications going forward. SL/TP/planned
+     * risk stay null — genuinely unknown, not fabricated; {@code opened_via='EXCHANGE'} is the only
+     * marker distinguishing it, and nothing else reads that column (see its javadoc).
+     *
+     * <p>Runs before {@link #reconcilePosition}, so a symbol adopted this same tick is reconciled
+     * immediately after (stop-verified, etc.) rather than waiting a full minute.
+     */
+    private void adoptUntracked(String accountId, String exchange, List<PositionEntity> dbOpenPositions,
+                                List<ExchangePosition> exchangePositions) {
+        for (ExchangePosition live : exchangePositions) {
+            if (live.isFlat()) {
+                continue;
+            }
+            boolean alreadyTracked = dbOpenPositions.stream()
+                    .anyMatch(p -> p.getSymbol().equalsIgnoreCase(live.symbol()));
+            if (alreadyTracked) {
+                continue;
+            }
+            // Reuse the lifetime accountId+symbol row if one exists (e.g. a position Sonar opened
+            // and closed previously) rather than violating positionId's unique constraint.
+            PositionEntity position = positionRepository.findByAccountIdAndSymbol(accountId, live.symbol())
+                    .orElseGet(() -> PositionEntity.newFlat(accountId, exchange.toUpperCase(java.util.Locale.ROOT), live.symbol()));
+            position.setSide(live.side());
+            position.setQuantity(live.qty());
+            position.setEntryPrice(live.avgPrice());
+            position.setMarkPrice(live.markPrice());
+            position.setUnrealizedPnl(live.unrealizedPnl());
+            position.setLeverage(live.leverage());
+            position.setLiquidationPrice(live.liquidationPrice());
+            position.setStatus("OPEN");
+            // KNOWN LIMITATION (PR review #3, not fixed — low severity, revisit if it bites):
+            // openedAt is the ADOPTION moment, not when the position was actually opened on the
+            // venue. handleClosed() later does reader.sumIncomeSince(openedAt) for the close PnL —
+            // so any PnL/funding that accrued between the real entry and this tick's discovery is
+            // silently excluded from the close notification and daily_baseline. Wrong number, not
+            // a missing one. Venues do return their own open time (BingX/Bybit position payloads
+            // carry createdTime/updatedTime) — pull that instead of System.currentTimeMillis() if
+            // this ever needs to be exact.
+            position.setOpenedAt(System.currentTimeMillis());
+            position.setOpenedVia("EXCHANGE");
+            position.setUpdatedAt(System.currentTimeMillis());
+            // The reused-row branch above can hand back a row from a PREVIOUS trade on this
+            // symbol — its SL/TP/planned-risk/qty-mismatch are leftovers from that old position,
+            // not "genuinely unknown". Left alone, verifyAndRepair falls back to
+            // dbPosition.getSlPrice() when the venue has none and would place a reduce-only stop
+            // at a stale price from a different trade — on a real account, potentially above the
+            // current price on a long, closing it immediately. Blanking these is what actually
+            // makes the "SL/TP unknown" claim in this method's own javadoc true.
+            position.setSlPrice(null);
+            position.setTpPrice(null);
+            position.setPlannedRiskAmount(null);
+            position.setQtyMismatch(false);
+            positionRepository.save(position);
+            dbOpenPositions.add(position);
+
+            log.info("[poller] {} adopted {} {} qty={} opened directly on the exchange (no DB row existed)",
+                    accountId, live.symbol(), live.side(), live.qty());
+            notify(NotificationEntity.POSITION_ADOPTED, accountId, live.symbol(),
+                    live.side() + " " + live.qty() + " @ " + live.avgPrice()
+                            + " — открыта на бирже напрямую, начал отслеживать (SL/TP неизвестны)");
+        }
+    }
+
+    private ExchangeBalance fetchBalance(String accountId, AccountReader reader) {
         try {
-            Map<String, Object> resp = bingxFuturesClient.getBalance();
-            return BingxAccountParser.parseBalance(resp, "VST").orElse(null);
+            return reader.getBalance().orElse(null);
         } catch (RuntimeException e) {
-            log.error("[poller] getBalance failed: {}", e.toString());
+            log.error("[poller] {} getBalance failed: {}", accountId, e.toString());
             return null;
         }
     }
 
-    private void updateDailyBaseline(String accountId, BigDecimal equity) {
+    private void updateDailyBaseline(String accountId, BigDecimal equity, AccountReader reader) {
         LocalDate today = LocalDate.now(ZoneOffset.UTC);
-        BigDecimal realizedToday = sumIncomeSince(accountId, today.atStartOfDay(ZoneOffset.UTC).toInstant());
+        BigDecimal realizedToday = reader.sumIncomeSince(today.atStartOfDay(ZoneOffset.UTC).toInstant());
         transactions.upsertDailyBaseline(accountId, today, equity, realizedToday);
     }
 
-    /** Реализованный PnL = закрытые сделки + комиссии + фандинг (4.2) — recomputed fresh each tick
-     *  from the exchange's own income ledger rather than accumulated incrementally, so a missed
-     *  tick or a double-run can never double-count. */
-    @SuppressWarnings("unchecked")
-    private BigDecimal sumIncomeSince(String accountId, Instant since) {
-        try {
-            Map<String, Object> resp = bingxFuturesClient.getIncome(null, since.toEpochMilli(),
-                    System.currentTimeMillis(), 1000);
-            Object data = resp.get("data");
-            if (!(data instanceof List<?> rows)) {
-                return null;
-            }
-            BigDecimal sum = BigDecimal.ZERO;
-            for (Object o : rows) {
-                if (o instanceof Map<?, ?> row) {
-                    BigDecimal income = BingxOrderMapper.extractDecimal((Map<String, Object>) row, "income");
-                    if (income != null) {
-                        sum = sum.add(income);
-                    }
-                }
-            }
-            return sum;
-        } catch (RuntimeException e) {
-            log.warn("[poller] {} getIncome failed, keeping previous realized_pnl: {}", accountId, e.toString());
-            return null;
-        }
-    }
-
-    private void reconcilePosition(String accountId, PositionEntity dbPosition, List<ExchangePosition> exchangePositions) {
+    private void reconcilePosition(String accountId, String exchange, PositionEntity dbPosition,
+                                   List<ExchangePosition> exchangePositions, AccountReader reader) {
         Optional<ExchangePosition> match = exchangePositions.stream()
                 .filter(p -> p.symbol().equalsIgnoreCase(dbPosition.getSymbol()) && !p.isFlat())
                 .findFirst();
 
         if (match.isEmpty()) {
-            handleClosed(accountId, dbPosition);
+            handleClosed(accountId, dbPosition, reader);
             return;
         }
         ExchangePosition live = match.get();
@@ -188,27 +247,75 @@ public class MinutePoller {
             }
         }
 
-        boolean stopOk = stopGuard.verifyAndRepair(dbPosition.getSymbol(), live.qty(),
-                dbPosition.getSlPrice() != null ? new BigDecimal(dbPosition.getSlPrice()) : null);
-        if (!stopOk) {
-            notify(NotificationEntity.MISSING_STOP, accountId, dbPosition.getSymbol(),
-                    "позиция без стопа, автовосстановление не удалось — требуется ручное вмешательство");
+        // Stop verification is a hard requirement on every venue that can answer it — a position
+        // without a stop is exactly what MISSING_STOP exists to shout about, every tick, until an
+        // operator fixes it. The one exception is a venue whose API physically cannot answer the
+        // question: Pionex's Futures API (Beta) has no TP/SL surface at all — not in the order
+        // schema, not as an endpoint, not over WebSocket (verified against their published OpenAPI
+        // specs). There, TP/SL lives only inside the exchange's own web UI, so an alert here would
+        // fire forever while telling the operator nothing they can act on through us. Log it and
+        // stay quiet; the risk is theirs to manage on the exchange until Pionex ships the API.
+        if (stopGuard.isSupported(accountId)) {
+            // ONE read of the venue's resting orders feeds both the level sync and the stop check.
+            // They were two calls on the same endpoint per position per tick, which is what earned
+            // a frequency-limit ban from BingX.
+            StopGuard.Check stops = stopGuard.inspect(accountId, dbPosition.getSymbol());
+            syncStopLevels(accountId, dbPosition, stops);
+            BigDecimal slForRepair = stops.stopLoss() != null ? stops.stopLoss()
+                    : dbPosition.getSlPrice() != null ? new BigDecimal(dbPosition.getSlPrice()) : null;
+            boolean stopOk = stopGuard.verifyAndRepair(accountId, dbPosition.getSymbol(), live.qty(),
+                    slForRepair, stops);
+            if (!stopOk) {
+                notify(NotificationEntity.MISSING_STOP, accountId, dbPosition.getSymbol(),
+                        "позиция без стопа, автовосстановление не удалось — требуется ручное вмешательство");
+            }
+        } else {
+            log.debug("[poller] {} {} stop check skipped — venue '{}' exposes no TP/SL API",
+                    accountId, dbPosition.getSymbol(), exchange);
         }
 
         checkHoldReminder(accountId, dbPosition);
     }
 
-    private void handleClosed(String accountId, PositionEntity dbPosition) {
+    /**
+     * Pulls SL/TP back from the venue onto the DB row. A position Sonar opened already carries the
+     * levels it attached at entry, but one adopted from the exchange carries nothing — the panel
+     * showed "— / —" for stops that were in fact sitting on the exchange the whole time. The venue
+     * is the source of truth here too: if the operator moved a stop by hand, this picks that up on
+     * the next tick rather than leaving our copy stale.
+     */
+    private void syncStopLevels(String accountId, PositionEntity dbPosition, StopGuard.Check stops) {
+        if (!stops.readable() || (stops.stopLoss() == null && stops.takeProfit() == null)) {
+            return; // nothing learned — keep whatever is on record rather than blanking it
+        }
+        String sl = stops.stopLoss() != null ? stops.stopLoss().toPlainString() : null;
+        String tp = stops.takeProfit() != null ? stops.takeProfit().toPlainString() : null;
+        if (!java.util.Objects.equals(sl, dbPosition.getSlPrice())
+                || !java.util.Objects.equals(tp, dbPosition.getTpPrice())) {
+            transactions.saveStopLevels(dbPosition.getId(), sl, tp);
+            log.info("[poller] {} {} stop levels from exchange: SL={} TP={}",
+                    accountId, dbPosition.getSymbol(), sl, tp);
+        }
+    }
+
+    private void handleClosed(String accountId, PositionEntity dbPosition, AccountReader reader) {
         BigDecimal pnl = dbPosition.getOpenedAt() != null
-                ? sumIncomeSince(accountId, Instant.ofEpochMilli(dbPosition.getOpenedAt()))
+                ? reader.sumIncomeSince(Instant.ofEpochMilli(dbPosition.getOpenedAt()))
                 : null;
         long heldMs = dbPosition.getOpenedAt() != null ? System.currentTimeMillis() - dbPosition.getOpenedAt() : 0;
         Duration held = Duration.ofMillis(heldMs);
 
         transactions.closePosition(dbPosition.getId());
 
+        // An adopted position's openedAt is when the poller FOUND it, not when it was actually
+        // opened on the exchange — no venue in this codebase's ExchangePosition model exposes a
+        // real creation timestamp yet. Income/funding that accrued before discovery is real but
+        // invisible to sumIncomeSince, so the PnL figure below understates the true result for
+        // EXCHANGE-origin positions. Flagging that in the message beats a confidently wrong number.
+        String pnlCaveat = "EXCHANGE".equals(dbPosition.getOpenedVia())
+                ? " (с момента обнаружения, не открытия)" : "";
         notify(NotificationEntity.POSITION_CLOSED, accountId, dbPosition.getSymbol(),
-                dbPosition.getSymbol() + " закрыт, PnL=" + (pnl != null ? pnl : "уточняется")
+                dbPosition.getSymbol() + " закрыт, PnL=" + (pnl != null ? pnl : "уточняется") + pnlCaveat
                         + ", удержание=" + held.toHours() + "ч" + (held.toMinutesPart()) + "м");
         log.info("[poller] {} {} detected closed (pnl={}, held={})", accountId, dbPosition.getSymbol(), pnl, held);
     }

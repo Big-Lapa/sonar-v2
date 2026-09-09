@@ -22,4 +22,13 @@ public record ExecutionLegResult(
     public static ExecutionLegResult failed(String accountId, String reason) {
         return new ExecutionLegResult(accountId, false, null, null, null, null, null, false, reason);
     }
+
+    /** A LIMIT entry placed on the exchange but not filled within the short post-place poll window
+     *  — normal for a resting order away from market, not a failure. {@code success=true} (the
+     *  order IS live on the exchange) but {@code filledQty=null} (nothing to record as a position
+     *  yet — the reconciliation poller picks it up once/if it fills). */
+    public static ExecutionLegResult limitWorking(String accountId) {
+        return new ExecutionLegResult(accountId, true, null, null, null, null, null, false,
+                "лимитный ордер выставлен на бирже, ожидает исполнения");
+    }
 }

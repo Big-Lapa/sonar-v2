@@ -56,6 +56,17 @@ public class OrderCommandEntity {
     public OrderCommandEntity(String commandId, String accountId, String proposalId, String clientOrderId,
                                String exchange, String symbol, String side, String action,
                                BigDecimal quantity, String orderType, long createdAt) {
+        this(commandId, accountId, proposalId, clientOrderId, exchange, symbol, side, action,
+                quantity, orderType, null, createdAt);
+    }
+
+    /** @param price resting LIMIT price (null for MARKET) — needed so a still-pending LIMIT
+     *               entry's notional can be counted against the account's caps before it fills
+     *               (review follow-up, PR #2: previously always null, so no pending order was ever
+     *               actually reserving any notional). */
+    public OrderCommandEntity(String commandId, String accountId, String proposalId, String clientOrderId,
+                               String exchange, String symbol, String side, String action,
+                               BigDecimal quantity, String orderType, BigDecimal price, long createdAt) {
         this.commandId = commandId;
         this.accountId = accountId;
         this.proposalId = proposalId;
@@ -66,6 +77,7 @@ public class OrderCommandEntity {
         this.action = action;
         this.quantity = quantity;
         this.orderType = orderType;
+        this.price = price;
         this.status = "PENDING";
         this.createdAt = createdAt;
     }
@@ -81,6 +93,7 @@ public class OrderCommandEntity {
     public String getAction() { return action; }
     public BigDecimal getQuantity() { return quantity; }
     public String getOrderType() { return orderType; }
+    public BigDecimal getPrice() { return price; }
     public String getStatus() { return status; }
     public long getCreatedAt() { return createdAt; }
 

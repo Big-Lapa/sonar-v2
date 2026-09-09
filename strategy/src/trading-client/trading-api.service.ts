@@ -157,9 +157,10 @@ export class TradingApiService {
     return resp.data;
   }
 
-  async createProposal(symbol: string, entryPrice: string, slPrice: string, tpPrice: string, rationale: string) {
+  /** Manual multi-exchange management: accountId is required — targets exactly one account, no fan-out. */
+  async createProposal(accountId: string, symbol: string, entryPrice: string, slPrice: string, tpPrice: string, rationale: string) {
     const resp = await this.client.post<{ proposalId: string; accounts: AccountLegPreview[] }>('/api/v1/strategy/proposals', {
-      symbol, entryPrice, slPrice, tpPrice, rationale,
+      accountId, symbol, entryPrice, slPrice, tpPrice, rationale,
     });
     return resp.data;
   }

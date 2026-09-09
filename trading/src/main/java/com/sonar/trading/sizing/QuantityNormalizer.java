@@ -30,8 +30,8 @@ public class QuantityNormalizer {
         this.symbolRules = symbolRules;
     }
 
-    public BigDecimal normalize(String venue, String symbol, BigDecimal qty, BigDecimal price) {
-        SymbolRules rules = symbolRules.get(venue, symbol);
+    public BigDecimal normalize(String accountId, String symbol, BigDecimal qty, BigDecimal price) {
+        SymbolRules rules = symbolRules.get(accountId, symbol);
         BigDecimal normalized = floorToStep(qty, rules.stepSize());
         if (normalized == null || normalized.signum() <= 0) {
             normalized = rules.stepSize() != null && rules.stepSize().signum() > 0 ? rules.stepSize() : qty;
@@ -50,9 +50,35 @@ public class QuantityNormalizer {
 
         if (normalized.compareTo(qty) != 0) {
             log.debug("QuantityNormalizer {}/{}: {} -> {} (step={}, minQty={}, minNotional={})",
-                    venue, symbol, qty, normalized, rules.stepSize(), rules.minQty(), rules.minNotional());
+                    accountId, symbol, qty, normalized, rules.stepSize(), rules.minQty(), rules.minNotional());
         }
         return normalized;
+    }
+
+    /**
+     * Closing a position (manual trading panel's partial close): round DOWN to the exchange's
+     * step, never up. {@link #normalize} bumps a too-small entry qty up to the exchange floor —
+     * correct for an entry (a tradeable position beats none), wrong here: bumping a requested
+     * 5%-close up to a full step could silently close far more than the operator asked for,
+     * especially on a small remaining position where one step IS the whole thing. Returns null
+     * when the floored quantity is zero/negative, OR below the exchange's minQty/minNotional floor
+     * for a close order — either way the exchange would reject it outright, and reporting "smaller
+     * than the exchange minimum" here is more honest than letting the order round-trip and fail.
+     */
+    public BigDecimal floorForClose(String accountId, String symbol, BigDecimal qty, BigDecimal price) {
+        SymbolRules rules = symbolRules.get(accountId, symbol);
+        BigDecimal floored = floorToStep(qty, rules.stepSize());
+        if (floored == null || floored.signum() <= 0) {
+            return null;
+        }
+        if (rules.minQty() != null && floored.compareTo(rules.minQty()) < 0) {
+            return null;
+        }
+        if (rules.minNotional() != null && price != null && price.signum() > 0
+                && floored.multiply(price).compareTo(rules.minNotional()) < 0) {
+            return null;
+        }
+        return floored;
     }
 
     private BigDecimal floorToStep(BigDecimal value, BigDecimal step) {

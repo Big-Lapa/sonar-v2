@@ -61,4 +61,53 @@ class QuantityNormalizerTest {
         assertThat(result).isEqualByComparingTo("0.5");
         assertThat(result.multiply(new BigDecimal("100"))).isGreaterThanOrEqualTo(new BigDecimal("50"));
     }
+
+    @Test
+    void floorForCloseRoundsDownToStep() {
+        SymbolRules rules = new SymbolRules(
+                new BigDecimal("0.001"), new BigDecimal("0.001"), BigDecimal.ZERO, new BigDecimal("0.01"));
+        QuantityNormalizer normalizer = new QuantityNormalizer(cacheWith(rules));
+
+        BigDecimal result = normalizer.floorForClose("BINANCE", "SOLUSDT", new BigDecimal("0.00625"), new BigDecimal("100"));
+
+        assertThat(result).isEqualByComparingTo("0.006");
+    }
+
+    @Test
+    void floorForCloseReturnsNullBelowExchangeMinQty() {
+        SymbolRules rules = new SymbolRules(
+                new BigDecimal("0.001"), new BigDecimal("0.01"), BigDecimal.ZERO, new BigDecimal("0.01"));
+        QuantityNormalizer normalizer = new QuantityNormalizer(cacheWith(rules));
+
+        // Floors cleanly to 0.005 (a whole step), but that's still below the exchange's 0.01 minQty
+        // for a close order — must reject rather than round-trip to the exchange and fail there.
+        BigDecimal result = normalizer.floorForClose("BINANCE", "SOLUSDT", new BigDecimal("0.005"), new BigDecimal("100"));
+
+        assertThat(result).isNull();
+    }
+
+    @Test
+    void floorForCloseReturnsNullBelowExchangeMinNotional() {
+        SymbolRules rules = new SymbolRules(
+                new BigDecimal("0.001"), new BigDecimal("0.001"), new BigDecimal("50"), new BigDecimal("0.01"));
+        QuantityNormalizer normalizer = new QuantityNormalizer(cacheWith(rules));
+
+        // 0.1 * 100 = 10 notional, below the 50 minNotional for a close order.
+        BigDecimal result = normalizer.floorForClose("BINANCE", "SOLUSDT", new BigDecimal("0.1"), new BigDecimal("100"));
+
+        assertThat(result).isNull();
+    }
+
+    @Test
+    void floorForCloseIgnoresMinNotionalWhenPriceUnavailable() {
+        SymbolRules rules = new SymbolRules(
+                new BigDecimal("0.001"), new BigDecimal("0.001"), new BigDecimal("50"), new BigDecimal("0.01"));
+        QuantityNormalizer normalizer = new QuantityNormalizer(cacheWith(rules));
+
+        // No price to check notional against (e.g. a market close with no reference price handy) —
+        // the step/minQty checks still apply, but minNotional is skipped rather than blocking.
+        BigDecimal result = normalizer.floorForClose("BINANCE", "SOLUSDT", new BigDecimal("0.1"), null);
+
+        assertThat(result).isEqualByComparingTo("0.1");
+    }
 }
