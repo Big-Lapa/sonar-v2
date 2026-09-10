@@ -7,10 +7,16 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.Set;
+
 /** 4.8/6: {@code GET/PUT /api/v1/strategy/settings} — gates/thresholds `strategy` reads before searching. */
 @RestController
 @RequestMapping("/api/v1/strategy/settings")
 public class StrategySettingsController {
+
+    // keep in sync: admin.html LLM_MODELS, model-pricing.ts RATES (TS), candidate-search.service.ts ADAPTIVE_THINKING_MODELS (TS)
+    private static final Set<String> ALLOWED_MODELS = Set.of(
+            "claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5-20251001");
 
     private final StrategySettingsRepository repository;
 
@@ -47,7 +53,12 @@ public class StrategySettingsController {
         if (req.maxMove24hPct() != null) e.setMaxMove24hPct(req.maxMove24hPct());
         if (req.maxMove7dPct() != null) e.setMaxMove7dPct(req.maxMove7dPct());
         if (req.maxCandidates() != null) e.setMaxCandidates(req.maxCandidates());
-        if (req.llmModel() != null) e.setLlmModel(req.llmModel());
+        if (req.llmModel() != null) {
+            if (!ALLOWED_MODELS.contains(req.llmModel())) {
+                return ResponseEntity.badRequest().body("unknown llmModel: " + req.llmModel());
+            }
+            e.setLlmModel(req.llmModel());
+        }
         if (req.alwaysDrawTv() != null) e.setAlwaysDrawTv(req.alwaysDrawTv());
         if (req.proposalTtlMs() != null) e.setProposalTtlMs(req.proposalTtlMs());
         if (req.holdReminderDays() != null) e.setHoldReminderDays(req.holdReminderDays());

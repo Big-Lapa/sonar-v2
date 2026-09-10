@@ -18,7 +18,7 @@ export interface SearchRunResult {
     rationale: string;
   }>;
   rejected: Array<{ symbol: string; reason: string }>;
-  costUsd: number;
+  costUsd: number | undefined;
 }
 
 /**
@@ -48,7 +48,7 @@ export class SearchOrchestratorService {
 
     const { candidates, cost } = await this.candidateSearch.search(universe, settings.maxCandidates, settings.llmModel);
     this.logger.log(
-      `LLM returned ${candidates.length} candidates, cost=$${cost.costUsd.toFixed(4)} ` +
+      `LLM returned ${candidates.length} candidates, cost=${cost.costUsd !== undefined ? '$' + cost.costUsd.toFixed(4) : 'н/д'} ` +
         `(in=${cost.inputTokens} out=${cost.outputTokens} searches=${cost.webSearchRequests})`,
     );
 
