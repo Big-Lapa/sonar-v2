@@ -197,10 +197,15 @@ public class BinanceExecutionAdapter implements ExecutionAdapter {
         // Sent unrounded, a fraction like 0.09999 at a 0.001 stepSize comes back as exchange
         // rejection -1111 (precision) — the same "position ends up without this leg" outcome the
         // fill-scaling was trying to avoid, just through a venue error instead of a log line.
-        BigDecimal flooredQty = quantityNormalizer.floorForClose(accountId, symbol, tp1Qty, null);
+        // tp1Price() (not null) so floorForClose's minNotional check actually runs — a small
+        // partial fill can shrink tp1Qty below step/minQty fine but still under the exchange's
+        // MIN_NOTIONAL floor, which a null price would silently skip checking and let the leg go
+        // out anyway, only to bounce back as -4164 (min notional) — the same round-trip this
+        // rounding step exists to avoid.
+        BigDecimal flooredQty = quantityNormalizer.floorForClose(accountId, symbol, tp1Qty, tpSl.tp1Price());
         if (flooredQty == null) {
             log.warn("[BINANCE] partial TP1 skipped for {} — scaled quantity {} floors to below the "
-                    + "exchange's step/min size", symbol, tp1Qty);
+                    + "exchange's step/min size/min notional", symbol, tp1Qty);
             return;
         }
         tp1Qty = flooredQty;

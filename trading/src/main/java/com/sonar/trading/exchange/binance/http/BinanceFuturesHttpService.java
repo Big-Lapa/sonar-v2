@@ -230,7 +230,7 @@ public class BinanceFuturesHttpService implements BinanceFuturesClient {
     public Map<String, Object> getIncome(String incomeType, Long startTime, Long endTime, Integer limit) {
         int pageLimit = limit != null ? Math.min(limit, INCOME_PAGE_LIMIT) : INCOME_PAGE_LIMIT;
         List<Object> merged = new ArrayList<>();
-        Set<String> seenTranIds = new HashSet<>();
+        Set<String> seenKeys = new HashSet<>();
         Long cursorStart = startTime;
 
         for (int page = 0; ; page++) {
@@ -262,9 +262,7 @@ public class BinanceFuturesHttpService implements BinanceFuturesClient {
 
             int newRows = 0;
             for (Object row : rows) {
-                String tranId = row instanceof Map<?, ?> m && m.get("tranId") != null
-                        ? String.valueOf(m.get("tranId")) : null;
-                if (tranId == null || seenTranIds.add(tranId)) {
+                if (seenKeys.add(dedupKey(row))) {
                     merged.add(row);
                     newRows++;
                 }
@@ -292,6 +290,27 @@ public class BinanceFuturesHttpService implements BinanceFuturesClient {
         log.warn("[BINANCE] getIncome pagination could not complete cleanly ({} rows merged so far): {} — "
                 + "reporting as unavailable rather than an understated sum", rowsSoFar, reason);
         return Map.of("code", -1, "msg", "getIncome pagination truncated: " + reason);
+    }
+
+    /**
+     * Dedup key for one income row across pages. Prefers {@code tranId} (unique per Binance's own
+     * ledger); a row without one falls back to a composite of its own fields rather than being
+     * added unconditionally. The fallback matters BECAUSE the cursor deliberately re-fetches the
+     * last page's exact millisecond ({@code cursorStart = lastTime}, no {@code +1}) so no row at
+     * that boundary is skipped — that overlap is by design, so a {@code tranId}-less row would
+     * otherwise be counted from both pages and double its income into the sum (the wrong direction
+     * for a drawdown gate: it makes the gate look TOO permissive, not too strict, hiding the
+     * failure rather than tripping it).
+     */
+    static String dedupKey(Object row) {
+        if (!(row instanceof Map<?, ?> m)) {
+            return String.valueOf(row);
+        }
+        Object tranId = m.get("tranId");
+        if (tranId != null) {
+            return "tranId:" + tranId;
+        }
+        return "fallback:" + m.get("time") + "|" + m.get("symbol") + "|" + m.get("incomeType") + "|" + m.get("income");
     }
 
     private static Long lastRowTime(Object row) {

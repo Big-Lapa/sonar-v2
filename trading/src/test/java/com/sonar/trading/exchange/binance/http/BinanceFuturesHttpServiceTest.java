@@ -96,4 +96,41 @@ class BinanceFuturesHttpServiceTest {
         assertThat(q).containsEntry("reduceOnly", "true");
         assertThat(q).doesNotContainKey("closePosition");
     }
+
+    // ---- dedupKey: getIncome pagination overlap dedup ----
+
+    @Test
+    void dedupKeyPrefersTranIdWhenPresent() {
+        Map<String, Object> row = Map.of("tranId", "12345", "time", "1000", "income", "1.5");
+
+        assertThat(BinanceFuturesHttpService.dedupKey(row)).isEqualTo("tranId:12345");
+    }
+
+    @Test
+    void dedupKeySameTranIdMatchesAcrossTwoOtherwiseDifferentRows() {
+        // Same underlying transaction fetched from two overlapping pages must dedup identically.
+        Map<String, Object> rowPageOne = Map.of("tranId", "12345", "time", "1000", "income", "1.5");
+        Map<String, Object> rowPageTwo = Map.of("tranId", "12345", "time", "1000", "income", "1.5", "extra", "field");
+
+        assertThat(BinanceFuturesHttpService.dedupKey(rowPageOne))
+                .isEqualTo(BinanceFuturesHttpService.dedupKey(rowPageTwo));
+    }
+
+    @Test
+    void dedupKeyFallsBackToACompositeKeyWhenTranIdIsAbsent() {
+        // The cursor deliberately re-fetches the last page's exact millisecond (no +1) — a row
+        // with no tranId to dedup by must not be counted from both pages, which would double its
+        // income into the sum (the wrong direction for a drawdown gate: too lenient, not too strict).
+        Map<String, Object> row1 = Map.of("time", "1000", "symbol", "BTCUSDT", "incomeType", "FUNDING_FEE", "income", "0.5");
+        Map<String, Object> row2 = Map.of("time", "1000", "symbol", "BTCUSDT", "incomeType", "FUNDING_FEE", "income", "0.5");
+        Map<String, Object> differentRow = Map.of("time", "1000", "symbol", "ETHUSDT", "incomeType", "FUNDING_FEE", "income", "0.5");
+
+        assertThat(BinanceFuturesHttpService.dedupKey(row1)).isEqualTo(BinanceFuturesHttpService.dedupKey(row2));
+        assertThat(BinanceFuturesHttpService.dedupKey(row1)).isNotEqualTo(BinanceFuturesHttpService.dedupKey(differentRow));
+    }
+
+    @Test
+    void dedupKeyHandlesANonMapRowWithoutThrowing() {
+        assertThat(BinanceFuturesHttpService.dedupKey("not-a-map")).isNotNull();
+    }
 }

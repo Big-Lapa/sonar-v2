@@ -294,6 +294,31 @@ class BinanceExecutionAdapterTest {
     }
 
     @Test
+    void placeOrderSkipsThePartialTp1LegWhenItPassesStepSizeButFailsMinNotional() {
+        // A quantity can clear stepSize/minQty and still be worth less than the exchange's
+        // MIN_NOTIONAL floor (5 USDT on Binance USDT-M) — floorForClose only catches that when it
+        // is given the leg's own price, not null.
+        BinanceFuturesClient client = Mockito.mock(BinanceFuturesClient.class);
+        BinanceExecutionGateway gateway = gatewayMock();
+        when(gateway.getPositions("BTCUSDT")).thenReturn(Map.of("data", List.of()));
+        when(gateway.placeOrder(any(), any()))
+                .thenReturn(Map.of("orderId", "1", "status", "PARTIALLY_FILLED", "executedQty", "0.001", "avgPrice", "60000"));
+        SymbolRules rulesWithMinNotional = new SymbolRules(new BigDecimal("0.001"), new BigDecimal("0.001"),
+                new BigDecimal("5"), new BigDecimal("0.01"));
+        BinanceExecutionAdapter adapter = adapter(client, gateway, rulesWithMinNotional);
+
+        // tp1Quantity 0.001 (clears stepSize/minQty) at tp1Price 100 -> notional $0.1, well under $5.
+        TpSlAttachment tpSl = new TpSlAttachment(new BigDecimal("65000"), new BigDecimal("58000"),
+                new BigDecimal("100"), new BigDecimal("0.001"));
+        AdapterOrderRequest request = new AdapterOrderRequest("BTCUSDT", AdapterOrderSide.BUY,
+                AdapterOrderType.MARKET, new BigDecimal("0.001"), null, "cid-13", OrderIntent.ENTRY, null, tpSl);
+
+        adapter.placeOrder(request);
+
+        verify(gateway, Mockito.times(3)).placeOrder(any(), any()); // entry + SL + TP only, no TP1
+    }
+
+    @Test
     void placeOrderSkipsConditionalExitsWhenTheEntryWasRejected() {
         BinanceFuturesClient client = Mockito.mock(BinanceFuturesClient.class);
         BinanceExecutionGateway gateway = gatewayMock();
