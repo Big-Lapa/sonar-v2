@@ -2,6 +2,7 @@ package com.sonar.trading.config;
 
 import com.sonar.trading.execution.gateway.ExecutionGatewayProperties;
 import com.sonar.trading.health.SystemHealthService;
+import com.sonar.trading.sizing.QuantityNormalizer;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -35,7 +36,8 @@ class AccountWiringTest {
 
     private static AccountWiring.AccountStacks wire(AccountRegistry accounts) {
         return new AccountWiring().accountStacks(accounts, new ExecutionGatewayProperties(),
-                new TradingProperties(), Mockito.mock(SystemHealthService.class), new SimpleMeterRegistry());
+                new TradingProperties(), Mockito.mock(SystemHealthService.class), new SimpleMeterRegistry(),
+                Mockito.mock(QuantityNormalizer.class));
     }
 
     @Test
@@ -117,14 +119,25 @@ class AccountWiringTest {
     }
 
     @Test
-    void unimplementedVenueIsSkippedWithoutFailingStartup() {
+    void binanceIsWiredWithBothReaderAndExecutionAdapter() {
         AccountRegistry accounts = registryOf(
                 "binance-demo", "binance", "key", "secret", "https://testnet.binancefuture.com");
 
         AccountWiring.AccountStacks stacks = wire(accounts);
 
-        assertThat(stacks.readers().forAccount("binance-demo")).isEmpty();
-        assertThat(stacks.adapters().forAccount("binance-demo")).isEmpty();
+        assertThat(stacks.readers().forAccount("binance-demo")).isPresent();
+        assertThat(stacks.adapters().forAccount("binance-demo")).isPresent();
+    }
+
+    @Test
+    void unimplementedVenueIsSkippedWithoutFailingStartup() {
+        AccountRegistry accounts = registryOf(
+                "made-up-demo", "made-up-exchange", "key", "secret", "https://example.invalid");
+
+        AccountWiring.AccountStacks stacks = wire(accounts);
+
+        assertThat(stacks.readers().forAccount("made-up-demo")).isEmpty();
+        assertThat(stacks.adapters().forAccount("made-up-demo")).isEmpty();
     }
 
     @Test

@@ -68,12 +68,15 @@ class SymbolRulesCacheTest {
     }
 
     @Test
-    void binanceIgnoresAccountBaseUrlAndAlwaysUsesThePublicHost() {
-        // No live Binance account exists — its client stays on the fixed public API host
-        // regardless of what baseUrl a (currently hypothetical) account entry carries.
-        AccountProps binance = account("binance-demo", "binance", "https://testnet.binancefuture.com");
+    void binanceResolvesToTheAccountsOwnDomainLikeEveryOtherVenue() {
+        // A Binance testnet account must size off testnet's own exchangeInfo, not mainnet's — the
+        // symbol list and LOT_SIZE/MIN_NOTIONAL filters genuinely differ between the two domains.
+        AccountProps testnet = account("binance-demo", "binance", "https://testnet.binancefuture.com");
+        AccountProps mainnet = account("binance-prod", "binance", "https://fapi.binance.com");
 
-        assertThat(SymbolRulesCache.hostOf(binance, SymbolRulesCache.venueOf(binance)))
+        assertThat(SymbolRulesCache.hostOf(testnet, SymbolRulesCache.venueOf(testnet)))
+                .isEqualTo("https://testnet.binancefuture.com");
+        assertThat(SymbolRulesCache.hostOf(mainnet, SymbolRulesCache.venueOf(mainnet)))
                 .isEqualTo("https://fapi.binance.com");
     }
 

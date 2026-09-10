@@ -3,6 +3,9 @@ package com.sonar.trading.config;
 import com.sonar.trading.exchange.bingx.BingxFuturesClient;
 import com.sonar.trading.exchange.bingx.BingxFuturesProperties;
 import com.sonar.trading.exchange.bingx.http.BingxFuturesHttpService;
+import com.sonar.trading.exchange.binance.BinanceFuturesClient;
+import com.sonar.trading.exchange.binance.BinanceFuturesProperties;
+import com.sonar.trading.exchange.binance.http.BinanceFuturesHttpService;
 import com.sonar.trading.exchange.bybit.BybitFuturesClient;
 import com.sonar.trading.exchange.bybit.BybitFuturesProperties;
 import com.sonar.trading.exchange.bybit.http.BybitFuturesHttpService;
@@ -10,9 +13,11 @@ import com.sonar.trading.exchange.pionex.PionexFuturesClient;
 import com.sonar.trading.exchange.pionex.PionexFuturesProperties;
 import com.sonar.trading.exchange.pionex.http.PionexFuturesHttpService;
 import com.sonar.trading.exchange.spi.ExecutionAdapter;
+import com.sonar.trading.execution.adapter.BinanceExecutionAdapter;
 import com.sonar.trading.execution.adapter.BybitExecutionAdapter;
 import com.sonar.trading.execution.adapter.ExecutionAdapterRegistry;
 import com.sonar.trading.execution.adapter.LiveExecutionAdapter;
+import com.sonar.trading.execution.gateway.BinanceExecutionGateway;
 import com.sonar.trading.execution.gateway.BingxExecutionGateway;
 import com.sonar.trading.execution.gateway.BybitExecutionGateway;
 import com.sonar.trading.execution.gateway.ExecutionGatewayProperties;
@@ -20,9 +25,11 @@ import com.sonar.trading.execution.gateway.TransientErrorClassifier;
 import com.sonar.trading.health.SystemHealthService;
 import com.sonar.trading.reconciliation.AccountReader;
 import com.sonar.trading.reconciliation.AccountReaderRegistry;
+import com.sonar.trading.reconciliation.BinanceAccountReader;
 import com.sonar.trading.reconciliation.BingxAccountReader;
 import com.sonar.trading.reconciliation.BybitAccountReader;
 import com.sonar.trading.reconciliation.PionexAccountReader;
+import com.sonar.trading.sizing.QuantityNormalizer;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
 import io.github.resilience4j.core.IntervalFunction;
@@ -78,6 +85,7 @@ public class AccountWiring {
     /** Venues whose execution adapter exists; others are read-only (Pionex, today). */
     private static final String BINGX = "bingx";
     private static final String BYBIT = "bybit";
+    private static final String BINANCE = "binance";
     private static final String PIONEX = "pionex";
 
     private final Map<String, RateLimiter> rateLimitersByVenue = new HashMap<>();
@@ -87,7 +95,8 @@ public class AccountWiring {
                                        ExecutionGatewayProperties gatewayProps,
                                        TradingProperties tradingProps,
                                        SystemHealthService healthService,
-                                       MeterRegistry meterRegistry) {
+                                       MeterRegistry meterRegistry,
+                                       QuantityNormalizer quantityNormalizer) {
         validate(accounts);
 
         Map<String, AccountReader> readers = new LinkedHashMap<>();
@@ -121,6 +130,15 @@ public class AccountWiring {
                                     breaker(id, gatewayProps), healthService, meterRegistry,
                                     gatewayProps.getRateLimiter().getCloseWaitMs(), account.id()),
                             tradingProps, client));
+                }
+                case BINANCE -> {
+                    BinanceFuturesClient client = new BinanceFuturesHttpService(binanceProps(account));
+                    readers.put(id, new BinanceAccountReader(client));
+                    adapters.put(id, new BinanceExecutionAdapter(account.id(),
+                            new BinanceExecutionGateway(client, retry(id, gatewayProps), rateLimiter(venue, gatewayProps),
+                                    breaker(id, gatewayProps), healthService, meterRegistry,
+                                    gatewayProps.getRateLimiter().getCloseWaitMs(), account.id()),
+                            tradingProps, client, quantityNormalizer));
                 }
                 case PIONEX -> {
                     // Read-only venue: balances and positions only. Pionex's Futures API (Beta)
@@ -216,6 +234,14 @@ public class AccountWiring {
 
     private static BingxFuturesProperties bingxProps(AccountProps account) {
         BingxFuturesProperties props = new BingxFuturesProperties();
+        props.setApiKey(account.apiKey());
+        props.setApiSecret(account.apiSecret());
+        props.setBaseUrl(account.baseUrl());
+        return props;
+    }
+
+    private static BinanceFuturesProperties binanceProps(AccountProps account) {
+        BinanceFuturesProperties props = new BinanceFuturesProperties();
         props.setApiKey(account.apiKey());
         props.setApiSecret(account.apiSecret());
         props.setBaseUrl(account.baseUrl());
