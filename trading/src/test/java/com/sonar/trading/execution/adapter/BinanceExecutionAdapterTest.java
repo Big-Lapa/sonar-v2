@@ -1,5 +1,7 @@
 package com.sonar.trading.execution.adapter;
 
+import com.sonar.trading.config.SymbolRules;
+import com.sonar.trading.config.SymbolRulesCache;
 import com.sonar.trading.config.TradingProperties;
 import com.sonar.trading.exchange.binance.BinanceFuturesClient;
 import com.sonar.trading.exchange.binance.BinancePlaceOrderRequest;
@@ -12,6 +14,7 @@ import com.sonar.trading.exchange.model.AdapterOrderState;
 import com.sonar.trading.exchange.model.AdapterOrderType;
 import com.sonar.trading.exchange.model.OrderIntent;
 import com.sonar.trading.execution.gateway.BinanceExecutionGateway;
+import com.sonar.trading.sizing.QuantityNormalizer;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
@@ -39,7 +42,15 @@ import static org.mockito.Mockito.when;
 class BinanceExecutionAdapterTest {
 
     private static BinanceExecutionAdapter adapter(BinanceFuturesClient client, BinanceExecutionGateway gateway) {
-        return new BinanceExecutionAdapter("binance-demo", gateway, new TradingProperties(), client);
+        return adapter(client, gateway, SymbolRules.DEFAULT);
+    }
+
+    private static BinanceExecutionAdapter adapter(BinanceFuturesClient client, BinanceExecutionGateway gateway,
+                                                    SymbolRules symbolRules) {
+        SymbolRulesCache rulesCache = Mockito.mock(SymbolRulesCache.class);
+        when(rulesCache.get(any(), any())).thenReturn(symbolRules);
+        return new BinanceExecutionAdapter("binance-demo", gateway, new TradingProperties(), client,
+                new QuantityNormalizer(rulesCache));
     }
 
     private static BinanceExecutionGateway gatewayMock() {
@@ -233,6 +244,52 @@ class BinanceExecutionAdapterTest {
         adapter.placeOrder(request);
 
         // entry + SL + TP only — no TP1, since NEW/unfilled means the fill quantity is unknown.
+        verify(gateway, Mockito.times(3)).placeOrder(any(), any());
+    }
+
+    @Test
+    void placeOrderFloorsThePartialTp1QuantityToTheExchangesStepSize() {
+        // Unrounded, 0.3 * 0.3333/1.0 = 0.09999 — sent raw at a 0.001 stepSize (SymbolRules.DEFAULT)
+        // that comes back from the exchange as -1111 (precision), leaving the position without
+        // this leg exactly like the bug the fill-scaling itself was fixing, just via a venue
+        // rejection instead of a dropped log line.
+        BinanceFuturesClient client = Mockito.mock(BinanceFuturesClient.class);
+        BinanceExecutionGateway gateway = gatewayMock();
+        when(gateway.getPositions("BTCUSDT")).thenReturn(Map.of("data", List.of()));
+        when(gateway.placeOrder(any(), any()))
+                .thenReturn(Map.of("orderId", "1", "status", "PARTIALLY_FILLED", "executedQty", "0.3333", "avgPrice", "60000"));
+        BinanceExecutionAdapter adapter = adapter(client, gateway); // SymbolRules.DEFAULT: stepSize=0.001
+
+        TpSlAttachment tpSl = new TpSlAttachment(new BigDecimal("65000"), new BigDecimal("58000"),
+                new BigDecimal("62000"), new BigDecimal("0.3"));
+        AdapterOrderRequest request = new AdapterOrderRequest("BTCUSDT", AdapterOrderSide.BUY,
+                AdapterOrderType.MARKET, new BigDecimal("1.0"), null, "cid-11", OrderIntent.ENTRY, null, tpSl);
+
+        adapter.placeOrder(request);
+
+        ArgumentCaptor<BinancePlaceOrderRequest> captor = ArgumentCaptor.forClass(BinancePlaceOrderRequest.class);
+        verify(gateway, Mockito.times(4)).placeOrder(captor.capture(), any());
+        BinancePlaceOrderRequest tp1 = captor.getAllValues().get(3);
+        assertThat(new BigDecimal(tp1.quantity())).isEqualByComparingTo("0.099");
+    }
+
+    @Test
+    void placeOrderSkipsThePartialTp1LegWhenTheFlooredQuantityIsBelowTheExchangeMinimum() {
+        BinanceFuturesClient client = Mockito.mock(BinanceFuturesClient.class);
+        BinanceExecutionGateway gateway = gatewayMock();
+        when(gateway.getPositions("BTCUSDT")).thenReturn(Map.of("data", List.of()));
+        when(gateway.placeOrder(any(), any()))
+                .thenReturn(Map.of("orderId", "1", "status", "PARTIALLY_FILLED", "executedQty", "0.001", "avgPrice", "60000"));
+        BinanceExecutionAdapter adapter = adapter(client, gateway); // SymbolRules.DEFAULT: minQty=0.001
+
+        TpSlAttachment tpSl = new TpSlAttachment(new BigDecimal("65000"), new BigDecimal("58000"),
+                new BigDecimal("62000"), new BigDecimal("0.0005"));
+        AdapterOrderRequest request = new AdapterOrderRequest("BTCUSDT", AdapterOrderSide.BUY,
+                AdapterOrderType.MARKET, new BigDecimal("1.0"), null, "cid-12", OrderIntent.ENTRY, null, tpSl);
+
+        adapter.placeOrder(request);
+
+        // tp1Quantity 0.0005 scaled by 0.001/1.0 floors to well below the exchange minimum — skipped.
         verify(gateway, Mockito.times(3)).placeOrder(any(), any());
     }
 

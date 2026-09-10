@@ -18,11 +18,14 @@ import java.math.BigDecimal;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Binance USDT-M Futures signed HTTP client (mirrors {@code BybitFuturesHttpService} /
@@ -207,24 +210,35 @@ public class BinanceFuturesHttpService implements BinanceFuturesClient {
 
     /**
      * Realized PnL + funding/fees ledger ({@code /fapi/v1/income}); merged array wrapped under
-     * {@code "data"}. Paginates by advancing {@code startTime} past the last row's own timestamp
+     * {@code "data"}. Paginates by advancing {@code startTime} to the last row's own timestamp
      * whenever a page comes back full (unlike Bybit's cursor, this endpoint has no cursor — but
-     * time-based paging works the same way) — a single 1000-row call silently truncated any day
-     * with more funding intervals + multi-symbol fees than that, understating realized PnL to
-     * whatever the drawdown gate reads.
+     * time-based paging works the same way, provided rows already seen get filtered back out by
+     * {@code tranId} rather than skipped past — a {@code +1} cursor would drop any other row
+     * sharing that exact millisecond, which funding settlement across many symbols routinely
+     * does) — a single 1000-row call silently truncated any day with more funding intervals +
+     * multi-symbol fees than that, understating realized PnL to whatever the drawdown gate reads.
      *
-     * <p>A business-error response (HTTP 200, non-array body) on any page is returned as-is
-     * without merging: the caller ({@code BinanceAccountReader.sumIncomeSince}) distinguishes that
-     * from a genuinely empty page and returns {@code null} rather than a partial sum that would
-     * look like a smaller-but-real answer.
+     * <p>A business-error response (HTTP 200, non-array body) on ANY page — not just the first —
+     * is returned as-is without merging: the caller ({@code BinanceAccountReader.sumIncomeSince})
+     * distinguishes that from a genuinely empty page and returns {@code null} rather than a
+     * partial sum that would look like a smaller-but-real answer. The same non-array shape is
+     * returned when pagination can't complete cleanly (page budget exhausted while still full,
+     * or a full page added no new rows) — reported as unavailable rather than silently handing
+     * back an understated sum, exactly the failure mode this pagination exists to prevent.
      */
     @Override
     public Map<String, Object> getIncome(String incomeType, Long startTime, Long endTime, Integer limit) {
         int pageLimit = limit != null ? Math.min(limit, INCOME_PAGE_LIMIT) : INCOME_PAGE_LIMIT;
-        List<Object> merged = new java.util.ArrayList<>();
+        List<Object> merged = new ArrayList<>();
+        Set<String> seenTranIds = new HashSet<>();
         Long cursorStart = startTime;
 
-        for (int page = 0; page < MAX_INCOME_PAGES; page++) {
+        for (int page = 0; ; page++) {
+            if (page >= MAX_INCOME_PAGES) {
+                return truncated(merged.size(), "page budget (" + MAX_INCOME_PAGES + ") exhausted while pages "
+                        + "were still coming back full");
+            }
+
             Map<String, String> q = new LinkedHashMap<>();
             if (incomeType != null && !incomeType.isBlank()) {
                 q.put("incomeType", incomeType);
@@ -240,23 +254,44 @@ public class BinanceFuturesHttpService implements BinanceFuturesClient {
             Map<String, Object> resp = parseJsonToMap(executeSigned("GET", "/fapi/v1/income", q, false));
             Object data = resp.get("data");
             if (!(data instanceof List<?> rows)) {
-                return page == 0 ? resp : wrapData(merged);
+                return resp;
             }
             if (rows.isEmpty()) {
-                break;
+                break; // clean completion: nothing more in range
             }
-            merged.addAll(rows);
+
+            int newRows = 0;
+            for (Object row : rows) {
+                String tranId = row instanceof Map<?, ?> m && m.get("tranId") != null
+                        ? String.valueOf(m.get("tranId")) : null;
+                if (tranId == null || seenTranIds.add(tranId)) {
+                    merged.add(row);
+                    newRows++;
+                }
+            }
             if (rows.size() < pageLimit) {
-                break; // short page: no more data past this point
+                break; // clean completion: short page, no more data past this point
+            }
+            if (newRows == 0) {
+                // A full page that added nothing new: more rows share the last timestamp than fit
+                // in one page. Advancing further would just refetch the same window forever.
+                return truncated(merged.size(), "a full page added no new rows (more income at one "
+                        + "timestamp than the page limit)");
             }
 
             Long lastTime = lastRowTime(rows.get(rows.size() - 1));
-            if (lastTime == null || (cursorStart != null && lastTime <= cursorStart)) {
-                break; // can't advance the cursor safely — stop rather than risk looping forever
+            if (lastTime == null) {
+                return truncated(merged.size(), "last row carried no parseable time to page from");
             }
-            cursorStart = lastTime + 1;
+            cursorStart = lastTime;
         }
         return wrapData(merged);
+    }
+
+    private Map<String, Object> truncated(int rowsSoFar, String reason) {
+        log.warn("[BINANCE] getIncome pagination could not complete cleanly ({} rows merged so far): {} — "
+                + "reporting as unavailable rather than an understated sum", rowsSoFar, reason);
+        return Map.of("code", -1, "msg", "getIncome pagination truncated: " + reason);
     }
 
     private static Long lastRowTime(Object row) {

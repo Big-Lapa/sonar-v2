@@ -29,6 +29,7 @@ import com.sonar.trading.reconciliation.BinanceAccountReader;
 import com.sonar.trading.reconciliation.BingxAccountReader;
 import com.sonar.trading.reconciliation.BybitAccountReader;
 import com.sonar.trading.reconciliation.PionexAccountReader;
+import com.sonar.trading.sizing.QuantityNormalizer;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
 import io.github.resilience4j.core.IntervalFunction;
@@ -94,7 +95,8 @@ public class AccountWiring {
                                        ExecutionGatewayProperties gatewayProps,
                                        TradingProperties tradingProps,
                                        SystemHealthService healthService,
-                                       MeterRegistry meterRegistry) {
+                                       MeterRegistry meterRegistry,
+                                       QuantityNormalizer quantityNormalizer) {
         validate(accounts);
 
         Map<String, AccountReader> readers = new LinkedHashMap<>();
@@ -136,7 +138,7 @@ public class AccountWiring {
                             new BinanceExecutionGateway(client, retry(id, gatewayProps), rateLimiter(venue, gatewayProps),
                                     breaker(id, gatewayProps), healthService, meterRegistry,
                                     gatewayProps.getRateLimiter().getCloseWaitMs(), account.id()),
-                            tradingProps, client));
+                            tradingProps, client, quantityNormalizer));
                 }
                 case PIONEX -> {
                     // Read-only venue: balances and positions only. Pionex's Futures API (Beta)

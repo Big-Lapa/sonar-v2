@@ -18,6 +18,7 @@ import com.sonar.trading.exchange.model.AdapterOrderType;
 import com.sonar.trading.exchange.model.OrderIntent;
 import com.sonar.trading.exchange.spi.ExecutionAdapter;
 import com.sonar.trading.execution.gateway.BinanceExecutionGateway;
+import com.sonar.trading.sizing.QuantityNormalizer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -53,6 +54,7 @@ public class BinanceExecutionAdapter implements ExecutionAdapter {
     private final BinanceExecutionGateway gateway;
     private final TradingProperties props;
     private final BinanceFuturesClient binanceFuturesClient;
+    private final QuantityNormalizer quantityNormalizer;
 
     /** One instance per account — see {@link LiveExecutionAdapter}'s note on why. */
     private final String accountId;
@@ -61,11 +63,12 @@ public class BinanceExecutionAdapter implements ExecutionAdapter {
     private final ConcurrentHashMap<String, Integer> leverageBySymbol = new ConcurrentHashMap<>();
 
     public BinanceExecutionAdapter(String accountId, BinanceExecutionGateway gateway, TradingProperties props,
-                                   BinanceFuturesClient binanceFuturesClient) {
+                                   BinanceFuturesClient binanceFuturesClient, QuantityNormalizer quantityNormalizer) {
         this.accountId = accountId;
         this.gateway = gateway;
         this.props = props;
         this.binanceFuturesClient = binanceFuturesClient;
+        this.quantityNormalizer = quantityNormalizer;
     }
 
     @Override
@@ -189,6 +192,18 @@ public class BinanceExecutionAdapter implements ExecutionAdapter {
         if (tp1Qty == null || tp1Qty.signum() <= 0) {
             return;
         }
+        // Full-size legs above carry no quantity at all (closePosition=true) — sizing upstream
+        // never gets a chance to round THIS one, since it's computed here from the fill ratio.
+        // Sent unrounded, a fraction like 0.09999 at a 0.001 stepSize comes back as exchange
+        // rejection -1111 (precision) — the same "position ends up without this leg" outcome the
+        // fill-scaling was trying to avoid, just through a venue error instead of a log line.
+        BigDecimal flooredQty = quantityNormalizer.floorForClose(accountId, symbol, tp1Qty, null);
+        if (flooredQty == null) {
+            log.warn("[BINANCE] partial TP1 skipped for {} — scaled quantity {} floors to below the "
+                    + "exchange's step/min size", symbol, tp1Qty);
+            return;
+        }
+        tp1Qty = flooredQty;
         try {
             BinancePlaceOrderRequest order = new BinancePlaceOrderRequest(symbol, exitSide, BinancePositionSide.BOTH,
                     BinanceOrderType.TAKE_PROFIT_MARKET, toPlain(tp1Qty), null, null, shortClientOrderId("tp1"),

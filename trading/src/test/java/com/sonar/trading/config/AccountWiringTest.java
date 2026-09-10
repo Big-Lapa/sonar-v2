@@ -2,6 +2,7 @@ package com.sonar.trading.config;
 
 import com.sonar.trading.execution.gateway.ExecutionGatewayProperties;
 import com.sonar.trading.health.SystemHealthService;
+import com.sonar.trading.sizing.QuantityNormalizer;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.Test;
 import org.mockito.Mockito;
@@ -35,7 +36,8 @@ class AccountWiringTest {
 
     private static AccountWiring.AccountStacks wire(AccountRegistry accounts) {
         return new AccountWiring().accountStacks(accounts, new ExecutionGatewayProperties(),
-                new TradingProperties(), Mockito.mock(SystemHealthService.class), new SimpleMeterRegistry());
+                new TradingProperties(), Mockito.mock(SystemHealthService.class), new SimpleMeterRegistry(),
+                Mockito.mock(QuantityNormalizer.class));
     }
 
     @Test
