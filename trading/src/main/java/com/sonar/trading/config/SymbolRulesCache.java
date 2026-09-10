@@ -43,10 +43,6 @@ public class SymbolRulesCache {
     private static final Logger log = LoggerFactory.getLogger(SymbolRulesCache.class);
     private static final Duration TTL = Duration.ofHours(1);
 
-    /** No live Binance accounts exist yet (parked in {@code _stage3-pending}) — left on the public
-     *  API host rather than account-resolved; revisit once a real Binance account is wired. */
-    private static final String BINANCE_HOST = "https://fapi.binance.com";
-
     private final AccountRegistry accounts;
     private final Map<String, RestClient> clientsByHost = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, VenueCache> byHost = new ConcurrentHashMap<>();
@@ -89,13 +85,14 @@ public class SymbolRulesCache {
     /**
      * The cache/client key for one account — a pure function, package-private specifically so the
      * account→host resolution (the whole point of this class's rewrite) can be unit-tested without
-     * a network call. No live Binance account exists, so it stays on the fixed public host
-     * regardless of what {@code account.baseUrl()} says; BingX and Bybit both resolve to the
-     * account's own domain, which is what makes two accounts on different domains get different
-     * specs instead of silently sharing one client's answer.
+     * a network call. Every venue (BingX, Bybit, Binance) resolves to the account's own domain —
+     * a Binance testnet account must size off testnet's {@code /fapi/v1/exchangeInfo}, not
+     * mainnet's: the symbol list and LOT_SIZE/MIN_NOTIONAL filters genuinely differ between the
+     * two, and sizing off the wrong one produces exchange rejections (-1111 precision, -4164 min
+     * notional) at order placement instead of at sizing.
      */
     static String hostOf(AccountProps account, String venue) {
-        return "BINANCE".equals(venue) ? BINANCE_HOST : account.baseUrl();
+        return account.baseUrl();
     }
 
     private synchronized VenueCache refresh(String venue, String host) {

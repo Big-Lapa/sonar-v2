@@ -41,14 +41,19 @@ public final class BinanceOrderMapper {
     }
 
     /**
-     * Clamp a clientOrderId to Binance's 36-char limit. Keeps the trailing chars (the unique
-     * command suffix) rather than the exchange prefix, so the id stays unique. Returns null unchanged.
+     * Clamp a clientOrderId to Binance's 36-char limit. Keeps the LEADING chars, not the trailing
+     * ones: the platform's own id scheme is {@code shortId(proposalId) + "-" + accountId}
+     * ({@code ProposalExecutionService}) — the unique part is the prefix, and accountId (constant
+     * per account) is the suffix. Keeping the tail on a long accountId would collapse every id
+     * from that account into the same 36-char string, making a genuinely different order look like
+     * a duplicate {@code newClientOrderId} and misdirecting later {@code getOrderStatus}/
+     * {@code cancelOrder} calls at the wrong order. Returns null unchanged.
      */
     public static String clampClientOrderId(String clientOrderId) {
         if (clientOrderId == null || clientOrderId.length() <= MAX_CLIENT_ORDER_ID) {
             return clientOrderId;
         }
-        return clientOrderId.substring(clientOrderId.length() - MAX_CLIENT_ORDER_ID);
+        return clientOrderId.substring(0, MAX_CLIENT_ORDER_ID);
     }
 
     // ---- Order state ----

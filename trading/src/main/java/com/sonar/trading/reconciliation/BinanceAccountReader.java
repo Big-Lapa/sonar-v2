@@ -42,6 +42,16 @@ public class BinanceAccountReader implements AccountReader {
     public BigDecimal sumIncomeSince(Instant since) {
         try {
             Map<String, Object> resp = client.getIncome(null, since.toEpochMilli(), System.currentTimeMillis(), 1000);
+            if (!(resp.get("data") instanceof List<?>)) {
+                // Binance business errors ({"code":-1121,...}) come back as HTTP 200 — an object,
+                // not the array this endpoint returns on success. BinanceOrderMapper.dataRows()
+                // treats that the same as a genuinely empty array (0 rows), which previously
+                // returned ZERO here instead of null — overwriting today's realized_pnl with 0
+                // instead of keeping the last known value, per this method's null contract.
+                log.warn("[BINANCE] getIncome returned a non-array response (likely a business error), "
+                        + "keeping previous realized_pnl: {}", resp);
+                return null;
+            }
             BigDecimal sum = BigDecimal.ZERO;
             for (Map<String, Object> row : BinanceOrderMapper.dataRows(resp)) {
                 BigDecimal income = BinanceOrderMapper.extractDecimal(row, "income");

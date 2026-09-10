@@ -81,8 +81,14 @@ public final class BinanceAccountParser {
         String want = asset == null ? null : asset.toUpperCase(Locale.ROOT);
         for (Map<String, Object> row : rows) {
             String a = str(row, "asset");
-            if (want == null || a == null || want.equals(a.toUpperCase(Locale.ROOT))) {
-                return Optional.of(parseBalanceRow(a == null ? want : a, row));
+            // A row with no/blank asset label can't be a genuine match by name — matching it here
+            // let a row for the WRONG asset (a partial/degraded response mixing a blank-asset row
+            // in with real ones) get labeled and returned as the requested one.
+            if (a == null) {
+                continue;
+            }
+            if (want == null || want.equals(a.toUpperCase(Locale.ROOT))) {
+                return Optional.of(parseBalanceRow(a, row));
             }
         }
         return Optional.of(parseBalanceRow(str(rows.get(0), "asset"), rows.get(0)));

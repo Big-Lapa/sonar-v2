@@ -91,6 +91,14 @@ public class BinanceFuturesHttpService implements BinanceFuturesClient {
         if (request.closePosition()) {
             q.put("closePosition", "true");
         } else {
+            if (request.quantity() == null) {
+                // A null quantity here would go out as the query-string literal "quantity=" —
+                // BinanceRequestSigner.buildQueryStringEncoded turns a null value into an empty
+                // string rather than dropping the key — and come back as an opaque -1102 from the
+                // exchange instead of failing at the call site that forgot to compute a size.
+                throw new IllegalArgumentException(
+                        "BinancePlaceOrderRequest.quantity is required unless closePosition=true");
+            }
             q.put("quantity", request.quantity());
             if (request.reduceOnly()) {
                 q.put("reduceOnly", "true");
@@ -192,23 +200,84 @@ public class BinanceFuturesHttpService implements BinanceFuturesClient {
         return parseJsonToMap(sendHttp("GET", url, false, null));
     }
 
-    /** Realized PnL + funding/fees ledger ({@code /fapi/v1/income}); array wrapped under {@code "data"}. */
+    /** Binance's hard per-call cap on {@code /fapi/v1/income}. */
+    private static final int INCOME_PAGE_LIMIT = 1000;
+    /** Bounds worst-case pagination (a day with more than 20k income rows is not realistic). */
+    private static final int MAX_INCOME_PAGES = 20;
+
+    /**
+     * Realized PnL + funding/fees ledger ({@code /fapi/v1/income}); merged array wrapped under
+     * {@code "data"}. Paginates by advancing {@code startTime} past the last row's own timestamp
+     * whenever a page comes back full (unlike Bybit's cursor, this endpoint has no cursor — but
+     * time-based paging works the same way) — a single 1000-row call silently truncated any day
+     * with more funding intervals + multi-symbol fees than that, understating realized PnL to
+     * whatever the drawdown gate reads.
+     *
+     * <p>A business-error response (HTTP 200, non-array body) on any page is returned as-is
+     * without merging: the caller ({@code BinanceAccountReader.sumIncomeSince}) distinguishes that
+     * from a genuinely empty page and returns {@code null} rather than a partial sum that would
+     * look like a smaller-but-real answer.
+     */
     @Override
     public Map<String, Object> getIncome(String incomeType, Long startTime, Long endTime, Integer limit) {
-        Map<String, String> q = new LinkedHashMap<>();
-        if (incomeType != null && !incomeType.isBlank()) {
-            q.put("incomeType", incomeType);
+        int pageLimit = limit != null ? Math.min(limit, INCOME_PAGE_LIMIT) : INCOME_PAGE_LIMIT;
+        List<Object> merged = new java.util.ArrayList<>();
+        Long cursorStart = startTime;
+
+        for (int page = 0; page < MAX_INCOME_PAGES; page++) {
+            Map<String, String> q = new LinkedHashMap<>();
+            if (incomeType != null && !incomeType.isBlank()) {
+                q.put("incomeType", incomeType);
+            }
+            if (cursorStart != null) {
+                q.put("startTime", String.valueOf(cursorStart));
+            }
+            if (endTime != null) {
+                q.put("endTime", String.valueOf(endTime));
+            }
+            q.put("limit", String.valueOf(pageLimit));
+
+            Map<String, Object> resp = parseJsonToMap(executeSigned("GET", "/fapi/v1/income", q, false));
+            Object data = resp.get("data");
+            if (!(data instanceof List<?> rows)) {
+                return page == 0 ? resp : wrapData(merged);
+            }
+            if (rows.isEmpty()) {
+                break;
+            }
+            merged.addAll(rows);
+            if (rows.size() < pageLimit) {
+                break; // short page: no more data past this point
+            }
+
+            Long lastTime = lastRowTime(rows.get(rows.size() - 1));
+            if (lastTime == null || (cursorStart != null && lastTime <= cursorStart)) {
+                break; // can't advance the cursor safely — stop rather than risk looping forever
+            }
+            cursorStart = lastTime + 1;
         }
-        if (startTime != null) {
-            q.put("startTime", String.valueOf(startTime));
+        return wrapData(merged);
+    }
+
+    private static Long lastRowTime(Object row) {
+        if (!(row instanceof Map<?, ?> m)) {
+            return null;
         }
-        if (endTime != null) {
-            q.put("endTime", String.valueOf(endTime));
+        Object time = m.get("time");
+        if (time == null) {
+            return null;
         }
-        // Binance caps /fapi/v1/income at 1000 rows per call; no cursor/pagination beyond that
-        // exists on this endpoint (unlike Bybit's cursor-paged ledger), so this is a single call.
-        q.put("limit", String.valueOf(limit != null ? Math.min(limit, 1000) : 1000));
-        return parseJsonToMap(executeSigned("GET", "/fapi/v1/income", q, false));
+        try {
+            return Long.parseLong(String.valueOf(time));
+        } catch (NumberFormatException e) {
+            return null;
+        }
+    }
+
+    private static Map<String, Object> wrapData(List<Object> rows) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("data", rows);
+        return out;
     }
 
     // ---- Signed HTTP helpers ----

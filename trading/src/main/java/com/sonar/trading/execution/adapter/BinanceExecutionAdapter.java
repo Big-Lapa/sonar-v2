@@ -77,7 +77,20 @@ public class BinanceExecutionAdapter implements ExecutionAdapter {
             // sibling SL resting) are otherwise still valid against the NEW position and would
             // close it at a stale level — swept before every entry, same as BingX/Bybit clean up
             // their own stale conditionals via cancelReduceOnlyOrder's callers.
-            cancelAllOpenOrdersSafely(symbol, "pre-entry");
+            //
+            // Only when the symbol is currently FLAT: a second entry on an already-open position
+            // (pyramiding, or a retried idea for the same symbol) would otherwise sweep away that
+            // position's own live protection before the new order even reaches the exchange — and
+            // a subsequent placeOrder failure (rate limit, margin, open breaker) then leaves it
+            // unprotected with nothing but the time-stop backstop. hasOpenPosition fails safe: a
+            // failed read is treated as "assume a position exists", skipping the sweep rather than
+            // risking it.
+            if (hasOpenPosition(symbol)) {
+                log.info("[BINANCE] {} already has an open position — skipping pre-entry conditional-order "
+                        + "sweep so its existing protection is left alone", symbol);
+            } else {
+                cancelAllOpenOrdersSafely(symbol, "pre-entry");
+            }
             if (request.leverage() != null) {
                 ensureLeverage(symbol, request.leverage());
             }
@@ -128,7 +141,7 @@ public class BinanceExecutionAdapter implements ExecutionAdapter {
 
         if (request.tpSl() != null && request.intent() == OrderIntent.ENTRY
                 && placed.state() != AdapterOrderState.REJECTED && placed.state() != AdapterOrderState.FAILED) {
-            placeConditionalExits(symbol, side, request.tpSl(), placed);
+            placeConditionalExits(symbol, side, request.quantity(), request.tpSl(), placed);
         }
         return placed;
     }
@@ -140,8 +153,8 @@ public class BinanceExecutionAdapter implements ExecutionAdapter {
      * pre-fill reference price), these orders go out AFTER the entry response, so the real avgPrice
      * is already available and the strategy's intended percentages can be preserved exactly.
      */
-    private void placeConditionalExits(String symbol, BinanceOrderSide entrySide, TpSlAttachment requested,
-                                       AdapterOrderResult placed) {
+    private void placeConditionalExits(String symbol, BinanceOrderSide entrySide, BigDecimal requestedQty,
+                                       TpSlAttachment requested, AdapterOrderResult placed) {
         BinanceOrderSide exitSide = entrySide == BinanceOrderSide.BUY ? BinanceOrderSide.SELL : BinanceOrderSide.BUY;
         TpSlAttachment tpSl = requested.rescaledTo(placed.avgPrice());
         String workingType = normalizedWorkingType();
@@ -150,7 +163,42 @@ public class BinanceExecutionAdapter implements ExecutionAdapter {
         placeConditional(symbol, exitSide, BinanceOrderType.TAKE_PROFIT_MARKET, tpSl.takeProfitPrice(), workingType, "tp");
 
         if (tpSl.hasPartial()) {
-            log.warn("[BINANCE] partial TP1 leg not supported on this venue — игнорируется");
+            placePartialTakeProfit(symbol, exitSide, tpSl, placed, requestedQty, workingType);
+        }
+    }
+
+    /**
+     * Partial TP1 as an explicit reduce-only {@code TAKE_PROFIT_MARKET} with a real quantity —
+     * {@code closePosition=true} (used by the two full-size legs above) is not an option here
+     * since it always closes the whole position, not a fraction of it. Scaled down proportionally
+     * when the entry only partially filled, mirroring the parked pre-PR-D implementation this was
+     * ported from.
+     */
+    private void placePartialTakeProfit(String symbol, BinanceOrderSide exitSide, TpSlAttachment tpSl,
+                                        AdapterOrderResult placed, BigDecimal requestedQty, String workingType) {
+        BigDecimal filled = placed.filledQty();
+        if (filled == null || filled.signum() == 0) {
+            log.warn("[BINANCE] partial TP1 skipped for {} — entry not filled yet (state={}), leg quantity unknown",
+                    symbol, placed.state());
+            return;
+        }
+        BigDecimal tp1Qty = tpSl.tp1Quantity();
+        if (requestedQty != null && requestedQty.signum() > 0 && filled.compareTo(requestedQty) < 0) {
+            tp1Qty = tp1Qty.multiply(filled).divide(requestedQty, 10, java.math.RoundingMode.DOWN);
+        }
+        if (tp1Qty == null || tp1Qty.signum() <= 0) {
+            return;
+        }
+        try {
+            BinancePlaceOrderRequest order = new BinancePlaceOrderRequest(symbol, exitSide, BinancePositionSide.BOTH,
+                    BinanceOrderType.TAKE_PROFIT_MARKET, toPlain(tp1Qty), null, null, shortClientOrderId("tp1"),
+                    true, toPlain(tpSl.tp1Price()), false, workingType);
+            log.info("[LIVE] EXIT TAKE_PROFIT_MARKET {} qty={} (partial TP1) stopPrice={} cid={}",
+                    symbol, tp1Qty, tpSl.tp1Price(), order.newClientOrderId());
+            gateway.placeOrder(order, OrderIntent.CLOSE_REDUCE);
+        } catch (RuntimeException e) {
+            log.error("[BINANCE] partial TP1 leg for {} failed (position left without this leg of protection): {}",
+                    symbol, e.getMessage());
         }
     }
 
@@ -364,6 +412,28 @@ public class BinanceExecutionAdapter implements ExecutionAdapter {
 
     private List<Map<String, Object>> openOrderRows(String binanceSymbol) {
         return BinanceOrderMapper.dataRows(binanceFuturesClient.getOpenOrders(binanceSymbol));
+    }
+
+    /**
+     * True if the symbol currently carries a non-flat position on this account. Fails safe: a
+     * failed read is treated as "a position might exist" (returns true) rather than risking the
+     * pre-entry conditional-order sweep against protection this call couldn't actually verify is
+     * absent.
+     */
+    private boolean hasOpenPosition(String binanceSymbol) {
+        try {
+            for (Map<String, Object> row : BinanceOrderMapper.dataRows(gateway.getPositions(binanceSymbol))) {
+                BigDecimal amt = BinanceOrderMapper.extractDecimal(row, "positionAmt");
+                if (amt != null && amt.signum() != 0) {
+                    return true;
+                }
+            }
+            return false;
+        } catch (RuntimeException e) {
+            log.warn("[BINANCE] pre-entry position check failed for {} — assuming a position exists and "
+                    + "skipping the conditional-order sweep to be safe: {}", binanceSymbol, e.getMessage());
+            return true;
+        }
     }
 
     private static boolean matchesType(Map<String, Object> order, boolean wantsStop) {

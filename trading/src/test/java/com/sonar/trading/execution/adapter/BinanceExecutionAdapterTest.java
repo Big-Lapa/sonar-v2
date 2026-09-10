@@ -109,6 +109,134 @@ class BinanceExecutionAdapterTest {
     }
 
     @Test
+    void placeOrderSkipsThePreEntrySweepWhenTheSymbolAlreadyHasAnOpenPosition() {
+        // A second entry on an already-open position (pyramiding, or a retried idea) must not
+        // sweep away that position's own live conditional stop before the new order even lands.
+        BinanceFuturesClient client = Mockito.mock(BinanceFuturesClient.class);
+        BinanceExecutionGateway gateway = gatewayMock();
+        when(gateway.getPositions("BTCUSDT")).thenReturn(Map.of("data", List.of(
+                Map.of("symbol", "BTCUSDT", "positionAmt", "0.5"))));
+        when(gateway.placeOrder(any(), any())).thenReturn(Map.of("orderId", "1", "status", "NEW"));
+        BinanceExecutionAdapter adapter = adapter(client, gateway);
+
+        AdapterOrderRequest request = new AdapterOrderRequest("BTCUSDT", AdapterOrderSide.BUY,
+                AdapterOrderType.MARKET, new BigDecimal("0.5"), null, "cid-5", OrderIntent.ENTRY, null, null, 10);
+
+        adapter.placeOrder(request);
+
+        verify(gateway, never()).cancelAllOpenOrders(anyString());
+        verify(gateway).setLeverage("BTCUSDT", 10); // leverage is independent of the sweep guard
+    }
+
+    @Test
+    void placeOrderSweepsWhenTheSymbolIsFlat() {
+        BinanceFuturesClient client = Mockito.mock(BinanceFuturesClient.class);
+        BinanceExecutionGateway gateway = gatewayMock();
+        when(gateway.getPositions("BTCUSDT")).thenReturn(Map.of("data", List.of(
+                Map.of("symbol", "BTCUSDT", "positionAmt", "0"))));
+        when(gateway.placeOrder(any(), any())).thenReturn(Map.of("orderId", "1", "status", "NEW"));
+        BinanceExecutionAdapter adapter = adapter(client, gateway);
+
+        AdapterOrderRequest request = new AdapterOrderRequest("BTCUSDT", AdapterOrderSide.BUY,
+                AdapterOrderType.MARKET, new BigDecimal("0.5"), null, "cid-6", OrderIntent.ENTRY, null, null, 10);
+
+        adapter.placeOrder(request);
+
+        verify(gateway).cancelAllOpenOrders("BTCUSDT");
+    }
+
+    @Test
+    void placeOrderTreatsAFailedPositionCheckAsPositionExistsAndSkipsTheSweep() {
+        // Fail-safe: an unreadable position state must not be treated as "definitely flat" —
+        // that would risk sweeping a real position's protection based on a read that never
+        // actually confirmed it was safe to.
+        BinanceFuturesClient client = Mockito.mock(BinanceFuturesClient.class);
+        BinanceExecutionGateway gateway = gatewayMock();
+        when(gateway.getPositions("BTCUSDT")).thenThrow(new RuntimeException("rate limited"));
+        when(gateway.placeOrder(any(), any())).thenReturn(Map.of("orderId", "1", "status", "NEW"));
+        BinanceExecutionAdapter adapter = adapter(client, gateway);
+
+        AdapterOrderRequest request = new AdapterOrderRequest("BTCUSDT", AdapterOrderSide.BUY,
+                AdapterOrderType.MARKET, new BigDecimal("0.5"), null, "cid-7", OrderIntent.ENTRY, null, null, 10);
+
+        adapter.placeOrder(request);
+
+        verify(gateway, never()).cancelAllOpenOrders(anyString());
+    }
+
+    // ---- partial TP1: an explicit reduce-only leg, not a silently dropped feature ----
+
+    @Test
+    void placeOrderPlacesAnExplicitPartialTp1LegWhenTheAttachmentHasOne() {
+        BinanceFuturesClient client = Mockito.mock(BinanceFuturesClient.class);
+        BinanceExecutionGateway gateway = gatewayMock();
+        when(gateway.getPositions("BTCUSDT")).thenReturn(Map.of("data", List.of()));
+        when(gateway.placeOrder(any(), any()))
+                .thenReturn(Map.of("orderId", "1", "status", "FILLED", "executedQty", "0.5", "avgPrice", "60000"));
+        BinanceExecutionAdapter adapter = adapter(client, gateway);
+
+        TpSlAttachment tpSl = new TpSlAttachment(new BigDecimal("65000"), new BigDecimal("58000"),
+                new BigDecimal("62000"), new BigDecimal("0.2"));
+        AdapterOrderRequest request = new AdapterOrderRequest("BTCUSDT", AdapterOrderSide.BUY,
+                AdapterOrderType.MARKET, new BigDecimal("0.5"), null, "cid-8", OrderIntent.ENTRY, null, tpSl);
+
+        adapter.placeOrder(request);
+
+        ArgumentCaptor<BinancePlaceOrderRequest> captor = ArgumentCaptor.forClass(BinancePlaceOrderRequest.class);
+        // entry + SL + TP + TP1 = 4 placeOrder calls
+        verify(gateway, Mockito.times(4)).placeOrder(captor.capture(), any());
+        BinancePlaceOrderRequest tp1 = captor.getAllValues().get(3);
+        assertThat(tp1.type().name()).isEqualTo("TAKE_PROFIT_MARKET");
+        assertThat(tp1.closePosition()).isFalse(); // explicit quantity, not a full-position close
+        assertThat(tp1.reduceOnly()).isTrue();
+        assertThat(tp1.quantity()).isEqualTo("0.2");
+        assertThat(tp1.stopPrice()).isEqualTo("62000");
+    }
+
+    @Test
+    void placeOrderScalesThePartialTp1QuantityToAPartialFill() {
+        BinanceFuturesClient client = Mockito.mock(BinanceFuturesClient.class);
+        BinanceExecutionGateway gateway = gatewayMock();
+        when(gateway.getPositions("BTCUSDT")).thenReturn(Map.of("data", List.of()));
+        // Only half the requested quantity actually filled.
+        when(gateway.placeOrder(any(), any()))
+                .thenReturn(Map.of("orderId", "1", "status", "PARTIALLY_FILLED", "executedQty", "0.25", "avgPrice", "60000"));
+        BinanceExecutionAdapter adapter = adapter(client, gateway);
+
+        TpSlAttachment tpSl = new TpSlAttachment(new BigDecimal("65000"), new BigDecimal("58000"),
+                new BigDecimal("62000"), new BigDecimal("0.2"));
+        AdapterOrderRequest request = new AdapterOrderRequest("BTCUSDT", AdapterOrderSide.BUY,
+                AdapterOrderType.MARKET, new BigDecimal("0.5"), null, "cid-9", OrderIntent.ENTRY, null, tpSl);
+
+        adapter.placeOrder(request);
+
+        ArgumentCaptor<BinancePlaceOrderRequest> captor = ArgumentCaptor.forClass(BinancePlaceOrderRequest.class);
+        verify(gateway, Mockito.times(4)).placeOrder(captor.capture(), any());
+        BinancePlaceOrderRequest tp1 = captor.getAllValues().get(3);
+        // requested tp1Quantity (0.2) scaled by filled/requested (0.25/0.5 = 0.5) = 0.1
+        assertThat(new BigDecimal(tp1.quantity())).isEqualByComparingTo("0.1");
+    }
+
+    @Test
+    void placeOrderSkipsThePartialTp1LegWhenTheEntryHasNoFillYet() {
+        BinanceFuturesClient client = Mockito.mock(BinanceFuturesClient.class);
+        BinanceExecutionGateway gateway = gatewayMock();
+        when(gateway.getPositions("BTCUSDT")).thenReturn(Map.of("data", List.of()));
+        when(gateway.placeOrder(any(), any())).thenReturn(Map.of("orderId", "1", "status", "NEW"));
+        BinanceExecutionAdapter adapter = adapter(client, gateway);
+
+        TpSlAttachment tpSl = new TpSlAttachment(new BigDecimal("65000"), new BigDecimal("58000"),
+                new BigDecimal("62000"), new BigDecimal("0.2"));
+        AdapterOrderRequest request = new AdapterOrderRequest("BTCUSDT", AdapterOrderSide.BUY,
+                AdapterOrderType.MARKET, new BigDecimal("0.5"), null, "cid-10", OrderIntent.ENTRY, null, tpSl);
+
+        adapter.placeOrder(request);
+
+        // entry + SL + TP only — no TP1, since NEW/unfilled means the fill quantity is unknown.
+        verify(gateway, Mockito.times(3)).placeOrder(any(), any());
+    }
+
+    @Test
     void placeOrderSkipsConditionalExitsWhenTheEntryWasRejected() {
         BinanceFuturesClient client = Mockito.mock(BinanceFuturesClient.class);
         BinanceExecutionGateway gateway = gatewayMock();
