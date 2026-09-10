@@ -16,7 +16,7 @@ public class StrategySettingsController {
 
     // keep in sync: admin.html LLM_MODELS, model-pricing.ts RATES (TS), candidate-search.service.ts ADAPTIVE_THINKING_MODELS (TS)
     private static final Set<String> ALLOWED_MODELS = Set.of(
-            "claude-opus-5", "claude-sonnet-5", "claude-fable-5", "claude-haiku-4-5-20251001");
+            "claude-opus-5", "claude-sonnet-5", "claude-fable-5-1", "claude-haiku-4-5-20251001");
 
     private final StrategySettingsRepository repository;
 

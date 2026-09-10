@@ -10,7 +10,7 @@ export interface UsageCost {
 const RATES: Record<string, { input: number; output: number }> = {
   'claude-opus-5': { input: 15, output: 75 },
   'claude-sonnet-5': { input: 3, output: 15 },
-  'claude-fable-5': { input: 1, output: 5 },
+  'claude-fable-5-1': { input: 1, output: 5 },
   'claude-haiku-4-5-20251001': { input: 1, output: 5 },
 };
 
