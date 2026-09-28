@@ -53,6 +53,11 @@ public class ProposalController {
             return ResponseEntity.badRequest().body(Map.of("error", "accountId обязателен — укажи, на каком аккаунте открывать"));
         }
 
+        String symbol = Symbols.normalize(req.symbol());
+        if (symbol == null) {
+            return ResponseEntity.badRequest().body(Map.of("error", "symbol: некорректный тикер"));
+        }
+
         BigDecimal entry = parseOrNull(req.entryPrice());
         BigDecimal sl = parseOrNull(req.slPrice());
         BigDecimal manualNotional = req.notional() != null && !req.notional().isBlank()
@@ -77,13 +82,13 @@ public class ProposalController {
 
         String proposalId = UUID.randomUUID().toString();
         String limitPrice = "LIMIT".equals(orderType) ? req.entryPrice() : null;
-        ProposalEntity entity = ProposalEntity.pending(proposalId, req.symbol(), "LONG",
+        ProposalEntity entity = ProposalEntity.pending(proposalId, symbol, "LONG",
                 req.entryPrice(), req.slPrice(), req.tpPrice(), req.rationale(),
                 System.currentTimeMillis(), req.accountId(), req.notional(), req.leverage(),
                 orderType, limitPrice);
         proposals.save(entity);
 
-        List<AccountLegPreview> legs = previewService.preview(req.symbol(), entry, sl, req.accountId(), manualNotional);
+        List<AccountLegPreview> legs = previewService.preview(symbol, entry, sl, req.accountId(), manualNotional);
         return ResponseEntity.ok(new ProposalResponse(proposalId, legs));
     }
 

@@ -4,9 +4,12 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Sonar-2 · Futures</title>
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/daisyui@5.5.19/daisyui.css">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/daisyui@5.5.19/themes.css">
-<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.2.4/dist/index.global.js"></script>
+<!-- SRI pins the exact bytes of these CDN files (hashes computed from the npm tarballs that jsDelivr
+     serves verbatim): a tampered CDN copy is refused by the browser instead of running in the page
+     that holds the admin token. Bumping a version means recomputing its hash. -->
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/daisyui@5.5.19/daisyui.css" integrity="sha384-/NNZlK8J6WoD6FfmmLzhqE1x/aTnlIJzc75uc+dFz8aI+/sD2ArUirQhs3hbeqBe" crossorigin="anonymous">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/daisyui@5.5.19/themes.css" integrity="sha384-ai6dM6tUdx0lUGOHd8x3eGevvDdj0p+CPoJp7Ve+h+kRkt08XtqX/g3a+1cPYKCm" crossorigin="anonymous">
+<script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4.2.4/dist/index.global.js" integrity="sha384-v5YF9xS+gLRWdvrQ0u/WRbCkjSIH0NjHIPe8tBL1ZRrmI7PiSH6LLdzs0aAIMCuh" crossorigin="anonymous"></script>
 <style>
   *, *::before, *::after { box-sizing: border-box; }
   :where(.grid, .flex) > * { min-width: 0; }
@@ -416,7 +419,6 @@
   <form method="dialog" class="modal-backdrop"><button>close</button></form>
 </dialog>
 
-<script src="https://s3.tradingview.com/tv.js"></script>
 <script>
   const API_BASE = '';
   let token = localStorage.getItem('sonar_admin_token') || '';
@@ -536,7 +538,7 @@
   function populateAccountFilter() {
     const sel = document.getElementById('filterAccount');
     sel.innerHTML = '<option value="">Все аккаунты</option>' +
-      accounts.map(a => `<option value="${a.id}">${a.id}</option>`).join('');
+      accounts.map(a => `<option value="${esc(a.id)}">${esc(a.id)}</option>`).join('');
   }
 
   // ---- Tabs: Trading / Management (management is the pre-manual-mode risk/strategy/blacklist
@@ -569,7 +571,7 @@
     const sel = document.getElementById('ordersAccount');
     const prev = sel.value;
     sel.innerHTML = '<option value="">Все аккаунты</option>'
-      + accounts.map(a => `<option value="${a.id}">${a.id} (${a.exchange})</option>`).join('');
+      + accounts.map(a => `<option value="${esc(a.id)}">${esc(a.id)} (${esc(a.exchange)})</option>`).join('');
     sel.value = prev || '';
   }
 
@@ -583,7 +585,7 @@
     const prev = sel.value;
     const symbols = [...new Set(allPositions.map(p => p.symbol))].sort();
     sel.innerHTML = '<option value="">Все символы</option>'
-      + symbols.map(sym => `<option value="${sym}">${sym}</option>`).join('');
+      + symbols.map(sym => `<option value="${esc(sym)}">${esc(sym)}</option>`).join('');
     sel.value = symbols.includes(prev) ? prev : '';
   }
   /** A conditional order (STOP_MARKET / TAKE_PROFIT_MARKET) carries price=0 — the level that
@@ -635,8 +637,8 @@
         <td class="mono">${esc(o.symbol ?? '—')}</td>
         <td class="mono text-xs">${esc(o.type ?? '—')}</td>
         <td><span class="badge badge-ghost badge-xs">${esc(o.side ?? '—')}</span></td>
-        <td class="text-right mono">${o.qty ?? '—'}</td>
-        <td class="text-right mono">${orderLevel(o)}</td>
+        <td class="text-right mono">${esc(o.qty ?? '—')}</td>
+        <td class="text-right mono">${esc(orderLevel(o))}</td>
         <td class="text-xs">${esc(o.status ?? '—')}</td>
         <td class="text-center"><button class="btn btn-xs btn-outline btn-error cancel-order"
               data-order-id="${esc(o.orderId)}" data-account="${esc(o.accountId)}" data-symbol="${esc(o.symbol)}">Отменить</button></td>
@@ -674,11 +676,11 @@
   function renderBalanceCardsSkeleton() {
     const wrap = document.getElementById('balanceCards');
     wrap.innerHTML = accounts.map(a => `
-      <div class="card bg-base-100 border border-base-content/10" data-balance-card="${a.id}">
+      <div class="card bg-base-100 border border-base-content/10" data-balance-card="${esc(a.id)}">
         <div class="card-body p-4 gap-1">
           <div class="flex items-center justify-between">
-            <span class="font-semibold">${a.id}</span>
-            <span class="badge badge-ghost badge-xs">${a.exchange}</span>
+            <span class="font-semibold">${esc(a.id)}</span>
+            <span class="badge badge-ghost badge-xs">${esc(a.exchange)}</span>
           </div>
           <div class="text-xs text-base-content/50">загрузка…</div>
         </div>
@@ -688,9 +690,9 @@
   function renderAccountBarSkeleton() {
     const bar = document.getElementById('acctBar');
     bar.innerHTML = accounts.map(a =>
-      `<span class="flex items-center gap-1.5" data-acct-status="${a.id}">
+      `<span class="flex items-center gap-1.5" data-acct-status="${esc(a.id)}">
          <span class="inline-block w-2 h-2 rounded-full bg-base-content/20"></span>
-         ${a.id} <span class="mono text-base-content/60">…</span>
+         ${esc(a.id)} <span class="mono text-base-content/60">…</span>
        </span>`).join('');
   }
 
@@ -708,7 +710,7 @@
               <div class="stat py-0 pl-1 pr-4">
                 <div class="stat-title text-xs">Equity</div>
                 <div class="stat-value text-lg mono">${fmt(b.equity ?? b.balance)}</div>
-                <div class="stat-desc text-xs">${b.asset ?? ''}</div>
+                <div class="stat-desc text-xs">${esc(b.asset ?? '')}</div>
               </div>
               <div class="stat py-0 pl-4 pr-1">
                 <div class="stat-title text-xs">uPnL</div>
@@ -716,11 +718,11 @@
               </div>
             </div>`;
           })();
-      return `<div class="card bg-base-100 border border-base-content/10" data-balance-card="${a.id}">
+      return `<div class="card bg-base-100 border border-base-content/10" data-balance-card="${esc(a.id)}">
         <div class="card-body p-4 gap-1">
           <div class="flex items-center justify-between">
-            <span class="font-semibold">${a.id}</span>
-            <span class="badge badge-ghost badge-xs">${a.exchange}</span>
+            <span class="font-semibold">${esc(a.id)}</span>
+            <span class="badge badge-ghost badge-xs">${esc(a.exchange)}</span>
           </div>
           ${body}
         </div>
@@ -733,11 +735,11 @@
     bar.innerHTML = accounts.map(a => {
       const b = lastBalances[a.id];
       const inner = !b
-        ? `<span class="inline-block w-2 h-2 rounded-full bg-base-content/20"></span>${a.id} <span class="mono text-base-content/60">…</span>`
+        ? `<span class="inline-block w-2 h-2 rounded-full bg-base-content/20"></span>${esc(a.id)} <span class="mono text-base-content/60">…</span>`
         : b.error
-        ? `<span class="inline-block w-2 h-2 rounded-full bg-error"></span>${a.id} <span class="text-error text-xs">${esc(b.error)}</span>`
-        : `<span class="inline-block w-2 h-2 rounded-full bg-success"></span>${a.id} <span class="mono text-base-content/60">${fmt(b.equity ?? b.balance)} ${b.asset ?? ''}</span>`;
-      return `<span class="flex items-center gap-1.5" data-acct-status="${a.id}">${inner}</span>`;
+        ? `<span class="inline-block w-2 h-2 rounded-full bg-error"></span>${esc(a.id)} <span class="text-error text-xs">${esc(b.error)}</span>`
+        : `<span class="inline-block w-2 h-2 rounded-full bg-success"></span>${esc(a.id)} <span class="mono text-base-content/60">${fmt(b.equity ?? b.balance)} ${esc(b.asset ?? '')}</span>`;
+      return `<span class="flex items-center gap-1.5" data-acct-status="${esc(a.id)}">${inner}</span>`;
     }).join('');
   }
 
@@ -770,9 +772,9 @@
     const wrap = document.getElementById('accountChecks');
     wrap.innerHTML = accounts.map(a => `
       <label class="label cursor-pointer justify-start gap-2 px-2 py-1.5 rounded-btn hover:bg-base-200">
-        <input type="checkbox" class="checkbox checkbox-sm account-cb" value="${a.id}" data-exchange="${a.exchange}" checked ${a.tradable ? '' : 'disabled'} />
-        <span class="flex-1">${a.id} <span class="badge badge-ghost badge-xs">${a.exchange}</span>${a.tradable ? '' : ' <span class=\"badge badge-warning badge-xs\">not tradable</span>'}</span>
-        <span class="mono text-xs text-base-content/60 acct-size-hint" data-account="${a.id}"></span>
+        <input type="checkbox" class="checkbox checkbox-sm account-cb" value="${esc(a.id)}" data-exchange="${esc(a.exchange)}" checked ${a.tradable ? '' : 'disabled'} />
+        <span class="flex-1">${esc(a.id)} <span class="badge badge-ghost badge-xs">${esc(a.exchange)}</span>${a.tradable ? '' : ' <span class=\"badge badge-warning badge-xs\">not tradable</span>'}</span>
+        <span class="mono text-xs text-base-content/60 acct-size-hint" data-account="${esc(a.id)}"></span>
       </label>`).join('');
     updateAccountSizeHints();
   }
@@ -796,18 +798,24 @@
   }
 
   // ---- Chart ----
+  // Embedded as a cross-origin <iframe> on TradingView's own domain instead of loading tv.js into
+  // this page: tv.js is unversioned third-party code, and anything running in this origin can read
+  // the admin token from localStorage and place orders. The iframe gets the same chart (tv.js
+  // itself just builds this widgetembed iframe) without any foreign script in our origin.
   function renderChart(symbol, tf) {
-    document.getElementById('tv_chart').innerHTML = '';
-    try {
-      new TradingView.widget({
-        autosize: true, symbol: 'BYBIT:' + symbol + '.P', interval: tf, timezone: 'Etc/UTC',
-        theme: 'dark', style: '1', locale: 'ru', toolbar_bg: '#1d232a',
-        enable_publishing: false, save_image: false, container_id: 'tv_chart',
-      });
-    } catch (e) {
-      document.getElementById('tv_chart').innerHTML =
-        '<div class="flex items-center justify-center h-full text-base-content/50 text-sm">TradingView недоступен</div>';
-    }
+    const params = new URLSearchParams({
+      symbol: 'BYBIT:' + symbol + '.P', interval: tf, timezone: 'Etc/UTC',
+      theme: 'dark', style: '1', locale: 'ru', toolbarbg: '1d232a',
+      saveimage: '0', hideideas: '1', symboledit: '1',
+    });
+    const frame = document.createElement('iframe');
+    frame.src = 'https://s.tradingview.com/widgetembed/?' + params.toString();
+    frame.title = 'TradingView';
+    frame.setAttribute('frameborder', '0');
+    frame.setAttribute('allowfullscreen', '');
+    frame.style.width = '100%';
+    frame.style.height = '100%';
+    document.getElementById('tv_chart').replaceChildren(frame);
   }
   renderChart(currentSymbol, currentTf);
 
@@ -1010,7 +1018,7 @@
       row.className = 'preview-row';
       const manualNotional = resolveNotionalFor(accountId);
       if (sizeMode === 'PCT' && manualNotional == null) {
-        row.innerHTML = `<td class="mono">${accountId}</td><td><span class="badge badge-error badge-sm">error</span></td>
+        row.innerHTML = `<td class="mono">${esc(accountId)}</td><td><span class="badge badge-error badge-sm">error</span></td>
              <td colspan="3" class="text-xs text-error">нет баланса для расчёта % — обнови балансы (↻ у «Балансы»)</td><td></td>`;
         if (previewTbody.querySelector('td[colspan]')) previewTbody.innerHTML = '';
         previewTbody.appendChild(row);
@@ -1030,14 +1038,14 @@
         previewState.push({ proposalId: resp.proposalId, accountId, approved: leg.approved });
         row.dataset.proposalId = resp.proposalId;
         row.innerHTML = leg.approved
-          ? `<td class="mono">${accountId}</td><td><span class="badge badge-success badge-sm">approved</span></td>
-             <td class="mono">${leg.qty ?? '—'}</td><td class="mono">${leg.riskUsd ?? '—'}</td><td class="text-base-content/40">—</td>
+          ? `<td class="mono">${esc(accountId)}</td><td><span class="badge badge-success badge-sm">approved</span></td>
+             <td class="mono">${esc(leg.qty ?? '—')}</td><td class="mono">${esc(leg.riskUsd ?? '—')}</td><td class="text-base-content/40">—</td>
              <td><button class="btn btn-xs btn-success confirm-one">Подтвердить</button></td>`
-          : `<td class="mono">${accountId}</td><td><span class="badge badge-error badge-sm">rejected</span></td>
+          : `<td class="mono">${esc(accountId)}</td><td><span class="badge badge-error badge-sm">rejected</span></td>
              <td class="text-base-content/40">—</td><td class="text-base-content/40">—</td>
              <td class="text-xs">${esc(leg.rejectReason ?? '—')}</td><td></td>`;
       } catch (e) {
-        row.innerHTML = `<td class="mono">${accountId}</td><td><span class="badge badge-error badge-sm">error</span></td>
+        row.innerHTML = `<td class="mono">${esc(accountId)}</td><td><span class="badge badge-error badge-sm">error</span></td>
              <td colspan="3" class="text-xs text-error">${esc(e.message)}</td><td></td>`;
       }
       if (previewTbody.querySelector('td[colspan]')) previewTbody.innerHTML = '';
@@ -1150,7 +1158,7 @@
     const sel = document.getElementById('filterSymbol');
     const prev = sel.value;
     const symbols = [...new Set(allPositions.map(p => p.symbol))].sort();
-    sel.innerHTML = '<option value="">Все символы</option>' + symbols.map(s => `<option value="${s}">${s}</option>`).join('');
+    sel.innerHTML = '<option value="">Все символы</option>' + symbols.map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join('');
     if (symbols.includes(prev)) sel.value = prev;
     else posFilterSymbol = '';
   }
@@ -1169,19 +1177,19 @@
     }
     const tbody = document.getElementById('posTbody');
     tbody.innerHTML = rows.map(p => `
-      <tr data-position-id="${p.positionId}">
-        <td><input type="checkbox" class="checkbox checkbox-xs pos-select" value="${p.positionId}" /></td>
-        <td class="mono text-xs">${p.accountId}</td>
-        <td class="mono">${p.symbol} <span class="badge badge-ghost badge-xs">${p.exchange}</span>${p.openedVia === 'EXCHANGE' ? ' <span class="badge badge-warning badge-outline badge-xs" title="открыта на бирже напрямую, SL/TP неизвестны">биржа</span>' : ''}</td>
-        <td><span class="badge badge-success badge-xs">${p.side}</span></td>
-        <td class="text-right mono">${p.qty}</td>
+      <tr data-position-id="${esc(p.positionId)}">
+        <td><input type="checkbox" class="checkbox checkbox-xs pos-select" value="${esc(p.positionId)}" /></td>
+        <td class="mono text-xs">${esc(p.accountId)}</td>
+        <td class="mono">${esc(p.symbol)} <span class="badge badge-ghost badge-xs">${esc(p.exchange)}</span>${p.openedVia === 'EXCHANGE' ? ' <span class="badge badge-warning badge-outline badge-xs" title="открыта на бирже напрямую, SL/TP неизвестны">биржа</span>' : ''}</td>
+        <td><span class="badge badge-success badge-xs">${esc(p.side)}</span></td>
+        <td class="text-right mono">${esc(p.qty)}</td>
         <td class="text-right mono">${p.notional != null ? '$' + fmt(p.notional) : '—'}</td>
         <td class="text-right mono text-base-content/60">${p.margin != null ? '$' + fmt(p.margin) : '—'}</td>
         <td class="text-right mono">${fmt(p.entry)}</td>
         <td class="text-right mono">${p.mark != null ? fmt(p.mark) : '—'}</td>
         <td class="text-right mono text-xs"><span class="text-error">${p.sl != null ? fmt(p.sl) : '—'}</span> / <span class="text-success">${p.tp != null ? fmt(p.tp) : '—'}</span></td>
         <td class="text-right mono ${p.upnl != null ? (p.upnl >= 0 ? 'pnl-pos' : 'pnl-neg') : ''}">${p.upnl != null ? (p.upnl >= 0 ? '+' : '') + fmt(p.upnl) : '—'}</td>
-        <td class="text-center"><button class="btn btn-xs btn-outline btn-error open-close" data-position-id="${p.positionId}">Закрыть</button></td>
+        <td class="text-center"><button class="btn btn-xs btn-outline btn-error open-close" data-position-id="${esc(p.positionId)}">Закрыть</button></td>
       </tr>`).join('') || '<tr><td colspan="12" class="text-center text-base-content/40 py-6">нет открытых позиций</td></tr>';
 
     tbody.querySelectorAll('.open-close').forEach(b => b.addEventListener('click', () => openCloseModal(+b.dataset.positionId)));
@@ -1304,8 +1312,8 @@
   });
   function renderBulkPreview(pct) {
     document.getElementById('bulkPreviewTbody').innerHTML = bulkTargets.map(p => `
-      <tr><td class="mono">${p.symbol}</td><td class="mono text-xs">${p.accountId}</td>
-      <td class="text-right mono">${pctQty(p.qty, pct)}</td></tr>`).join('');
+      <tr><td class="mono">${esc(p.symbol)}</td><td class="mono text-xs">${esc(p.accountId)}</td>
+      <td class="text-right mono">${esc(pctQty(p.qty, pct))}</td></tr>`).join('');
   }
   document.getElementById('bulkConfirmBtn').addEventListener('click', async () => {
     const pct = +document.getElementById('bulkPctSlider').value;
