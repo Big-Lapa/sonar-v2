@@ -13,6 +13,8 @@ interface PendingPin {
 /** Wrong PINs in a row before PIN-gated commands lock for this sender. */
 const MAX_PIN_FAILURES = 3;
 const PIN_LOCKOUT_MS = 15 * 60_000;
+/** A wrong PIN older than this no longer counts toward the lockout. */
+const PIN_FAILURE_WINDOW_MS = 15 * 60_000;
 
 /**
  * Manual ops only — the LLM candidate-search pipeline (/search, the cron/close-triggered
@@ -29,7 +31,7 @@ export class TelegramBotService implements OnModuleInit {
    *  the command. Not worth persisting for a 60s confirmation window. */
   private readonly pendingPins = new Map<string, PendingPin>();
   /** Consecutive wrong PINs per sender (same key as pendingPins); in-memory like pendingPins. */
-  private readonly pinFailures = new Map<string, { count: number; lockedUntil: number }>();
+  private readonly pinFailures = new Map<string, { count: number; lockedUntil: number; lastFailureAt: number }>();
   /** Seeded to "now" on first tick so a restart never replays old notifications. */
   private notifAfterId: number | null = null;
 
@@ -77,7 +79,14 @@ export class TelegramBotService implements OnModuleInit {
     // Keyed by chat AND sender, so in a group only the person who asked can answer the PIN prompt.
     const pinKey = `${chatId}:${msg.from?.id ?? ''}`;
     const pending = this.pendingPins.get(pinKey);
-    if (pending) {
+    if (pending && text.startsWith('/')) {
+      // A command instead of a PIN: the operator moved on. Cancel the confirmation without
+      // counting it as a wrong PIN (that would burn lockout attempts), then run the command.
+      this.pendingPins.delete(pinKey);
+      if (Date.now() <= pending.expiresAt) {
+        await this.telegram.sendMessage(chatId, `${pending.description}: подтверждение отменено`);
+      }
+    } else if (pending) {
       this.pendingPins.delete(pinKey);
       if (Date.now() > pending.expiresAt) {
         await this.telegram.sendMessage(chatId, 'PIN истёк, действие отменено');
@@ -85,8 +94,13 @@ export class TelegramBotService implements OnModuleInit {
       }
       if (pinMatches(text)) {
         this.pinFailures.delete(pinKey);
-        const result = await pending.action();
-        await this.telegram.sendMessage(chatId, result);
+        // Outside the command try/catch below — without this a failing action (4xx from trading,
+        // position already gone) would only reach the log and the operator would get silence.
+        try {
+          await this.telegram.sendMessage(chatId, await pending.action());
+        } catch (e: any) {
+          await this.telegram.sendMessage(chatId, `ошибка: ${e.message}`);
+        }
       } else {
         const left = this.registerPinFailure(pinKey);
         await this.telegram.sendMessage(chatId, left > 0
@@ -128,7 +142,11 @@ export class TelegramBotService implements OnModuleInit {
           // Same failure mode as the confirm-proposal bug (2026-08-21): an unhandled command
           // must never just go quiet — the operator has no other way to tell "not implemented"
           // apart from "nothing happened, is the bot even alive".
-          await this.telegram.sendMessage(chatId, `неизвестная команда ${cmd}. /help — список команд`);
+          // Echo only what looks like a command: plain text here is often a PIN sent after its
+          // prompt was cancelled or expired, and repeating it would put the PIN in the chat again.
+          await this.telegram.sendMessage(chatId, cmd.startsWith('/')
+            ? `неизвестная команда ${cmd}. /help — список команд`
+            : 'неизвестная команда. /help — список команд');
       }
     } catch (e: any) {
       await this.telegram.sendMessage(chatId, `ошибка: ${e.message}`);
@@ -211,13 +229,17 @@ export class TelegramBotService implements OnModuleInit {
       await this.telegram.sendMessage(chatId, 'использование: /move <symbol> <sl|tp> <price>');
       return;
     }
-    const positions = await this.tradingApi.getOpenPositions(undefined, symbol.toUpperCase());
-    if (positions.length === 0) {
+    const sym = symbol.toUpperCase();
+    // Early check so a typo fails before the PIN prompt, not after it.
+    if ((await this.tradingApi.getOpenPositions(undefined, sym)).length === 0) {
       await this.telegram.sendMessage(chatId, `нет открытой позиции по ${symbol}`);
       return;
     }
     // PIN-gated: moving SL is enough to strip a position's protection, same stakes as close-all.
-    await this.requirePin(chatId, pinKey, `${type.toUpperCase()} ${symbol.toUpperCase()} → ${price}`, async () => {
+    await this.requirePin(chatId, pinKey, `${type.toUpperCase()} ${sym} → ${price}`, async () => {
+      // Re-read after the PIN: up to 60s may have passed, positions may have closed or opened.
+      const positions = await this.tradingApi.getOpenPositions(undefined, sym);
+      if (positions.length === 0) return `нет открытой позиции по ${sym}`;
       const results = await Promise.all(positions.map((p) => this.tradingApi.moveStop(p.id, type, price)));
       return results.map((r) => r.message).join('\n');
     });
@@ -267,12 +289,15 @@ export class TelegramBotService implements OnModuleInit {
   /** Records a wrong PIN; returns attempts left before lockout (0 = locked now). */
   private registerPinFailure(pinKey: string): number {
     const now = Date.now();
-    const f = this.pinFailures.get(pinKey) ?? { count: 0, lockedUntil: 0 };
-    if (f.lockedUntil !== 0 && f.lockedUntil <= now) {
+    const f = this.pinFailures.get(pinKey) ?? { count: 0, lockedUntil: 0, lastFailureAt: 0 };
+    // Fresh count after an expired lockout, or when the previous miss is old enough — two typos
+    // a week ago shouldn't make today's first one a lockout.
+    if ((f.lockedUntil !== 0 && f.lockedUntil <= now) || now - f.lastFailureAt > PIN_FAILURE_WINDOW_MS) {
       f.count = 0;
       f.lockedUntil = 0;
     }
     f.count++;
+    f.lastFailureAt = now;
     if (f.count >= MAX_PIN_FAILURES) f.lockedUntil = now + PIN_LOCKOUT_MS;
     this.pinFailures.set(pinKey, f);
     return Math.max(0, MAX_PIN_FAILURES - f.count);
