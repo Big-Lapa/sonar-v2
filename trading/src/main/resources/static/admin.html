@@ -277,7 +277,7 @@ async function loadPositions(accounts) {
   $$('.accordion-head').forEach(head => {
     head.onclick = () => {
       const id = head.dataset.account;
-      const body = $(`#body-${id}`);
+      const body = document.getElementById('body-' + id);
       const opening = !body.classList.contains('open');
       head.classList.toggle('open', opening);
       body.classList.toggle('open', opening);
@@ -287,7 +287,7 @@ async function loadPositions(accounts) {
 }
 
 async function refreshAccount(id) {
-  const body = $(`#body-${id}`);
+  const body = document.getElementById('body-' + id);
   body.innerHTML = 'загрузка…';
   try {
     const [balance, positions] = await Promise.all([
@@ -302,7 +302,7 @@ async function refreshAccount(id) {
 }
 
 function renderAccountBody(id, balance, positions) {
-  const body = $(`#body-${id}`);
+  const body = document.getElementById('body-' + id);
   const balLine = balance.error
     ? `<span class="red">${esc(balance.error)}</span>`
     : `equity ${esc(balance.equity ?? balance.balance)} ${esc(balance.asset || '')} (unrealPnL ${esc(balance.unrealizedPnl ?? '—')})`;
@@ -321,12 +321,12 @@ function renderAccountBody(id, balance, positions) {
     <table><thead><tr><th>Symbol</th><th>Side</th><th class="num">Qty</th><th class="num">Entry</th>
       <th class="num">SL</th><th class="num">TP</th><th></th></tr></thead>
       <tbody>${rows || '<tr><td colspan="7" class="muted">нет открытых позиций</td></tr>'}</tbody></table>`;
-  $(`#refresh-${id}`).onclick = () => refreshAccount(id);
+  document.getElementById('refresh-' + id).onclick = () => refreshAccount(id);
   tickAge(id);
 }
 
 function tickAge(id) {
-  const el = $(`#age-${id}`);
+  const el = document.getElementById('age-' + id);
   if (!el) return;
   const sec = Math.round((Date.now() - lastFetch[id]) / 1000);
   el.textContent = `обновлено ${sec} сек назад`;

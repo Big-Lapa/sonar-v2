@@ -11,7 +11,10 @@ import java.util.regex.Pattern;
  */
 public final class Symbols {
 
-    /** Core tickers ({@code BTCUSDT}, {@code 1000PEPEUSDT}) plus the {@code -}/{@code _} some venues use. */
+    /**
+     * Core tickers ({@code BTCUSDT}, {@code 1000PEPEUSDT}) plus the {@code -}/{@code _} some venues use.
+     * Mirrored in strategy's {@code TICKER_RE} (telegram/access-guard.ts) — change both together.
+     */
     private static final Pattern VALID = Pattern.compile("^[A-Z0-9][A-Z0-9_-]{1,39}$");
 
     private Symbols() {}

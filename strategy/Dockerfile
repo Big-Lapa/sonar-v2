@@ -7,6 +7,8 @@ RUN npm ci
 COPY tsconfig.json nest-cli.json ./
 COPY src ./src
 RUN npm run build
+# Drop jest, ts-jest, @nestjs/cli & co. before node_modules is copied into the runtime image.
+RUN npm prune --omit=dev
 
 FROM node:22-slim
 WORKDIR /app

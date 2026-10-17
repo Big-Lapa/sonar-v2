@@ -49,6 +49,15 @@ export class TelegramClientService {
     }
   }
 
+  /** Best-effort: in a group this needs the bot to be an admin; failure is logged, never thrown. */
+  async deleteMessage(chatId: number | string, messageId: number): Promise<void> {
+    try {
+      await this.http.post('/deleteMessage', { chat_id: chatId, message_id: messageId });
+    } catch (e: any) {
+      this.logger.warn(`deleteMessage failed: ${e?.response?.data?.description ?? e.message}`);
+    }
+  }
+
   async answerCallbackQuery(callbackQueryId: string, text?: string): Promise<void> {
     try {
       await this.http.post('/answerCallbackQuery', { callback_query_id: callbackQueryId, text });

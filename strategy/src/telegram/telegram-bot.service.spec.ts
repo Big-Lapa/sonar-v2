@@ -8,13 +8,15 @@ const MIN = 60_000;
 describe('TelegramBotService PIN flow', () => {
   const env = { ...process.env };
   let sent: string[];
+  let deleted: number[];
+  let nextMessageId: number;
   let positions: { id: number }[];
   let api: Record<string, jest.Mock>;
   let bot: TelegramBotService;
   let now: number;
 
   const say = (text: string) =>
-    (bot as any).handleMessage({ chat: { id: CHAT, type: 'private' }, from: { id: CHAT }, text });
+    (bot as any).handleMessage({ chat: { id: CHAT, type: 'private' }, from: { id: CHAT }, text, message_id: ++nextMessageId });
   const last = () => sent[sent.length - 1];
   const wrongPin = async () => {
     await say('/closeall acc1');
@@ -27,6 +29,8 @@ describe('TelegramBotService PIN flow', () => {
     now = 1_000_000_000;
     jest.spyOn(Date, 'now').mockImplementation(() => now);
     sent = [];
+    deleted = [];
+    nextMessageId = 0;
     positions = [{ id: 7 }];
     api = {
       getOpenPositions: jest.fn(async () => positions),
@@ -34,7 +38,10 @@ describe('TelegramBotService PIN flow', () => {
       clearAutoPause: jest.fn(async () => ({ wasPaused: true })),
       closeAll: jest.fn(async (a: string) => ({ message: `closed ${a}` })),
     };
-    const telegram = { sendMessage: jest.fn(async (_c: number, t: string) => void sent.push(t)) };
+    const telegram = {
+      sendMessage: jest.fn(async (_c: number, t: string) => void sent.push(t)),
+      deleteMessage: jest.fn(async (_c: number, id: number) => void deleted.push(id)),
+    };
     bot = new TelegramBotService(
       telegram as unknown as TelegramClientService,
       api as unknown as TradingApiService,
@@ -153,11 +160,33 @@ describe('TelegramBotService PIN flow', () => {
     process.env.TELEGRAM_ALLOWED_CHAT_IDS = '-100';
     process.env.TELEGRAM_ALLOWED_USER_IDS = '1,2';
     const sayAs = (from: number, text: string) =>
-      (bot as any).handleMessage({ chat: { id: -100, type: 'group' }, from: { id: from }, text });
+      (bot as any).handleMessage({ chat: { id: -100, type: 'group' }, from: { id: from }, text, message_id: ++nextMessageId });
     await sayAs(1, '/closeall acc1');
     await sayAs(2, '1234');
     expect(api.closeAll).not.toHaveBeenCalled();
     await sayAs(1, '1234');
     expect(api.closeAll).toHaveBeenCalledWith('acc1');
+  });
+
+  it('deletes the message carrying the PIN, right or wrong, but not commands', async () => {
+    await say('/closeall acc1'); // message 1
+    await say('1234'); // message 2 — the PIN
+    await say('/closeall acc1'); // message 3
+    await say('0000'); // message 4 — wrong PIN
+    expect(deleted).toEqual([2, 4]);
+  });
+
+  it('counts wrong PINs per user across chats, not per chat', async () => {
+    process.env.TELEGRAM_ALLOWED_CHAT_IDS = '-100,-200';
+    process.env.TELEGRAM_ALLOWED_USER_IDS = '1';
+    const sayIn = (chat: number, text: string) =>
+      (bot as any).handleMessage({ chat: { id: chat, type: 'group' }, from: { id: 1 }, text, message_id: ++nextMessageId });
+    for (const chat of [-100, -200, -100]) {
+      await sayIn(chat, '/closeall acc1');
+      await sayIn(chat, '0000');
+    }
+    expect(last()).toContain('заблокированы на 15 мин');
+    await sayIn(-200, '/closeall acc1');
+    expect(last()).toContain('заблокированы ещё 15 мин');
   });
 });

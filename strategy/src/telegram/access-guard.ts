@@ -1,5 +1,9 @@
 import { createHash, timingSafeEqual } from 'crypto';
 
+/** Ticker alphabet — keep in sync with trading's Symbols.VALID (Symbols.java), which enforces the
+ *  same rule server-side; this copy only exists so the bot can answer with a readable error. */
+export const TICKER_RE = /^[A-Z0-9][A-Z0-9_-]{1,39}$/;
+
 function idList(envName: string): string[] {
   return (process.env[envName] ?? '').split(',').map((s) => s.trim()).filter(Boolean);
 }

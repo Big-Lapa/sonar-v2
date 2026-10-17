@@ -1,7 +1,7 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Interval } from '@nestjs/schedule';
 import { TelegramClientService } from './telegram-client.service';
-import { isAllowedSender, pinConfigured, pinMatches } from './access-guard';
+import { isAllowedSender, pinConfigured, pinMatches, TICKER_RE } from './access-guard';
 import { TradingApiService } from '../trading-client/trading-api.service';
 
 interface PendingPin {
@@ -15,6 +15,11 @@ const MAX_PIN_FAILURES = 3;
 const PIN_LOCKOUT_MS = 15 * 60_000;
 /** A wrong PIN older than this no longer counts toward the lockout. */
 const PIN_FAILURE_WINDOW_MS = 15 * 60_000;
+
+/** Lockout key for a pinKey (`chatId:userId`): the user id alone, falling back to the whole key. */
+function lockKey(pinKey: string): string {
+  return pinKey.slice(pinKey.indexOf(':') + 1) || pinKey;
+}
 
 /**
  * Manual ops only — the LLM candidate-search pipeline (/search, the cron/close-triggered
@@ -30,7 +35,9 @@ export class TelegramBotService implements OnModuleInit {
   /** In-memory only — a restart forgets a pending PIN confirmation; the operator just retries
    *  the command. Not worth persisting for a 60s confirmation window. */
   private readonly pendingPins = new Map<string, PendingPin>();
-  /** Consecutive wrong PINs per sender (same key as pendingPins); in-memory like pendingPins. */
+  /** Wrong PINs per SENDER (user id, see lockKey) — not per chat, so a user allowed in several
+   *  chats doesn't get MAX_PIN_FAILURES attempts in each. In-memory like pendingPins: a restart
+   *  resets it, which is why .env.example asks for a PIN longer than 4 digits. */
   private readonly pinFailures = new Map<string, { count: number; lockedUntil: number; lastFailureAt: number }>();
   /** Seeded to "now" on first tick so a restart never replays old notifications. */
   private notifAfterId: number | null = null;
@@ -88,12 +95,14 @@ export class TelegramBotService implements OnModuleInit {
       }
     } else if (pending) {
       this.pendingPins.delete(pinKey);
+      // Don't leave the PIN in the chat history (in a group every member would see it).
+      await this.telegram.deleteMessage(chatId, msg.message_id);
       if (Date.now() > pending.expiresAt) {
         await this.telegram.sendMessage(chatId, 'PIN истёк, действие отменено');
         return;
       }
       if (pinMatches(text)) {
-        this.pinFailures.delete(pinKey);
+        this.pinFailures.delete(lockKey(pinKey));
         // Outside the command try/catch below — without this a failing action (4xx from trading,
         // position already gone) would only reach the log and the operator would get silence.
         try {
@@ -102,7 +111,7 @@ export class TelegramBotService implements OnModuleInit {
           await this.telegram.sendMessage(chatId, `ошибка: ${e.message}`);
         }
       } else {
-        const left = this.registerPinFailure(pinKey);
+        const left = this.registerPinFailure(lockKey(pinKey));
         await this.telegram.sendMessage(chatId, left > 0
           ? `неверный PIN, отменено (осталось попыток: ${left})`
           : `неверный PIN, отменено — команды с PIN заблокированы на ${PIN_LOCKOUT_MS / 60_000} мин`);
@@ -251,7 +260,7 @@ export class TelegramBotService implements OnModuleInit {
       return;
     }
     // Same alphabet trading enforces (Symbols.java) — say so here instead of relaying a bare 400.
-    if (!/^[A-Z0-9][A-Z0-9_-]{1,39}$/.test(symbol.toUpperCase())) {
+    if (!TICKER_RE.test(symbol.toUpperCase())) {
       await this.telegram.sendMessage(chatId, `некорректный тикер: ${symbol}`);
       return;
     }
@@ -276,7 +285,7 @@ export class TelegramBotService implements OnModuleInit {
       await this.telegram.sendMessage(chatId, 'TELEGRAM_PIN не задан — команды с PIN отключены');
       return;
     }
-    const lock = this.pinFailures.get(pinKey);
+    const lock = this.pinFailures.get(lockKey(pinKey));
     if (lock && lock.lockedUntil > Date.now()) {
       const min = Math.ceil((lock.lockedUntil - Date.now()) / 60_000);
       await this.telegram.sendMessage(chatId, `слишком много неверных PIN — команды с PIN заблокированы ещё ${min} мин`);
@@ -287,9 +296,9 @@ export class TelegramBotService implements OnModuleInit {
   }
 
   /** Records a wrong PIN; returns attempts left before lockout (0 = locked now). */
-  private registerPinFailure(pinKey: string): number {
+  private registerPinFailure(key: string): number {
     const now = Date.now();
-    const f = this.pinFailures.get(pinKey) ?? { count: 0, lockedUntil: 0, lastFailureAt: 0 };
+    const f = this.pinFailures.get(key) ?? { count: 0, lockedUntil: 0, lastFailureAt: 0 };
     // Fresh count after an expired lockout, or when the previous miss is old enough — two typos
     // a week ago shouldn't make today's first one a lockout.
     if ((f.lockedUntil !== 0 && f.lockedUntil <= now) || now - f.lastFailureAt > PIN_FAILURE_WINDOW_MS) {
@@ -299,7 +308,7 @@ export class TelegramBotService implements OnModuleInit {
     f.count++;
     f.lastFailureAt = now;
     if (f.count >= MAX_PIN_FAILURES) f.lockedUntil = now + PIN_LOCKOUT_MS;
-    this.pinFailures.set(pinKey, f);
+    this.pinFailures.set(key, f);
     return Math.max(0, MAX_PIN_FAILURES - f.count);
   }
 

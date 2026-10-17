@@ -616,7 +616,7 @@
     const pairs = targetAccounts.flatMap(acc => targetSymbols.map(sym => ({ acc, sym })));
     const results = await Promise.all(pairs.map(async ({ acc, sym }) => {
       try {
-        const resp = await api(`/api/v1/accounts/${acc}/orders?symbol=${encodeURIComponent(sym)}`);
+        const resp = await api(`/api/v1/accounts/${encodeURIComponent(acc)}/orders?symbol=${encodeURIComponent(sym)}`);
         // An unwired account answers with the same error for every symbol — that's a property of
         // the account, not of this query, so it stays out of the table instead of filling it with
         // one identical error row per symbol.
@@ -757,7 +757,7 @@
 
   async function refreshAllBalances() {
     const results = await Promise.all(accounts.map(a =>
-      api(`/api/v1/accounts/${a.id}/balance?refresh=true`).catch(e => ({ error: e.message }))));
+      api(`/api/v1/accounts/${encodeURIComponent(a.id)}/balance?refresh=true`).catch(e => ({ error: e.message }))));
     accounts.forEach((a, i) => { lastBalances[a.id] = results[i]; });
     lastBalanceFetch = Date.now();
     paintBalanceCards();
@@ -811,6 +811,8 @@
     const frame = document.createElement('iframe');
     frame.src = 'https://s.tradingview.com/widgetembed/?' + params.toString();
     frame.title = 'TradingView';
+    // Don't hand TradingView the admin panel's address.
+    frame.referrerPolicy = 'no-referrer';
     frame.setAttribute('frameborder', '0');
     frame.setAttribute('allowfullscreen', '');
     frame.style.width = '100%';
@@ -1123,7 +1125,7 @@
     const liveByAccount = {};
     for (const acc of new Set(dbRows.map(p => p.accountId))) {
       try {
-        const r = await api(`/api/v1/accounts/${acc}/live-positions`);
+        const r = await api(`/api/v1/accounts/${encodeURIComponent(acc)}/live-positions`);
         liveByAccount[acc] = r.error ? [] : r.positions;
       } catch (e) { liveByAccount[acc] = []; }
     }
