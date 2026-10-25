@@ -189,4 +189,23 @@ describe('TelegramBotService PIN flow', () => {
     await sayIn(-200, '/closeall acc1');
     expect(last()).toContain('заблокированы ещё 15 мин');
   });
+
+  it('a PIN prompt opened before the lockout cannot be answered after it', async () => {
+    process.env.TELEGRAM_ALLOWED_CHAT_IDS = '-100,-200';
+    process.env.TELEGRAM_ALLOWED_USER_IDS = '1';
+    const sayIn = (chat: number, text: string) =>
+      (bot as any).handleMessage({ chat: { id: chat, type: 'group' }, from: { id: 1 }, text, message_id: ++nextMessageId });
+    await sayIn(-100, '/closeall acc1');
+    await sayIn(-100, '0000');
+    await sayIn(-100, '/closeall acc1');
+    await sayIn(-100, '0000');
+    await sayIn(-200, '/closeall acc2'); // prompt opened while still unlocked
+    await sayIn(-100, '/closeall acc1');
+    await sayIn(-100, '0000');
+    expect(last()).toContain('заблокированы на 15 мин');
+
+    await sayIn(-200, '1234');
+    expect(api.closeAll).not.toHaveBeenCalled();
+    expect(last()).toContain('заблокированы ещё 15 мин');
+  });
 });

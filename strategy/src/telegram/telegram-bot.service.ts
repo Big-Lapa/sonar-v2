@@ -101,6 +101,14 @@ export class TelegramBotService implements OnModuleInit {
         await this.telegram.sendMessage(chatId, 'PIN истёк, действие отменено');
         return;
       }
+      // Lockout is per user, but prompts are per chat: a user allowed in several chats could open a
+      // prompt in each before the lockout and keep answering them after it. Re-check here, before
+      // the PIN is even compared.
+      const lockedMin = this.lockedMinutes(lockKey(pinKey));
+      if (lockedMin > 0) {
+        await this.telegram.sendMessage(chatId, `слишком много неверных PIN — команды с PIN заблокированы ещё ${lockedMin} мин`);
+        return;
+      }
       if (pinMatches(text)) {
         this.pinFailures.delete(lockKey(pinKey));
         // Outside the command try/catch below — without this a failing action (4xx from trading,
@@ -285,14 +293,20 @@ export class TelegramBotService implements OnModuleInit {
       await this.telegram.sendMessage(chatId, 'TELEGRAM_PIN не задан — команды с PIN отключены');
       return;
     }
-    const lock = this.pinFailures.get(lockKey(pinKey));
-    if (lock && lock.lockedUntil > Date.now()) {
-      const min = Math.ceil((lock.lockedUntil - Date.now()) / 60_000);
-      await this.telegram.sendMessage(chatId, `слишком много неверных PIN — команды с PIN заблокированы ещё ${min} мин`);
+    const lockedMin = this.lockedMinutes(lockKey(pinKey));
+    if (lockedMin > 0) {
+      await this.telegram.sendMessage(chatId, `слишком много неверных PIN — команды с PIN заблокированы ещё ${lockedMin} мин`);
       return;
     }
     this.pendingPins.set(pinKey, { description, action, expiresAt: Date.now() + 60_000 });
     await this.telegram.sendMessage(chatId, `подтверди PIN для ${description}`);
+  }
+
+  /** Minutes left on this sender's PIN lockout, 0 when not locked. */
+  private lockedMinutes(key: string): number {
+    const lock = this.pinFailures.get(key);
+    if (!lock || lock.lockedUntil <= Date.now()) return 0;
+    return Math.ceil((lock.lockedUntil - Date.now()) / 60_000);
   }
 
   /** Records a wrong PIN; returns attempts left before lockout (0 = locked now). */
