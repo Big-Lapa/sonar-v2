@@ -166,19 +166,19 @@ export class TradingApiService {
   }
 
   async getProposal(id: string): Promise<Proposal> {
-    const resp = await this.client.get(`/api/v1/strategy/proposals/${id}`);
+    const resp = await this.client.get(`/api/v1/strategy/proposals/${encodeURIComponent(id)}`);
     return resp.data;
   }
 
   async confirmProposal(id: string) {
     const resp = await this.client.post<{ proposalId: string; status: string; accounts: ExecutionLegResult[]; abortReason: string | null }>(
-      `/api/v1/strategy/proposals/${id}/confirm`,
+      `/api/v1/strategy/proposals/${encodeURIComponent(id)}/confirm`,
     );
     return resp.data;
   }
 
   async rejectProposal(id: string): Promise<Proposal> {
-    const resp = await this.client.post(`/api/v1/strategy/proposals/${id}/reject`);
+    const resp = await this.client.post(`/api/v1/strategy/proposals/${encodeURIComponent(id)}/reject`);
     return resp.data;
   }
 
@@ -203,7 +203,9 @@ export class TradingApiService {
 
   async clearAutoPause(accountId: string) {
     const resp = await this.client.post<{ accountId: string; wasPaused: boolean; autoPaused: boolean }>(
-      `/api/v1/accounts/${accountId}/auto-pause/clear`,
+      // Encoded: accountId comes straight from a Telegram command, and a raw "../x?" would
+      // otherwise retarget the request to a different trading endpoint.
+      `/api/v1/accounts/${encodeURIComponent(accountId)}/auto-pause/clear`,
     );
     return resp.data;
   }
@@ -219,12 +221,12 @@ export class TradingApiService {
   }
 
   async getBalance(accountId: string): Promise<BalanceResponse> {
-    const resp = await this.client.get(`/api/v1/accounts/${accountId}/balance`, { params: { refresh: true } });
+    const resp = await this.client.get(`/api/v1/accounts/${encodeURIComponent(accountId)}/balance`, { params: { refresh: true } });
     return resp.data;
   }
 
   async getLivePositions(accountId: string): Promise<LivePositionsResponse> {
-    const resp = await this.client.get(`/api/v1/accounts/${accountId}/live-positions`);
+    const resp = await this.client.get(`/api/v1/accounts/${encodeURIComponent(accountId)}/live-positions`);
     return resp.data;
   }
 

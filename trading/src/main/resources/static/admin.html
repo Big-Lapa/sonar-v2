@@ -60,6 +60,13 @@
 const $ = (s, el) => (el || document).querySelector(s);
 const $$ = (s, el) => Array.from((el || document).querySelectorAll(s));
 
+// HTML-escape everything that comes from the server before it lands in an innerHTML template:
+// blacklist symbols/reasons can be written from Telegram (/ban), and exchange/exception messages
+// are foreign text. Unescaped, any of them would run script in the page that holds the admin token.
+function esc(s) {
+  return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
 function getToken() { return localStorage.getItem('sonar_admin_token') || ''; }
 function setToken(t) { localStorage.setItem('sonar_admin_token', t); }
 
@@ -120,7 +127,7 @@ let riskEntity = null;
 async function loadAccounts() {
   const accounts = await api('/api/v1/accounts');
   const sel = $('#risk-account');
-  sel.innerHTML = accounts.map(a => `<option value="${a.id}">${a.id} (${a.exchange})</option>`).join('');
+  sel.innerHTML = accounts.map(a => `<option value="${esc(a.id)}">${esc(a.id)} (${esc(a.exchange)})</option>`).join('');
   sel.onchange = loadRisk;
   await loadRisk();
   await loadPositions(accounts);
@@ -129,16 +136,16 @@ async function loadAccounts() {
 async function loadRisk() {
   const id = $('#risk-account').value;
   if (!id) return;
-  riskEntity = await api(`/api/v1/accounts/${id}/risk`);
+  riskEntity = await api(`/api/v1/accounts/${encodeURIComponent(id)}/risk`);
   const form = $('#risk-form');
   form.innerHTML = RISK_FIELDS.map(([key, label, kind]) => {
     if (kind === 'checkbox') {
       return `<div class="form-row"><label>${label}</label><input type="checkbox" id="f-${key}" ${riskEntity[key] ? 'checked' : ''}></div>`;
     }
     if (kind === 'pct') {
-      return `<div class="form-row"><label>${label}</label><span class="pct-wrap"><input class="num" id="f-${key}" value="${fractionToPctDisplay(riskEntity[key])}"></span></div>`;
+      return `<div class="form-row"><label>${label}</label><span class="pct-wrap"><input class="num" id="f-${key}" value="${esc(fractionToPctDisplay(riskEntity[key]))}"></span></div>`;
     }
-    return `<div class="form-row"><label>${label}</label><input class="num" id="f-${key}" value="${riskEntity[key]}"></div>`;
+    return `<div class="form-row"><label>${label}</label><input class="num" id="f-${key}" value="${esc(riskEntity[key])}"></div>`;
   }).join('');
   $('#risk-status').textContent = `version ${riskEntity.version}`;
 }
@@ -153,7 +160,7 @@ $('#risk-save').onclick = async () => {
       : kind === 'pct' ? pctToFraction(el.value) : el.value;
   }
   try {
-    riskEntity = await api(`/api/v1/accounts/${id}/risk`, { method: 'PUT', body: JSON.stringify(body) });
+    riskEntity = await api(`/api/v1/accounts/${encodeURIComponent(id)}/risk`, { method: 'PUT', body: JSON.stringify(body) });
     $('#risk-status').textContent = `сохранено, version ${riskEntity.version}`;
     toast('Риск-профиль сохранён — действует на следующую сделку без рестарта', true);
   } catch (e) {
@@ -201,16 +208,16 @@ async function loadStrategy() {
       // подменяться первым option — показываем его как выбранное, save упрётся в ALLOWED_MODELS.
       const known = LLM_MODELS.some(([value]) => value === current);
       const unknownOption = known ? ''
-        : `<option value="${current}" selected>${current} — неизвестная, выберите модель</option>`;
+        : `<option value="${esc(current)}" selected>${esc(current)} — неизвестная, выберите модель</option>`;
       const options = LLM_MODELS.map(([value, optLabel]) =>
         `<option value="${value}" ${current === value ? 'selected' : ''}>${optLabel}</option>`
       ).join('');
       return `<div class="form-row"><label>${label}</label><select id="s-${key}">${unknownOption}${options}</select></div>`;
     }
     if (kind === 'pct') {
-      return `<div class="form-row"><label>${label}</label><span class="pct-wrap"><input class="num" id="s-${key}" value="${fractionToPctDisplay(settingsEntity[key])}" style="width:200px"></span></div>`;
+      return `<div class="form-row"><label>${label}</label><span class="pct-wrap"><input class="num" id="s-${key}" value="${esc(fractionToPctDisplay(settingsEntity[key]))}" style="width:200px"></span></div>`;
     }
-    return `<div class="form-row"><label>${label}</label><input class="num" id="s-${key}" value="${settingsEntity[key]}" style="width:200px"></div>`;
+    return `<div class="form-row"><label>${label}</label><input class="num" id="s-${key}" value="${esc(settingsEntity[key])}" style="width:200px"></div>`;
   }).join('');
   $('#strategy-status').textContent = `version ${settingsEntity.version}`;
   await loadBlacklist();
@@ -237,11 +244,11 @@ $('#strategy-save').onclick = async () => {
 async function loadBlacklist() {
   const rows = await api('/api/v1/strategy/blacklist');
   $('#bl-table tbody').innerHTML = rows.map(r =>
-    `<tr><td>${r.symbol}</td><td class="muted">${r.reason || ''}</td>` +
-    `<td><button data-symbol="${r.symbol}" class="bl-remove">✕</button></td></tr>`
+    `<tr><td>${esc(r.symbol)}</td><td class="muted">${esc(r.reason || '')}</td>` +
+    `<td><button data-symbol="${esc(r.symbol)}" class="bl-remove">✕</button></td></tr>`
   ).join('');
   $$('.bl-remove').forEach(btn => btn.onclick = async () => {
-    await api(`/api/v1/strategy/blacklist/${btn.dataset.symbol}`, { method: 'DELETE' });
+    await api(`/api/v1/strategy/blacklist/${encodeURIComponent(btn.dataset.symbol)}`, { method: 'DELETE' });
     await loadBlacklist();
   });
 }
@@ -261,16 +268,16 @@ const lastFetch = {};
 async function loadPositions(accounts) {
   const container = $('#positions');
   container.innerHTML = accounts.map(a => `
-    <div class="accordion-head" data-account="${a.id}">
-      <span class="arrow">▶</span> <b>${a.id}</b> <span class="muted">(${a.exchange})</span>
+    <div class="accordion-head" data-account="${esc(a.id)}">
+      <span class="arrow">▶</span> <b>${esc(a.id)}</b> <span class="muted">(${esc(a.exchange)})</span>
     </div>
-    <div class="accordion-body" id="body-${a.id}"></div>
+    <div class="accordion-body" id="body-${esc(a.id)}"></div>
   `).join('');
 
   $$('.accordion-head').forEach(head => {
     head.onclick = () => {
       const id = head.dataset.account;
-      const body = $(`#body-${id}`);
+      const body = document.getElementById('body-' + id);
       const opening = !body.classList.contains('open');
       head.classList.toggle('open', opening);
       body.classList.toggle('open', opening);
@@ -280,46 +287,46 @@ async function loadPositions(accounts) {
 }
 
 async function refreshAccount(id) {
-  const body = $(`#body-${id}`);
+  const body = document.getElementById('body-' + id);
   body.innerHTML = 'загрузка…';
   try {
     const [balance, positions] = await Promise.all([
-      api(`/api/v1/accounts/${id}/balance?refresh=true`),
-      api(`/api/v1/trade/positions?account=${id}`),
+      api(`/api/v1/accounts/${encodeURIComponent(id)}/balance?refresh=true`),
+      api(`/api/v1/trade/positions?account=${encodeURIComponent(id)}`),
     ]);
     lastFetch[id] = Date.now();
     renderAccountBody(id, balance, positions);
   } catch (e) {
-    body.innerHTML = `<span class="red">ошибка: ${e.message}</span>`;
+    body.innerHTML = `<span class="red">ошибка: ${esc(e.message)}</span>`;
   }
 }
 
 function renderAccountBody(id, balance, positions) {
-  const body = $(`#body-${id}`);
+  const body = document.getElementById('body-' + id);
   const balLine = balance.error
-    ? `<span class="red">${balance.error}</span>`
-    : `equity ${balance.equity ?? balance.balance} ${balance.asset || ''} (unrealPnL ${balance.unrealizedPnl ?? '—'})`;
+    ? `<span class="red">${esc(balance.error)}</span>`
+    : `equity ${esc(balance.equity ?? balance.balance)} ${esc(balance.asset || '')} (unrealPnL ${esc(balance.unrealizedPnl ?? '—')})`;
   const rows = positions.map(p => `
     <tr class="${p.qtyMismatch ? 'bad' : ''}">
-      <td>${p.symbol}</td><td>${p.side}</td><td class="num">${p.quantity}</td>
-      <td class="num">${p.entryPrice}</td><td class="num">${p.slPrice ?? '—'}</td><td class="num">${p.tpPrice ?? '—'}</td>
+      <td>${esc(p.symbol)}</td><td>${esc(p.side)}</td><td class="num">${esc(p.quantity)}</td>
+      <td class="num">${esc(p.entryPrice)}</td><td class="num">${esc(p.slPrice ?? '—')}</td><td class="num">${esc(p.tpPrice ?? '—')}</td>
       <td>${p.qtyMismatch ? '<span class="red">расхождение с биржей</span>' : ''}</td>
     </tr>`).join('');
   body.innerHTML = `
     <div class="form-row">
       <span>${balLine}</span>
-      <button id="refresh-${id}">↻</button>
-      <span class="muted" id="age-${id}"></span>
+      <button id="refresh-${esc(id)}">↻</button>
+      <span class="muted" id="age-${esc(id)}"></span>
     </div>
     <table><thead><tr><th>Symbol</th><th>Side</th><th class="num">Qty</th><th class="num">Entry</th>
       <th class="num">SL</th><th class="num">TP</th><th></th></tr></thead>
       <tbody>${rows || '<tr><td colspan="7" class="muted">нет открытых позиций</td></tr>'}</tbody></table>`;
-  $(`#refresh-${id}`).onclick = () => refreshAccount(id);
+  document.getElementById('refresh-' + id).onclick = () => refreshAccount(id);
   tickAge(id);
 }
 
 function tickAge(id) {
-  const el = $(`#age-${id}`);
+  const el = document.getElementById('age-' + id);
   if (!el) return;
   const sec = Math.round((Date.now() - lastFetch[id]) / 1000);
   el.textContent = `обновлено ${sec} сек назад`;

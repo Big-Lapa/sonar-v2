@@ -8,5 +8,8 @@ RUN mvn -B -DskipTests package
 FROM eclipse-temurin:21-jre
 WORKDIR /app
 COPY --from=build /app/target/*.jar app.jar
+# Unprivileged runtime user — the service writes nothing to disk (state lives in Postgres).
+RUN useradd --system --uid 10001 --no-create-home trading
+USER trading
 EXPOSE 8080
 ENTRYPOINT ["java", "-jar", "app.jar"]
