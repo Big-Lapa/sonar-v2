@@ -70,7 +70,7 @@ public class ProposalPreviewService {
         if (accountId != null) {
             return accountRegistry.byId(accountId)
                     .<List<AccountLegPreview>>map(account -> List.of(previewOne(account, symbol, entry, sl, manualNotional)))
-                    .orElseGet(() -> List.of(AccountLegPreview.rejected(accountId, "аккаунт не найден в реестре")));
+                    .orElseGet(() -> List.of(AccountLegPreview.rejected(accountId, "account not found in the registry")));
         }
         List<AccountLegPreview> legs = new ArrayList<>();
         for (AccountProps account : accountRegistry.all()) {
@@ -85,7 +85,7 @@ public class ProposalPreviewService {
         AccountRiskEntity riskEntity = accountRiskRepository.findById(accountId)
                 .orElseGet(() -> accountRiskRepository.save(AccountRiskEntity.defaultsFor(accountId)));
         if (!riskEntity.isTradable()) {
-            return AccountLegPreview.rejected(accountId, "аккаунт выключен из торговли (tradable=false)");
+            return AccountLegPreview.rejected(accountId, "account is excluded from trading (tradable=false)");
         }
         AccountRiskProfile profile = AccountRiskProfile.from(riskEntity);
 
@@ -93,7 +93,7 @@ public class ProposalPreviewService {
         var baseline = dailyBaselineRepository.findByIdAccountIdAndIdTradingDay(accountId, today);
         if (baseline.isEmpty()) {
             return AccountLegPreview.rejected(accountId,
-                    "нет данных по эквити на сегодня — дождитесь минутного поллера (этап 4)");
+                    "no equity data for today — wait for the minute poller (stage 4)");
         }
         DailyBaselineEntity b = baseline.get();
         BigDecimal equity = new BigDecimal(b.getEquityAtOpen());
@@ -126,7 +126,7 @@ public class ProposalPreviewService {
             return AccountLegPreview.rejected(accountId, decision.reason());
         }
         if (sizing instanceof SizingResult.Rejected r) {
-            return AccountLegPreview.rejected(accountId, r.reason());
+            return AccountLegPreview.rejected(accountId, r.code(), r.params(), r.reason());
         }
         SizingResult.Approved approved = (SizingResult.Approved) sizing;
         return AccountLegPreview.approved(accountId, approved.qty(), approved.actualRisk());

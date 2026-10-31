@@ -10,7 +10,7 @@ import java.math.BigDecimal;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.when;
 
-/** Same-side OPEN against an already-open position is an add-on ("доливка"); opposite-side still rejects. */
+/** Same-side OPEN against an already-open position is an add-on ("add-on"); opposite-side still rejects. */
 class NoStackingRuleTest {
 
     private final NoStackingRule rule = new NoStackingRule();

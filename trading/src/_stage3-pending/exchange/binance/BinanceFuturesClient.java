@@ -20,7 +20,7 @@ public interface BinanceFuturesClient extends ExchangeRestClient {
     /** Set the symbol's initial leverage ({@code POST /fapi/v1/leverage}) — per-strategy param (PR-D). */
     Map<String, Object> setLeverage(String symbol, int leverage);
 
-    /** Cancel ALL open orders of a symbol ({@code DELETE /fapi/v1/allOpenOrders}) — уборка
-     *  условных TP/SL ног перед новым входом и после close-all (зомби-стопы, ревью #88). */
+    /** Cancel ALL open orders of a symbol ({@code DELETE /fapi/v1/allOpenOrders}) — cleanup
+     *  of conditional TP/SL legs before a new entry and after close-all (zombie stops, review #88). */
     Map<String, Object> cancelAllOpenOrders(String symbol);
 }

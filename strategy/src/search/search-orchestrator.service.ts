@@ -48,7 +48,7 @@ export class SearchOrchestratorService {
 
     const { candidates, cost } = await this.candidateSearch.search(universe, settings.maxCandidates, settings.llmModel);
     this.logger.log(
-      `LLM returned ${candidates.length} candidates, cost=${cost.costUsd !== undefined ? '$' + cost.costUsd.toFixed(4) : 'н/д'} ` +
+      `LLM returned ${candidates.length} candidates, cost=${cost.costUsd !== undefined ? '$' + cost.costUsd.toFixed(4) : 'n/a'} ` +
         `(in=${cost.inputTokens} out=${cost.outputTokens} searches=${cost.webSearchRequests})`,
     );
 
@@ -87,7 +87,7 @@ export class SearchOrchestratorService {
         });
       } catch (e: any) {
         this.logger.error(`${candidate.symbol}: levels computation failed: ${e.message}`);
-        rejected.push({ symbol: candidate.symbol, reason: `ошибка расчёта уровней: ${e.message}` });
+        rejected.push({ symbol: candidate.symbol, reason: `level calculation error: ${e.message}` });
       }
     }
 

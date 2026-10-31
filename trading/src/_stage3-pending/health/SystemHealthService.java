@@ -43,8 +43,8 @@ public class SystemHealthService {
     }
 
     public void recordMarketEvent(String symbol, long exchangeEventTime) {
-        // merge/max, не put: отставшее событие (реплей, поздний бэкфилл) не должно ОТКАТЫВАТЬ
-        // свежесть назад и рубить валидные входы (ревью #86).
+        // merge/max, not put: a late event (replay, late backfill) must not ROLL BACK
+        // freshness and cut off valid entries (review #86).
         lastMarketEventTimeBySymbol.merge(symbol.toUpperCase(), exchangeEventTime, Math::max);
     }
 

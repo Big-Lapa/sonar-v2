@@ -55,7 +55,7 @@ describe('TelegramBotService PIN flow', () => {
 
   it('runs a PIN-gated command after the right PIN', async () => {
     await say('/closeall acc1');
-    expect(last()).toBe('подтверди PIN для close-all acc1');
+    expect(last()).toBe('confirm PIN for close-all acc1');
     await say('1234');
     expect(api.closeAll).toHaveBeenCalledWith('acc1');
     expect(last()).toBe('closed acc1');
@@ -65,55 +65,55 @@ describe('TelegramBotService PIN flow', () => {
     api.moveStop.mockRejectedValue(new Error('Request failed with status code 400'));
     await say('/move BTCUSDT sl 100');
     await say('1234');
-    expect(last()).toBe('ошибка: Request failed with status code 400');
+    expect(last()).toBe('error: Request failed with status code 400');
 
     api.clearAutoPause.mockRejectedValue(new Error('Request failed with status code 404'));
     await say('/unpause acc1');
     await say('1234');
-    expect(last()).toBe('ошибка: Request failed with status code 404');
+    expect(last()).toBe('error: Request failed with status code 404');
   });
 
   it('a command sent instead of the PIN cancels the prompt without counting a failure', async () => {
     await say('/closeall acc1');
     await say('/help');
-    expect(sent).toContain('close-all acc1: подтверждение отменено');
-    expect(last()).toMatch(/^Команды/);
+    expect(sent).toContain('close-all acc1: confirmation cancelled');
+    expect(last()).toMatch(/^Commands/);
     expect(api.closeAll).not.toHaveBeenCalled();
 
     // Three wrong PINs are still needed for a lockout — the cancelled prompt didn't count.
     await wrongPin();
-    expect(last()).toContain('осталось попыток: 2');
+    expect(last()).toContain('attempts left: 2');
   });
 
   it('does not echo plain text back as an unknown command', async () => {
     await say('1234');
-    expect(last()).toBe('неизвестная команда. /help — список команд');
+    expect(last()).toBe('unknown command. /help for the command list');
     await say('/foo');
-    expect(last()).toBe('неизвестная команда /foo. /help — список команд');
+    expect(last()).toBe('unknown command /foo. /help for the command list');
   });
 
   it('locks PIN commands after three wrong PINs in a row', async () => {
     await wrongPin();
     await wrongPin();
     await wrongPin();
-    expect(last()).toContain('заблокированы на 15 мин');
+    expect(last()).toContain('locked for 15 min');
 
     await say('/closeall acc1');
-    expect(last()).toContain('заблокированы ещё 15 мин');
+    expect(last()).toContain('locked for another 15 min');
 
     now += 16 * MIN;
     await say('/closeall acc1');
-    expect(last()).toBe('подтверди PIN для close-all acc1');
+    expect(last()).toBe('confirm PIN for close-all acc1');
   });
 
   it('forgets wrong PINs older than the failure window', async () => {
     await wrongPin();
     await wrongPin();
-    expect(last()).toContain('осталось попыток: 1');
+    expect(last()).toContain('attempts left: 1');
 
     now += 16 * MIN;
     await wrongPin();
-    expect(last()).toContain('осталось попыток: 2');
+    expect(last()).toContain('attempts left: 2');
   });
 
   it('a right PIN resets the failure count', async () => {
@@ -122,14 +122,14 @@ describe('TelegramBotService PIN flow', () => {
     await say('/closeall acc1');
     await say('1234');
     await wrongPin();
-    expect(last()).toContain('осталось попыток: 2');
+    expect(last()).toContain('attempts left: 2');
   });
 
   it('cancels an expired PIN prompt', async () => {
     await say('/closeall acc1');
     now += 61_000;
     await say('1234');
-    expect(last()).toBe('PIN истёк, действие отменено');
+    expect(last()).toBe('PIN expired, action cancelled');
     expect(api.closeAll).not.toHaveBeenCalled();
   });
 
@@ -137,21 +137,21 @@ describe('TelegramBotService PIN flow', () => {
     await say('/move BTCUSDT sl 100');
     positions = [];
     await say('1234');
-    expect(last()).toBe('нет открытой позиции по BTCUSDT');
+    expect(last()).toBe('no open position for BTCUSDT');
     expect(api.moveStop).not.toHaveBeenCalled();
   });
 
   it('/move with no open position fails before asking for the PIN', async () => {
     positions = [];
     await say('/move BTCUSDT sl 100');
-    expect(last()).toBe('нет открытой позиции по BTCUSDT');
-    expect(sent.some((t) => t.startsWith('подтверди PIN'))).toBe(false);
+    expect(last()).toBe('no open position for BTCUSDT');
+    expect(sent.some((t) => t.startsWith('confirm PIN'))).toBe(false);
   });
 
   it('refuses PIN commands when no PIN is configured', async () => {
     delete process.env.TELEGRAM_PIN;
     await say('/unpause acc1');
-    expect(last()).toBe('TELEGRAM_PIN не задан — команды с PIN отключены');
+    expect(last()).toBe('TELEGRAM_PIN is not set — PIN commands are disabled');
     await say('1234');
     expect(api.clearAutoPause).not.toHaveBeenCalled();
   });
@@ -185,9 +185,9 @@ describe('TelegramBotService PIN flow', () => {
       await sayIn(chat, '/closeall acc1');
       await sayIn(chat, '0000');
     }
-    expect(last()).toContain('заблокированы на 15 мин');
+    expect(last()).toContain('locked for 15 min');
     await sayIn(-200, '/closeall acc1');
-    expect(last()).toContain('заблокированы ещё 15 мин');
+    expect(last()).toContain('locked for another 15 min');
   });
 
   it('a PIN prompt opened before the lockout cannot be answered after it', async () => {
@@ -202,10 +202,10 @@ describe('TelegramBotService PIN flow', () => {
     await sayIn(-200, '/closeall acc2'); // prompt opened while still unlocked
     await sayIn(-100, '/closeall acc1');
     await sayIn(-100, '0000');
-    expect(last()).toContain('заблокированы на 15 мин');
+    expect(last()).toContain('locked for 15 min');
 
     await sayIn(-200, '1234');
     expect(api.closeAll).not.toHaveBeenCalled();
-    expect(last()).toContain('заблокированы ещё 15 мин');
+    expect(last()).toContain('locked for another 15 min');
   });
 });

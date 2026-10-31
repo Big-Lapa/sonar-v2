@@ -8,7 +8,7 @@ function idList(envName: string): string[] {
   return (process.env[envName] ?? '').split(',').map((s) => s.trim()).filter(Boolean);
 }
 
-/** Allowlist chat id gate (5: "Доступ — allowlist chat id"). */
+/** Allowlist chat id gate (5: "Access — allowlist chat id"). */
 export function isAllowedChat(chatId: number | string): boolean {
   return idList('TELEGRAM_ALLOWED_CHAT_IDS').includes(String(chatId));
 }

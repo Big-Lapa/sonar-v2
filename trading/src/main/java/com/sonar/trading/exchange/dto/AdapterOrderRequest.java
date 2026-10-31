@@ -16,7 +16,7 @@ public record AdapterOrderRequest(
         OrderIntent intent,
         String timeInForce,
         TpSlAttachment tpSl,
-        /** Целевое плечо ENTRY-ордера (per-strategy параметр); null = не трогать плечо биржи. */
+        /** Target leverage of the ENTRY order (per-strategy parameter); null = leave the exchange leverage untouched. */
         Integer leverage
 ) {
 
@@ -40,7 +40,7 @@ public record AdapterOrderRequest(
         this(symbol, side, type, quantity, price, clientOrderId, intent, timeInForce, null, null);
     }
 
-    /** Defaults leverage=null (пре-PR-D сигнатура). */
+    /** Defaults leverage=null (pre-PR-D signature). */
     public AdapterOrderRequest(String symbol, AdapterOrderSide side, AdapterOrderType type,
                                BigDecimal quantity, BigDecimal price, String clientOrderId,
                                OrderIntent intent, String timeInForce, TpSlAttachment tpSl) {

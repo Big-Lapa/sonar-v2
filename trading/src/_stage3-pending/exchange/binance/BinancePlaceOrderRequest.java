@@ -25,11 +25,11 @@ public record BinancePlaceOrderRequest(
         String newClientOrderId,
         boolean reduceOnly,
         String stopPrice,
-        /** {@code closePosition=true}: условный ордер закрывает ВСЮ позицию (quantity/reduceOnly
-         *  не передаются); Binance сам снимает такой триггер при обнулении позиции — штатный
-         *  эквивалент OCO для полнообъёмных TP/SL ног (ревью #88). */
+        /** {@code closePosition=true}: the conditional order closes the WHOLE position (quantity/reduceOnly
+         *  are not sent); Binance itself removes such a trigger when the position goes to zero — the standard
+         *  OCO equivalent for full-size TP/SL legs (review #88). */
         boolean closePosition,
-        /** workingType условного ордера: MARK_PRICE | CONTRACT_PRICE; null = биржевой дефолт. */
+        /** workingType of the conditional order: MARK_PRICE | CONTRACT_PRICE; null = exchange default. */
         String workingType
 ) {
 
@@ -41,7 +41,7 @@ public record BinancePlaceOrderRequest(
             false, null, false, null);
     }
 
-    /** Пре-PR-D сигнатура (reduceOnly+stopPrice): без closePosition/workingType. */
+    /** Pre-PR-D signature (reduceOnly+stopPrice): without closePosition/workingType. */
     public BinancePlaceOrderRequest(String symbol, BinanceOrderSide side, BinancePositionSide positionSide,
                                     BinanceOrderType type, String quantity, String price,
                                     BinanceTimeInForce timeInForce, String newClientOrderId,

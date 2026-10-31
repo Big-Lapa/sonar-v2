@@ -1,5 +1,7 @@
 package com.sonar.trading.execution;
 
+import com.sonar.trading.i18n.MessageCode;
+import com.sonar.trading.i18n.Msg;
 import com.sonar.trading.config.AccountProps;
 import com.sonar.trading.config.AccountRegistry;
 import com.sonar.trading.domain.entity.AccountRiskEntity;
@@ -46,7 +48,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public class MinutePoller {
 
     private static final Logger log = LoggerFactory.getLogger(MinutePoller.class);
-    private static final BigDecimal ANOMALY_DROP_THRESHOLD = new BigDecimal("0.5"); // grabля #2 (10)
+    private static final BigDecimal ANOMALY_DROP_THRESHOLD = new BigDecimal("0.5"); // pitfall #2 (10)
     private static final BigDecimal QTY_EPSILON = new BigDecimal("0.0001");
 
     private final AccountRegistry accountRegistry;
@@ -59,7 +61,7 @@ public class MinutePoller {
     private final PollerTransactions transactions;
 
     /** In-memory only — a false negative right after a restart is an acceptable trade-off for a
-     *  demo-reset guard (10, grabля #2); the next tick has a real baseline to compare against. */
+     *  demo-reset guard (10, pitfall #2); the next tick has a real baseline to compare against. */
     private final Map<String, BigDecimal> lastSeenEquity = new ConcurrentHashMap<>();
     private final Map<String, LocalDate> lastHoldReminder = new ConcurrentHashMap<>();
 
@@ -121,10 +123,9 @@ public class MinutePoller {
                     && equity.compareTo(previous.multiply(ANOMALY_DROP_THRESHOLD)) < 0) {
                 anomalyDrop = true;
                 log.error("[poller] {} equity dropped >50% in one tick ({} -> {}) — suspected demo-balance "
-                        + "reset, NOT touching daily_baseline or auto-pausing (10, грабля #2)", accountId, previous, equity);
+                        + "reset, NOT touching daily_baseline or auto-pausing (10, pitfall #2)", accountId, previous, equity);
                 notify(NotificationEntity.ANOMALY_EQUITY, accountId, null,
-                        "аномальное падение эквити " + previous + " -> " + equity
-                                + " — похоже на сброс демо-баланса, требуется подтверждение оператора");
+                        Msg.of(MessageCode.ANOMALY_EQUITY, "previous", previous, "equity", equity));
             }
             lastSeenEquity.put(accountId, equity);
         }
@@ -205,8 +206,7 @@ public class MinutePoller {
             log.info("[poller] {} adopted {} {} qty={} opened directly on the exchange (no DB row existed)",
                     accountId, live.symbol(), live.side(), live.qty());
             notify(NotificationEntity.POSITION_ADOPTED, accountId, live.symbol(),
-                    live.side() + " " + live.qty() + " @ " + live.avgPrice()
-                            + " — открыта на бирже напрямую, начал отслеживать (SL/TP неизвестны)");
+                    Msg.of(MessageCode.POSITION_ADOPTED, "side", live.side(), "qty", live.qty(), "price", live.avgPrice()));
         }
     }
 
@@ -243,7 +243,7 @@ public class MinutePoller {
             transactions.saveQtyMismatch(dbPosition.getId(), mismatch);
             if (mismatch) {
                 notify(NotificationEntity.QTY_MISMATCH, accountId, dbPosition.getSymbol(),
-                        "расхождение количества: БД=" + dbPosition.getQuantity() + " биржа=" + live.qty());
+                        Msg.of(MessageCode.QTY_MISMATCH, "db", dbPosition.getQuantity(), "exchange", live.qty()));
             }
         }
 
@@ -267,7 +267,7 @@ public class MinutePoller {
                     slForRepair, stops);
             if (!stopOk) {
                 notify(NotificationEntity.MISSING_STOP, accountId, dbPosition.getSymbol(),
-                        "позиция без стопа, автовосстановление не удалось — требуется ручное вмешательство");
+                        Msg.of(MessageCode.MISSING_STOP));
             }
         } else {
             log.debug("[poller] {} {} stop check skipped — venue '{}' exposes no TP/SL API",
@@ -312,11 +312,11 @@ public class MinutePoller {
         // real creation timestamp yet. Income/funding that accrued before discovery is real but
         // invisible to sumIncomeSince, so the PnL figure below understates the true result for
         // EXCHANGE-origin positions. Flagging that in the message beats a confidently wrong number.
-        String pnlCaveat = "EXCHANGE".equals(dbPosition.getOpenedVia())
-                ? " (с момента обнаружения, не открытия)" : "";
+        boolean fromDetection = "EXCHANGE".equals(dbPosition.getOpenedVia());
         notify(NotificationEntity.POSITION_CLOSED, accountId, dbPosition.getSymbol(),
-                dbPosition.getSymbol() + " закрыт, PnL=" + (pnl != null ? pnl : "уточняется") + pnlCaveat
-                        + ", удержание=" + held.toHours() + "ч" + (held.toMinutesPart()) + "м");
+                Msg.of(fromDetection ? MessageCode.POSITION_CLOSED_DETECTED : MessageCode.POSITION_CLOSED,
+                        "symbol", dbPosition.getSymbol(), "pnl", pnl,
+                        "hours", held.toHours(), "minutes", held.toMinutesPart()));
         log.info("[poller] {} {} detected closed (pnl={}, held={})", accountId, dbPosition.getSymbol(), pnl, held);
     }
 
@@ -337,10 +337,11 @@ public class MinutePoller {
         }
         lastHoldReminder.put(key, today);
         notify(NotificationEntity.HOLD_REMINDER, accountId, dbPosition.getSymbol(),
-                dbPosition.getSymbol() + " держится " + heldDays + " дн. (порог " + settings.getHoldReminderDays() + ")");
+                Msg.of(MessageCode.HOLD_REMINDER, "symbol", dbPosition.getSymbol(), "days", heldDays,
+                        "threshold", settings.getHoldReminderDays()));
     }
 
-    private void notify(String kind, String accountId, String symbol, String message) {
-        notificationRepository.save(new NotificationEntity(kind, accountId, symbol, message));
+    private void notify(String kind, String accountId, String symbol, Msg msg) {
+        notificationRepository.save(new NotificationEntity(kind, accountId, symbol, msg));
     }
 }

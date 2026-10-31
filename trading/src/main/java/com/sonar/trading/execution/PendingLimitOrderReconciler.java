@@ -1,5 +1,7 @@
 package com.sonar.trading.execution;
 
+import com.sonar.trading.i18n.MessageCode;
+import com.sonar.trading.i18n.Msg;
 import com.sonar.trading.config.AccountProps;
 import com.sonar.trading.config.AccountRegistry;
 import com.sonar.trading.domain.entity.FillEntity;
@@ -192,8 +194,7 @@ public class PendingLimitOrderReconciler {
         boolean stopVerified = stopGuard.hasStopOrder(account.id(), order.getSymbol());
         if (!stopVerified) {
             notificationRepository.save(new NotificationEntity(NotificationEntity.MISSING_STOP, account.id(), order.getSymbol(),
-                    "лимитная заявка исполнилась (" + finalQty + " @ " + avgPrice
-                            + "), но стоп на бирже не обнаружен — проверить защиту позиции"));
+                    Msg.of(MessageCode.LIMIT_FILLED_NO_STOP, "qty", finalQty, "price", avgPrice)));
         }
         log.info("[limit-reconcile] {} {} LIMIT order {} filled {} @ {} — position now qty={} entry={} stopVerified={}",
                 account.id(), order.getSymbol(), order.getClientOrderId(), filledQty, avgPrice, finalQty, finalEntry, stopVerified);

@@ -39,13 +39,13 @@ public class OrderOpsController {
     public OrdersResponse list(@PathVariable String accountId, @RequestParam String symbol) {
         ExecutionAdapter adapter = resolveAdapter(accountId);
         if (adapter == null) {
-            return new OrdersResponse(List.of(), "аккаунт/venue не найдены");
+            return new OrdersResponse(List.of(), "account/venue not found");
         }
         try {
             return new OrdersResponse(adapter.listOpenOrders(symbol), null);
         } catch (RuntimeException e) {
             log.error("[{}] listOpenOrders({}) failed: {}", accountId, symbol, e.toString());
-            return new OrdersResponse(List.of(), "не удалось получить открытые ордера");
+            return new OrdersResponse(List.of(), "could not fetch open orders");
         }
     }
 
@@ -54,14 +54,14 @@ public class OrderOpsController {
                                              @RequestParam String symbol) {
         ExecutionAdapter adapter = resolveAdapter(accountId);
         if (adapter == null) {
-            return ResponseEntity.badRequest().body(new OpResponse(false, "аккаунт/venue не найдены"));
+            return ResponseEntity.badRequest().body(new OpResponse(false, "account/venue not found"));
         }
         try {
             adapter.cancelOrderById(symbol, orderId);
-            return ResponseEntity.ok(new OpResponse(true, "ордер " + orderId + " отменён"));
+            return ResponseEntity.ok(new OpResponse(true, "order " + orderId + " cancelled"));
         } catch (RuntimeException e) {
             log.error("[{}] cancelOrderById({}, {}) failed: {}", accountId, symbol, orderId, e.toString());
-            return ResponseEntity.status(HttpStatus.CONFLICT).body(new OpResponse(false, "ошибка отмены ордера"));
+            return ResponseEntity.status(HttpStatus.CONFLICT).body(new OpResponse(false, "order cancellation failed"));
         }
     }
 

@@ -9,7 +9,7 @@ import java.util.Optional;
 
 /**
  * Rejects an OPEN on the symbol only when it would flip the position's direction — same-side OPEN
- * against an already-open position is a deliberate add-on (manual panel: "доливка", averages qty
+ * against an already-open position is a deliberate add-on (manual panel: "top-up", averages qty
  * and entry price in {@code ProposalExecutionService}), not pyramiding. Opposite-side OPEN still
  * rejects: flipping direction must go through an explicit close first, never silently net down.
  *

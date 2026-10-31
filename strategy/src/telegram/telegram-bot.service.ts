@@ -3,10 +3,11 @@ import { Interval } from '@nestjs/schedule';
 import { TelegramClientService } from './telegram-client.service';
 import { isAllowedSender, pinConfigured, pinMatches, TICKER_RE } from './access-guard';
 import { TradingApiService } from '../trading-client/trading-api.service';
+import { hasKey, isLang, Lang, langFromTelegram, Params, t } from '../i18n';
 
 interface PendingPin {
   description: string;
-  action: () => Promise<string>;
+  action: (lang: Lang) => Promise<string>;
   expiresAt: number;
 }
 
@@ -23,9 +24,9 @@ function lockKey(pinKey: string): string {
 
 /**
  * Manual ops only — the LLM candidate-search pipeline (/search, the cron/close-triggered
- * "начать поиск?" prompt, proposal open/reject buttons) has been retired; this bot is now a thin
+ * "start search?" prompt, proposal open/reject buttons) has been retired; this bot is now a thin
  * remote control for balances/positions/stop moves, plus a relay for trading's own notifications.
- * Single poller (getUpdates), single bot — grabля #8.
+ * Single poller (getUpdates), single bot — pitfall #8.
  */
 @Injectable()
 export class TelegramBotService implements OnModuleInit {
@@ -39,6 +40,9 @@ export class TelegramBotService implements OnModuleInit {
    *  chats doesn't get MAX_PIN_FAILURES attempts in each. In-memory like pendingPins: a restart
    *  resets it, which is why .env.example asks for a PIN longer than 4 digits. */
   private readonly pinFailures = new Map<string, { count: number; lockedUntil: number; lastFailureAt: number }>();
+  /** Interface language chosen with /lang, per chat. In-memory like the PIN state — after a restart a
+   *  chat falls back to its Telegram client language. */
+  private readonly chatLangs = new Map<string, Lang>();
   /** Seeded to "now" on first tick so a restart never replays old notifications. */
   private notifAfterId: number | null = null;
 
@@ -82,6 +86,7 @@ export class TelegramBotService implements OnModuleInit {
     if (!isAllowedSender(msg.chat, msg.from)) return;
     const text: string = (msg.text ?? '').trim();
     if (!text) return;
+    const lang = this.langOf(chatId, msg.from?.language_code);
 
     // Keyed by chat AND sender, so in a group only the person who asked can answer the PIN prompt.
     const pinKey = `${chatId}:${msg.from?.id ?? ''}`;
@@ -91,14 +96,14 @@ export class TelegramBotService implements OnModuleInit {
       // counting it as a wrong PIN (that would burn lockout attempts), then run the command.
       this.pendingPins.delete(pinKey);
       if (Date.now() <= pending.expiresAt) {
-        await this.telegram.sendMessage(chatId, `${pending.description}: подтверждение отменено`);
+        await this.telegram.sendMessage(chatId, t(lang, 'pin.cancelled', { description: pending.description }));
       }
     } else if (pending) {
       this.pendingPins.delete(pinKey);
       // Don't leave the PIN in the chat history (in a group every member would see it).
       await this.telegram.deleteMessage(chatId, msg.message_id);
       if (Date.now() > pending.expiresAt) {
-        await this.telegram.sendMessage(chatId, 'PIN истёк, действие отменено');
+        await this.telegram.sendMessage(chatId, t(lang, 'pin.expired'));
         return;
       }
       // Lockout is per user, but prompts are per chat: a user allowed in several chats could open a
@@ -106,7 +111,7 @@ export class TelegramBotService implements OnModuleInit {
       // the PIN is even compared.
       const lockedMin = this.lockedMinutes(lockKey(pinKey));
       if (lockedMin > 0) {
-        await this.telegram.sendMessage(chatId, `слишком много неверных PIN — команды с PIN заблокированы ещё ${lockedMin} мин`);
+        await this.telegram.sendMessage(chatId, t(lang, 'pin.locked', { minutes: lockedMin }));
         return;
       }
       if (pinMatches(text)) {
@@ -114,15 +119,15 @@ export class TelegramBotService implements OnModuleInit {
         // Outside the command try/catch below — without this a failing action (4xx from trading,
         // position already gone) would only reach the log and the operator would get silence.
         try {
-          await this.telegram.sendMessage(chatId, await pending.action());
+          await this.telegram.sendMessage(chatId, await pending.action(lang));
         } catch (e: any) {
-          await this.telegram.sendMessage(chatId, `ошибка: ${e.message}`);
+          await this.telegram.sendMessage(chatId, t(lang, 'error', { message: e.message }));
         }
       } else {
         const left = this.registerPinFailure(lockKey(pinKey));
         await this.telegram.sendMessage(chatId, left > 0
-          ? `неверный PIN, отменено (осталось попыток: ${left})`
-          : `неверный PIN, отменено — команды с PIN заблокированы на ${PIN_LOCKOUT_MS / 60_000} мин`);
+          ? t(lang, 'pin.wrong', { left })
+          : t(lang, 'pin.wrong_locked', { minutes: PIN_LOCKOUT_MS / 60_000 }));
       }
       return;
     }
@@ -131,29 +136,32 @@ export class TelegramBotService implements OnModuleInit {
     try {
       switch (cmd) {
         case '/closeall':
-          await this.cmdCloseAll(chatId, pinKey, args[0]);
+          await this.cmdCloseAll(chatId, lang, pinKey, args[0]);
           break;
         case '/be':
-          await this.cmdBreakeven(chatId, args[0]);
+          await this.cmdBreakeven(chatId, lang, args[0]);
           break;
         case '/move':
-          await this.cmdMove(chatId, pinKey, args[0], args[1] as 'sl' | 'tp', args[2]);
+          await this.cmdMove(chatId, lang, pinKey, args[0], args[1] as 'sl' | 'tp', args[2]);
           break;
         case '/ban':
-          await this.cmdBan(chatId, args[0]);
+          await this.cmdBan(chatId, lang, args[0]);
           break;
         case '/unpause':
-          await this.cmdUnpause(chatId, pinKey, args[0]);
+          await this.cmdUnpause(chatId, lang, pinKey, args[0]);
           break;
         case '/help':
         case '/start':
-          await this.cmdHelp(chatId);
+          await this.cmdHelp(chatId, lang);
+          break;
+        case '/lang':
+          await this.cmdLang(chatId, msg.from?.language_code, args[0]);
           break;
         case '/status':
           await this.cmdStatus(chatId);
           break;
         case '/positions':
-          await this.cmdPositions(chatId, args[0]);
+          await this.cmdPositions(chatId, lang, args[0]);
           break;
         default:
           // Same failure mode as the confirm-proposal bug (2026-08-21): an unhandled command
@@ -162,26 +170,37 @@ export class TelegramBotService implements OnModuleInit {
           // Echo only what looks like a command: plain text here is often a PIN sent after its
           // prompt was cancelled or expired, and repeating it would put the PIN in the chat again.
           await this.telegram.sendMessage(chatId, cmd.startsWith('/')
-            ? `неизвестная команда ${cmd}. /help — список команд`
-            : 'неизвестная команда. /help — список команд');
+            ? t(lang, 'cmd.unknown_named', { cmd })
+            : t(lang, 'cmd.unknown'));
       }
     } catch (e: any) {
-      await this.telegram.sendMessage(chatId, `ошибка: ${e.message}`);
+      await this.telegram.sendMessage(chatId, t(lang, 'error', { message: e.message }));
     }
   }
 
-  private async cmdHelp(chatId: number): Promise<void> {
-    const lines = [
-      'Команды (ручной режим — открытие позиций через REST /api/v1/strategy/proposals с accountId):',
-      '/closeall <account> — закрыть все позиции аккаунта (нужен PIN)',
-      '/be <symbol> — стоп в безубыток',
-      '/move <symbol> sl|tp <price> — переставить SL или TP (нужен PIN)',
-      '/ban <symbol> — добавить символ в чёрный список',
-      '/unpause <account> — снять auto-pause (нужен PIN)',
-      '/status — баланс по каждому аккаунту',
-      '/positions <account> — открытые позиции с PnL в моменте',
-    ];
-    await this.telegram.sendMessage(chatId, lines.join('\n'));
+  /** Language of a chat: its /lang choice, else the sender's Telegram client language. */
+  private langOf(chatId: number | string, telegramCode?: string): Lang {
+    return this.chatLangs.get(String(chatId)) ?? langFromTelegram(telegramCode);
+  }
+
+  /** A backend result: translated by its code when it has one, else its plain message. */
+  private opText(lang: Lang, r: { message: string; code?: string | null; params?: Params | null }): string {
+    return r.code && hasKey(lang, `msg.${r.code}`) ? t(lang, `msg.${r.code}`, r.params ?? {}) : r.message;
+  }
+
+  private async cmdLang(chatId: number, telegramCode: string | undefined, arg?: string): Promise<void> {
+    const current = this.langOf(chatId, telegramCode);
+    const wanted = arg?.toLowerCase();
+    if (!isLang(wanted)) {
+      await this.telegram.sendMessage(chatId, t(current, 'lang.usage', { current }));
+      return;
+    }
+    this.chatLangs.set(String(chatId), wanted);
+    await this.telegram.sendMessage(chatId, t(wanted, 'lang.changed'));
+  }
+
+  private async cmdHelp(chatId: number, lang: Lang): Promise<void> {
+    await this.telegram.sendMessage(chatId, t(lang, 'help.text'));
   }
 
   private async cmdStatus(chatId: number): Promise<void> {
@@ -196,9 +215,9 @@ export class TelegramBotService implements OnModuleInit {
     await this.telegram.sendMessage(chatId, lines.join('\n'));
   }
 
-  private async cmdPositions(chatId: number, account?: string): Promise<void> {
+  private async cmdPositions(chatId: number, lang: Lang, account?: string): Promise<void> {
     if (!account) {
-      await this.telegram.sendMessage(chatId, 'использование: /positions <account>');
+      await this.telegram.sendMessage(chatId, t(lang, 'usage.positions'));
       return;
     }
     const result = await this.tradingApi.getLivePositions(account);
@@ -207,7 +226,7 @@ export class TelegramBotService implements OnModuleInit {
       return;
     }
     if (result.positions.length === 0) {
-      await this.telegram.sendMessage(chatId, `${account}: нет открытых позиций`);
+      await this.telegram.sendMessage(chatId, t(lang, 'positions.none', { account }));
       return;
     }
     const lines = result.positions.map(
@@ -216,90 +235,90 @@ export class TelegramBotService implements OnModuleInit {
     await this.telegram.sendMessage(chatId, `${account}:\n${lines.join('\n')}`);
   }
 
-  private async cmdCloseAll(chatId: number, pinKey: string, account?: string): Promise<void> {
+  private async cmdCloseAll(chatId: number, lang: Lang, pinKey: string, account?: string): Promise<void> {
     if (!account) {
-      await this.telegram.sendMessage(chatId, 'использование: /closeall <account>');
+      await this.telegram.sendMessage(chatId, t(lang, 'usage.closeall'));
       return;
     }
-    await this.requirePin(chatId, pinKey, `close-all ${account}`, async () => {
+    await this.requirePin(chatId, lang, pinKey, `close-all ${account}`, async (actionLang) => {
       const r = await this.tradingApi.closeAll(account);
-      return r.message;
+      return this.opText(actionLang, r);
     });
   }
 
-  private async cmdBreakeven(chatId: number, symbol?: string): Promise<void> {
+  private async cmdBreakeven(chatId: number, lang: Lang, symbol?: string): Promise<void> {
     if (!symbol) {
-      await this.telegram.sendMessage(chatId, 'использование: /be <symbol>');
+      await this.telegram.sendMessage(chatId, t(lang, 'usage.be'));
       return;
     }
     const positions = await this.tradingApi.getOpenPositions(undefined, symbol.toUpperCase());
     if (positions.length === 0) {
-      await this.telegram.sendMessage(chatId, `нет открытой позиции по ${symbol}`);
+      await this.telegram.sendMessage(chatId, t(lang, 'position.none', { symbol }));
       return;
     }
     const results = await Promise.all(positions.map((p) => this.tradingApi.breakeven(p.id)));
-    await this.telegram.sendMessage(chatId, results.map((r) => r.message).join('\n'));
+    await this.telegram.sendMessage(chatId, results.map((r) => this.opText(lang, r)).join('\n'));
   }
 
-  private async cmdMove(chatId: number, pinKey: string, symbol?: string, type?: 'sl' | 'tp', price?: string): Promise<void> {
+  private async cmdMove(chatId: number, lang: Lang, pinKey: string, symbol?: string, type?: 'sl' | 'tp', price?: string): Promise<void> {
     if (!symbol || (type !== 'sl' && type !== 'tp') || !price) {
-      await this.telegram.sendMessage(chatId, 'использование: /move <symbol> <sl|tp> <price>');
+      await this.telegram.sendMessage(chatId, t(lang, 'usage.move'));
       return;
     }
     const sym = symbol.toUpperCase();
     // Early check so a typo fails before the PIN prompt, not after it.
     if ((await this.tradingApi.getOpenPositions(undefined, sym)).length === 0) {
-      await this.telegram.sendMessage(chatId, `нет открытой позиции по ${symbol}`);
+      await this.telegram.sendMessage(chatId, t(lang, 'position.none', { symbol }));
       return;
     }
     // PIN-gated: moving SL is enough to strip a position's protection, same stakes as close-all.
-    await this.requirePin(chatId, pinKey, `${type.toUpperCase()} ${sym} → ${price}`, async () => {
+    await this.requirePin(chatId, lang, pinKey, `${type.toUpperCase()} ${sym} → ${price}`, async (actionLang) => {
       // Re-read after the PIN: up to 60s may have passed, positions may have closed or opened.
       const positions = await this.tradingApi.getOpenPositions(undefined, sym);
-      if (positions.length === 0) return `нет открытой позиции по ${sym}`;
+      if (positions.length === 0) return t(actionLang, 'position.none', { symbol: sym });
       const results = await Promise.all(positions.map((p) => this.tradingApi.moveStop(p.id, type, price)));
-      return results.map((r) => r.message).join('\n');
+      return results.map((r) => this.opText(actionLang, r)).join('\n');
     });
   }
 
-  private async cmdBan(chatId: number, symbol?: string): Promise<void> {
+  private async cmdBan(chatId: number, lang: Lang, symbol?: string): Promise<void> {
     if (!symbol) {
-      await this.telegram.sendMessage(chatId, 'использование: /ban <symbol>');
+      await this.telegram.sendMessage(chatId, t(lang, 'usage.ban'));
       return;
     }
     // Same alphabet trading enforces (Symbols.java) — say so here instead of relaying a bare 400.
     if (!TICKER_RE.test(symbol.toUpperCase())) {
-      await this.telegram.sendMessage(chatId, `некорректный тикер: ${symbol}`);
+      await this.telegram.sendMessage(chatId, t(lang, 'ban.invalid', { symbol }));
       return;
     }
-    await this.tradingApi.banSymbol(symbol.toUpperCase(), 'заблокирован через /ban');
-    await this.telegram.sendMessage(chatId, `${symbol.toUpperCase()} добавлен в чёрный список`);
+    await this.tradingApi.banSymbol(symbol.toUpperCase(), 'banned via /ban');
+    await this.telegram.sendMessage(chatId, t(lang, 'ban.done', { symbol: symbol.toUpperCase() }));
   }
 
-  private async cmdUnpause(chatId: number, pinKey: string, account?: string): Promise<void> {
+  private async cmdUnpause(chatId: number, lang: Lang, pinKey: string, account?: string): Promise<void> {
     if (!account) {
-      await this.telegram.sendMessage(chatId, 'использование: /unpause <account>');
+      await this.telegram.sendMessage(chatId, t(lang, 'usage.unpause'));
       return;
     }
     // PIN-gated: auto-pause is the risk engine's own brake; lifting it shouldn't take one message.
-    await this.requirePin(chatId, pinKey, `unpause ${account}`, async () => {
+    await this.requirePin(chatId, lang, pinKey, `unpause ${account}`, async (actionLang) => {
       const r = await this.tradingApi.clearAutoPause(account);
-      return r.wasPaused ? `${account}: пауза снята` : `${account}: паузы и не было`;
+      return t(actionLang, r.wasPaused ? 'unpause.done' : 'unpause.none', { account });
     });
   }
 
-  private async requirePin(chatId: number, pinKey: string, description: string, action: () => Promise<string>): Promise<void> {
+  private async requirePin(chatId: number, lang: Lang, pinKey: string, description: string, action: (lang: Lang) => Promise<string>): Promise<void> {
     if (!pinConfigured()) {
-      await this.telegram.sendMessage(chatId, 'TELEGRAM_PIN не задан — команды с PIN отключены');
+      await this.telegram.sendMessage(chatId, t(lang, 'pin.not_set'));
       return;
     }
     const lockedMin = this.lockedMinutes(lockKey(pinKey));
     if (lockedMin > 0) {
-      await this.telegram.sendMessage(chatId, `слишком много неверных PIN — команды с PIN заблокированы ещё ${lockedMin} мин`);
+      await this.telegram.sendMessage(chatId, t(lang, 'pin.locked', { minutes: lockedMin }));
       return;
     }
     this.pendingPins.set(pinKey, { description, action, expiresAt: Date.now() + 60_000 });
-    await this.telegram.sendMessage(chatId, `подтверди PIN для ${description}`);
+    await this.telegram.sendMessage(chatId, t(lang, 'pin.confirm', { description }));
   }
 
   /** Minutes left on this sender's PIN lockout, 0 when not locked. */
@@ -357,7 +376,11 @@ export class TelegramBotService implements OnModuleInit {
     const chatIds = (process.env.TELEGRAM_ALLOWED_CHAT_IDS ?? '').split(',').map((s) => s.trim()).filter(Boolean);
     for (const ev of events) {
       for (const chatId of chatIds) {
-        await this.telegram.sendMessage(chatId, `[${ev.kind}] ${ev.accountId ?? ''} ${ev.symbol ?? ''}: ${ev.message}`);
+        // Rendered per chat, in the language chosen there. Rows written before message codes existed
+        // (or a code this bot doesn't know) show the stored English message.
+        const lang = this.langOf(chatId);
+        const body = ev.code && hasKey(lang, `msg.${ev.code}`) ? t(lang, `msg.${ev.code}`, ev.params ?? {}) : ev.message;
+        await this.telegram.sendMessage(chatId, `[${ev.kind}] ${ev.accountId ?? ''} ${ev.symbol ?? ''}: ${body}`);
       }
     }
   }

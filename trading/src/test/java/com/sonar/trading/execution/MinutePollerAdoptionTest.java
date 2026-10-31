@@ -115,6 +115,8 @@ class MinutePollerAdoptionTest {
         ArgumentCaptor<NotificationEntity> note = ArgumentCaptor.forClass(NotificationEntity.class);
         verify(notificationRepository).save(note.capture());
         assertThat(note.getValue().getKind()).isEqualTo(NotificationEntity.POSITION_ADOPTED);
+        assertThat(note.getValue().getCode()).isEqualTo("POSITION_ADOPTED");
+        assertThat(note.getValue().getMessage()).doesNotContainPattern("[\\u0400-\\u04FF]");
     }
 
     @Test

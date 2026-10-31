@@ -6,9 +6,9 @@ const screenshotRoute = require('./routes/screenshot');
 
 /**
  * tv-bridge (2, 7): Windows-host process, CDP to TradingView Desktop. No ADMIN_TOKEN —
- * listens only on 127.0.0.1 (2: "strategy → tv-bridge по HTTP host.docker.internal:PORT ...
- * без токена, слушает только 127.0.0.1"). The trading circuit never depends on this being up
- * (7: "Мостик недоступен → strategy пишет «TradingView недоступен» и работает дальше").
+ * listens only on 127.0.0.1 (2: "strategy → tv-bridge over HTTP host.docker.internal:PORT ...
+ * without a token, listens only on 127.0.0.1"). The trading circuit never depends on this being up
+ * (7: "Bridge unavailable → strategy logs "TradingView unavailable" and keeps working").
  */
 const app = express();
 app.use(express.json());

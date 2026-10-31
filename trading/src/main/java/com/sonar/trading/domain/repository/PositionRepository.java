@@ -19,7 +19,7 @@ public interface PositionRepository extends JpaRepository<PositionEntity, Long> 
     @Query("SELECT COUNT(p) FROM PositionEntity p WHERE p.status = 'OPEN' AND p.accountId = :accountId")
     long countOpenByAccountId(String accountId);
 
-    /** Открытые позиции по всем аккаунтам — драйвер адаптивной каденции recon. */
+    /** Open positions across all accounts — the driver of the adaptive recon cadence. */
     @Query("SELECT COUNT(p) FROM PositionEntity p WHERE p.status = 'OPEN'")
     long countOpen();
 }

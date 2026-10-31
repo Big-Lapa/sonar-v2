@@ -13,7 +13,7 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * 6 (admin "Позиции" block): {@code GET /api/v1/accounts/{id}/balance} — live REST to the
+ * 6 (admin "Positions" block): {@code GET /api/v1/accounts/{id}/balance} — live REST to the
  * exchange, not the daily_baseline snapshot. Throttled 5s per account server-side regardless of
  * the client's ↻ button, so a stuck/fast-clicking admin tab can't hammer the exchange.
  *
@@ -56,19 +56,19 @@ public class AccountBalanceController {
     private BalanceResponse fetchLive(String id) {
         var account = accountRegistry.byId(id);
         if (account.isEmpty()) {
-            return new BalanceResponse(id, null, null, null, null, System.currentTimeMillis(), true, "аккаунт не найден");
+            return new BalanceResponse(id, null, null, null, null, System.currentTimeMillis(), true, "account not found");
         }
         var reader = accountReaders.forAccount(id);
         if (reader.isEmpty()) {
             return new BalanceResponse(id, null, null, null, null, System.currentTimeMillis(), true,
                     account.get().isConfigured()
-                            ? "venue '" + account.get().exchange() + "' не подключена в этой версии"
-                            : "у аккаунта не заданы API-ключи");
+                            ? "venue '" + account.get().exchange() + "' is not connected in this version"
+                            : "account has no API keys configured");
         }
         try {
             var balance = reader.get().getBalance().orElse(null);
             if (balance == null) {
-                return new BalanceResponse(id, null, null, null, null, System.currentTimeMillis(), true, "пустой ответ биржи");
+                return new BalanceResponse(id, null, null, null, null, System.currentTimeMillis(), true, "empty exchange response");
             }
             return new BalanceResponse(id, balance.asset(),
                     balance.balance() != null ? balance.balance().toPlainString() : null,

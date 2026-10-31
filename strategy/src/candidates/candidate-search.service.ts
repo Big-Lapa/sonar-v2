@@ -104,17 +104,17 @@ export class CandidateSearchService {
 
 function buildPrompt(universe: string[], maxCandidates: number): string {
   return [
-    `Вселенная символов (уже отфильтрована по объёму/волатильности/блэклисту): ${universe.join(', ')}`,
+    `Symbol universe (already filtered by volume/volatility/blacklist): ${universe.join(', ')}`,
     '',
-    `Найди до ${maxCandidates} монет из ЭТОГО списка с явно бычьим новостным фоном (партнёрства, листинги, ` +
-      'институциональный интерес, крупные интеграции), у которых цена ЕЩЁ НЕ отреагировала адекватно ' +
-      '(флэт или падение на фоне хороших новостей, либо рост только на уровне бета общего рынка).',
+    `Find up to ${maxCandidates} coins from THIS list with a clearly bullish news background (partnerships, listings, ` +
+      'institutional interest, major integrations) whose price HAS NOT YET reacted adequately ' +
+      '(flat or falling despite good news, or rising only at the level of general market beta).',
     '',
-    'ВАЖНО: ты выбираешь только символы из списка выше и пишешь обоснование текстом. Ты НЕ считаешь цену, ' +
-      'количество, стоп-лосс, тейк-профит или любые другие числа — это делает детерминированный код отдельно. ' +
-      'Обоснование — 1-3 предложения на русском, без конкретных цен и уровней.',
+    'IMPORTANT: you only pick symbols from the list above and write the rationale as text. You do NOT calculate price, ' +
+      'quantity, stop-loss, take-profit or any other numbers — deterministic code does that separately. ' +
+      'The rationale is 1-3 sentences in English, without specific prices or levels.',
     '',
-    `Когда закончишь поиск, вызови report_candidates с итоговым списком (может быть меньше ${maxCandidates}, ` +
-      'если подходящих кандидатов меньше; можно вернуть пустой список, если ничего не подходит).',
+    `When you finish the search, call report_candidates with the final list (may be fewer than ${maxCandidates} ` +
+      'if there are fewer suitable candidates; you may return an empty list if nothing fits).',
   ].join('\n');
 }

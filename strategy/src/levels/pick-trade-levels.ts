@@ -52,11 +52,11 @@ export function pickLongLevels(
 
   const slPick = slCandidates.find((c) => (entry - c.price) / entry >= minSlDist);
   if (!slPick) {
-    return { ok: false, reason: `нет support/LVN ниже entry дальше минимальной дистанции ${(minSlDist * 100).toFixed(2)}%` };
+    return { ok: false, reason: `no support/LVN below entry beyond the minimum distance ${(minSlDist * 100).toFixed(2)}%` };
   }
   const distSlPct = (entry - slPick.price) / entry;
   if (distSlPct > gates.maxSlDistancePct) {
-    return { ok: false, reason: `ближайший валидный SL слишком далеко: ${(distSlPct * 100).toFixed(2)}% > ${(gates.maxSlDistancePct * 100).toFixed(2)}%` };
+    return { ok: false, reason: `nearest valid SL is too far: ${(distSlPct * 100).toFixed(2)}% > ${(gates.maxSlDistancePct * 100).toFixed(2)}%` };
   }
 
   const tpCandidates = [
@@ -68,12 +68,12 @@ export function pickLongLevels(
 
   const tpPick = tpCandidates.find((c) => (c.price - entry) / entry >= minSlDist);
   if (!tpPick) {
-    return { ok: false, reason: `нет HVN/swing-сопротивления выше entry дальше минимальной дистанции ${(minSlDist * 100).toFixed(2)}%` };
+    return { ok: false, reason: `no HVN/swing resistance above entry beyond the minimum distance ${(minSlDist * 100).toFixed(2)}%` };
   }
 
   const rr = (tpPick.price - entry) / (entry - slPick.price);
   if (rr < gates.minRr) {
-    return { ok: false, reason: `R:R ${rr.toFixed(2)} < минимума ${gates.minRr}` };
+    return { ok: false, reason: `R:R ${rr.toFixed(2)} < minimum ${gates.minRr}` };
   }
 
   return {

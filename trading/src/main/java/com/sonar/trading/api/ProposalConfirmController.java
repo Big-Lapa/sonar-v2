@@ -27,7 +27,8 @@ public class ProposalConfirmController {
     }
 
     public record ConfirmResponse(String proposalId, String status, List<ExecutionLegResult> accounts,
-                                  String abortReason) {}
+                                  String abortReason, String abortCode,
+                                  java.util.Map<String, String> abortParams) {}
 
     @PostMapping("/{id}/confirm")
     public ResponseEntity<ConfirmResponse> confirm(@PathVariable String id) {
@@ -37,11 +38,12 @@ public class ProposalConfirmController {
                     ResponseEntity.notFound().build();
             case ProposalExecutionService.ConfirmOutcome.Aborted aborted ->
                     ResponseEntity.status(HttpStatus.CONFLICT)
-                            .body(new ConfirmResponse(id, "ABORTED", List.of(), aborted.reason()));
+                            .body(new ConfirmResponse(id, "ABORTED", List.of(), aborted.msg().text(),
+                                    aborted.msg().code().name(), aborted.msg().params()));
             case ProposalExecutionService.ConfirmOutcome.AlreadyProcessed already ->
-                    ResponseEntity.ok(new ConfirmResponse(id, "ALREADY_PROCESSED", already.legs(), null));
+                    ResponseEntity.ok(new ConfirmResponse(id, "ALREADY_PROCESSED", already.legs(), null, null, null));
             case ProposalExecutionService.ConfirmOutcome.Executed executed ->
-                    ResponseEntity.ok(new ConfirmResponse(id, "EXECUTED", executed.legs(), null));
+                    ResponseEntity.ok(new ConfirmResponse(id, "EXECUTED", executed.legs(), null, null, null));
         };
     }
 }

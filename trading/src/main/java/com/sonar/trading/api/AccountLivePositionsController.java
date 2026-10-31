@@ -56,14 +56,14 @@ public class AccountLivePositionsController {
     private LivePositionsResponse fetchLive(String id) {
         var account = accountRegistry.byId(id);
         if (account.isEmpty()) {
-            return new LivePositionsResponse(id, List.of(), "аккаунт не найден");
+            return new LivePositionsResponse(id, List.of(), "account not found");
         }
         var reader = accountReaders.forAccount(id);
         if (reader.isEmpty()) {
             return new LivePositionsResponse(id, List.of(),
                     account.get().isConfigured()
-                            ? "venue '" + account.get().exchange() + "' не подключена в этой версии"
-                            : "у аккаунта не заданы API-ключи");
+                            ? "venue '" + account.get().exchange() + "' is not connected in this version"
+                            : "account has no API keys configured");
         }
         try {
             List<ExchangePosition> positions = reader.get().getPositions().stream()

@@ -137,7 +137,9 @@ class ProposalExecutionServiceTest {
         assertThat(outcome).isInstanceOf(ProposalExecutionService.ConfirmOutcome.Executed.class);
         ExecutionLegResult leg = ((ProposalExecutionService.ConfirmOutcome.Executed) outcome).legs().get(0);
         assertThat(leg.success()).isFalse();
-        assertThat(leg.errorReason()).contains("нотионалу");
+        assertThat(leg.errorCode()).isEqualTo("NOTIONAL_CAP_EXCEEDED");
+        assertThat(leg.errorParams()).containsKey("limit");
+        assertThat(leg.errorReason()).contains("notional");
         Mockito.verify(adapter, Mockito.never()).placeOrder(any());
     }
 
@@ -165,7 +167,8 @@ class ProposalExecutionServiceTest {
 
         ExecutionLegResult leg = ((ProposalExecutionService.ConfirmOutcome.Executed) outcome).legs().get(0);
         assertThat(leg.success()).isFalse();
-        assertThat(leg.errorReason()).contains("резерве (pending limit)");
+        assertThat(leg.errorCode()).isEqualTo("NOTIONAL_CAP_EXCEEDED");
+        assertThat(leg.errorReason()).contains("reserved (pending limit)");
         Mockito.verify(adapter, Mockito.never()).placeOrder(any());
     }
 

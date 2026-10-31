@@ -50,12 +50,12 @@ public class ProposalController {
     @PostMapping
     public ResponseEntity<?> create(@RequestBody CreateProposalRequest req) {
         if (req.accountId() == null || req.accountId().isBlank()) {
-            return ResponseEntity.badRequest().body(Map.of("error", "accountId обязателен — укажи, на каком аккаунте открывать"));
+            return ResponseEntity.badRequest().body(Map.of("error", "accountId is required — specify the account to open on"));
         }
 
         String symbol = Symbols.normalize(req.symbol());
         if (symbol == null) {
-            return ResponseEntity.badRequest().body(Map.of("error", "symbol: некорректный тикер"));
+            return ResponseEntity.badRequest().body(Map.of("error", "symbol: invalid ticker"));
         }
 
         BigDecimal entry = parseOrNull(req.entryPrice());
@@ -63,21 +63,21 @@ public class ProposalController {
         BigDecimal manualNotional = req.notional() != null && !req.notional().isBlank()
                 ? parseOrNull(req.notional()) : null;
         if (entry == null) {
-            return ResponseEntity.badRequest().body(Map.of("error", "entryPrice: некорректное число"));
+            return ResponseEntity.badRequest().body(Map.of("error", "entryPrice: invalid number"));
         }
         if (sl == null) {
-            return ResponseEntity.badRequest().body(Map.of("error", "slPrice: некорректное число"));
+            return ResponseEntity.badRequest().body(Map.of("error", "slPrice: invalid number"));
         }
         if (req.notional() != null && !req.notional().isBlank() && manualNotional == null) {
-            return ResponseEntity.badRequest().body(Map.of("error", "notional: некорректное число"));
+            return ResponseEntity.badRequest().body(Map.of("error", "notional: invalid number"));
         }
         if (req.tpPrice() != null && !req.tpPrice().isBlank() && parseOrNull(req.tpPrice()) == null) {
-            return ResponseEntity.badRequest().body(Map.of("error", "tpPrice: некорректное число"));
+            return ResponseEntity.badRequest().body(Map.of("error", "tpPrice: invalid number"));
         }
         String orderType = req.orderType() != null && !req.orderType().isBlank()
                 ? req.orderType().toUpperCase(java.util.Locale.ROOT) : "MARKET";
         if (!"MARKET".equals(orderType) && !"LIMIT".equals(orderType)) {
-            return ResponseEntity.badRequest().body(Map.of("error", "orderType: MARKET или LIMIT"));
+            return ResponseEntity.badRequest().body(Map.of("error", "orderType: MARKET or LIMIT"));
         }
 
         String proposalId = UUID.randomUUID().toString();

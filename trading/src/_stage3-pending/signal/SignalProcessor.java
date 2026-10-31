@@ -167,22 +167,22 @@ public class SignalProcessor {
     private record AccountTarget(String accountId, String exchange, BigDecimal notionalOverride,
                                  ExecutionAdapter adapter) {}
 
-    /** Venue без реестра контрактов — проверять «торгуется ли символ» там не по чему. */
+    /** Venue without a contract registry — there is nothing to check "is the symbol traded" against. */
     private static final java.util.Set<String> VENUES_WITHOUT_CONTRACTS = java.util.Set.of("PAPER", "BACKTEST");
 
     /**
-     * Биржа исполнения выбирается ОДНА (не веер по всем аккаунтам): по списку
-     * {@code trading.venue-priority} берётся первый аккаунт, у которого символ действительно
-     * торгуется. Одна монета не открывается на двух биржах разом —
-     * сравнение venue по костам закрыто, а двойная экспозиция на один сигнал не нужна.
+     * ONE execution exchange is chosen (not a fan-out over all accounts): by the list
+     * {@code trading.venue-priority} the first account on which the symbol is actually
+     * traded is taken. One coin is not opened on two exchanges at once —
+     * venue comparison by costs is closed, and double exposure on a single signal is not needed.
      *
-     * <p>«Торгуется» = у venue есть спеки контракта в config-service (V10, per-venue
-     * {@code symbol_rules}). Отсутствие спеков означает, что монеты на этой бирже нет —
-     * раньше такая нога уходила на биржу и падала ошибкой. PAPER/BACKTEST реестра контрактов не
-     * имеют и эту проверку пропускают.
+     * <p>"Traded" = the venue has contract specs in config-service (V10, per-venue
+     * {@code symbol_rules}). Absence of specs means the coin is not on this exchange —
+     * previously such a leg went to the exchange and failed with an error. PAPER/BACKTEST have no contract registry
+     * and skip this check.
      *
-     * <p>Ни одного подходящего аккаунта — пустой список: сигнал пропускается с явным логом и
-     * метрикой {@code signal_venue_unavailable_total}, а не молча.
+     * <p>No suitable account — an empty list: the signal is skipped with an explicit log and
+     * the {@code signal_venue_unavailable_total} metric, not silently.
      */
     private List<AccountTarget> resolveTargets(TradingSignalPayload signal) {
         String symbol = signal.symbol();
@@ -197,14 +197,14 @@ public class SignalProcessor {
             candidates.add(new AccountTarget(id, adapter.adapterName(), notional, adapter));
         });
 
-        // Выход обязан дойти до КАЖДОГО аккаунта, где позиция может стоять: приоритет venue тут
-        // не при чём, а не закрытая из-за маршрутизации позиция — прямой убыток. Закрытие
-        // важнее открытия — тот же принцип, что в risk-правилах.
+        // An exit must reach EVERY account where the position may be held: venue priority is irrelevant
+        // here, and a position left open due to routing is a direct loss. Closing
+        // matters more than opening — the same principle as in the risk rules.
         if ("CLOSE".equals(action) || "REDUCE".equals(action)) {
             return candidates;
         }
-        // FLIP несёт в себе закрытие: он должен идти туда, где позиция УЖЕ есть. Если её нет ни
-        // у кого, FLIP вырождается в OPEN и выбирает venue на общих основаниях (ниже).
+        // FLIP carries a close within it: it must go where the position ALREADY exists. If there is none
+        // anywhere, FLIP degenerates into OPEN and picks the venue on the general basis (below).
         if ("FLIP".equals(action)) {
             List<AccountTarget> holders = candidates.stream()
                     .filter(t -> hasOpenPosition(t.accountId(), symbol))
@@ -217,13 +217,13 @@ public class SignalProcessor {
 
         for (AccountTarget target : candidates) {
             if (!symbolTradableOn(target.exchange(), symbol)) {
-                log.info("Venue {} пропущена для {}: нет спеков контракта (символ там не торгуется)",
+                log.info("Venue {} skipped for {}: no contract specs (symbol is not traded there)",
                         target.exchange(), symbol);
                 continue;
             }
             return List.of(target);
         }
-        log.warn("Ни одна включённая биржа не торгует {} (кандидаты: {}) — сигнал пропущен",
+        log.warn("No enabled exchange trades {} (candidates: {}) — signal skipped",
                 symbol, candidates.stream().map(AccountTarget::exchange).toList());
         if (meterRegistry != null) {
             meterRegistry.counter("signal_venue_unavailable_total", "symbol", symbol).increment();
@@ -237,7 +237,7 @@ public class SignalProcessor {
                 .orElse(false);
     }
 
-    /** Позиция в списке приоритета; venue вне списка идут последними. */
+    /** Position in the priority list; venues outside the list go last. */
     private int venueRank(String exchange) {
         List<String> priority = props.getVenuePriority();
         int idx = priority == null ? -1 : priority.indexOf(exchange == null ? "" : exchange.toUpperCase());
@@ -251,22 +251,22 @@ public class SignalProcessor {
         if (configCache.hasSymbolRules(exchange, symbol)) {
             return true;
         }
-        // Пустой реестр биржи = синк спеков ещё не отработал или config-service недоступен.
-        // Трактовать это как «символ не торгуется» нельзя: один сбой конфигурации молча
-        // остановил бы торговлю целиком. Пропускаем вперёд и даём бирже ответить самой.
+        // An empty exchange registry = the spec sync has not run yet or config-service is unavailable.
+        // Treating this as "symbol is not traded" is not allowed: a single configuration failure would silently
+        // halt trading entirely. We pass it forward and let the exchange answer itself.
         if (!configCache.hasVenueRegistry(exchange)) {
-            log.warn("Реестр контрактов {} пуст — торгуемость {} не проверить, пропускаем вперёд",
+            log.warn("Contract registry {} is empty — cannot check tradability of {}, passing forward",
                     exchange, symbol);
             return true;
         }
-        // Реестр venue непуст, но именно этого символа в нём нет — не обязательно "не торгуется":
-        // мог просто никогда не попасть в узкий config.symbols. On-demand спрашиваем биржу
-        // напрямую (ADR-0032 Direction A) прежде чем сдаваться; live-смоук 18-19.08 (PAXGUSDT).
+        // The venue registry is non-empty, but this particular symbol is not in it — not necessarily "not traded":
+        // it may simply never have made it into the narrow config.symbols. On demand we ask the exchange
+        // directly (ADR-0032 Direction A) before giving up; live smoke 18-19.08 (PAXGUSDT).
         if (onDemandSymbolRuleClient != null) {
             Optional<SymbolRules> rules = onDemandSymbolRuleClient.lookup(exchange, symbol);
             if (rules.isPresent()) {
                 configCache.putSymbolRules(exchange, symbol, rules.get());
-                log.info("On-demand спеки контракта {} {} получены — символ торгуется", exchange, symbol);
+                log.info("On-demand contract specs {} {} received — symbol is traded", exchange, symbol);
                 return true;
             }
         }
@@ -409,11 +409,11 @@ public class SignalProcessor {
         // CLOSE/REDUCE with nothing open is a no-op, not an order.
         boolean exitAction = "CLOSE".equals(signal.action()) || "REDUCE".equals(signal.action());
 
-        // Битые per-strategy TP/SL-параметры отсекаем ДО Tx1 и до роутинга FLIP: внутри executeLeg
-        // команда PENDING_SUBMIT уже закоммичена, и throw оставлял бы её висеть навсегда без
-        // REJECTED-результата, а на FLIP-пути CLOSE-нога к тому моменту уже исполнена — позиция
-        // осталась бы закрытой без переоткрытия (ревью #88). Выходы не трогаем: битый параметр
-        // ВХОДА не должен мешать закрыть позицию.
+        // Broken per-strategy TP/SL parameters are rejected BEFORE Tx1 and before FLIP routing: inside executeLeg
+        // the PENDING_SUBMIT command is already committed, and a throw would leave it hanging forever with no
+        // REJECTED result, and on the FLIP path the CLOSE leg has already been executed by then — the position
+        // would remain closed without being reopened (review #88). Exits are not touched: a broken parameter of the
+        // ENTRY must not prevent closing the position.
         if (!exitAction) {
             String paramError = executionEngine.validateStrategyTpSlParams(signal);
             if (paramError != null) {
@@ -458,18 +458,18 @@ public class SignalProcessor {
             return;
         }
 
-        // Переворот по обратному сигналу (volspike-pressure-v1, параметр flipEnabled, дефолт off):
-        // OPEN противоположной стороной в живую позицию при включённом параметре → тот же
-        // close-then-open путь, что и явный FLIP (ADR-0019). При выключенном — прежнее поведение
-        // (риск-правила отвергнут вход в занятый символ).
+        // Reversal on an opposite signal (volspike-pressure-v1, flipEnabled parameter, default off):
+        // an opposite-side OPEN into a live position with the parameter enabled → the same
+        // close-then-open path as an explicit FLIP (ADR-0019). When disabled — the previous behavior
+        // (risk rules reject entry into an occupied symbol).
         if ("OPEN".equals(signal.action()) && posOpt.isPresent()
                 && "OPEN".equals(posOpt.get().getStatus())
                 && !"FLAT".equals(posOpt.get().getSide())
                 && !posOpt.get().getSide().equals(signal.side())
                 && isFlipEnabled(signal.strategyId())) {
-            // CLOSE-нога FLIP'а идёт мимо riskEngine (ADR-0019 Case 3) — поэтому базовые гейты
-            // проверяем ЗДЕСЬ: kill switch/auto-pause/выключенный символ не должны обходиться
-            // авто-переворотом (ревью #88, ADR-0018).
+            // The FLIP's CLOSE leg bypasses riskEngine (ADR-0019 Case 3) — so the basic gates
+            // are checked HERE: kill switch/auto-pause/a disabled symbol must not be bypassed
+            // by an auto-reversal (review #88, ADR-0018).
             if ("HALTED".equals(configCache.getGlobalTradingMode())
                     || riskEngine.isAutoPauseActive(accountId)
                     || configCache.isSymbolDisabled(sym)) {
@@ -604,7 +604,7 @@ public class SignalProcessor {
      * dust the exchange would refuse to close later (a stuck position the time-stop would
      * then fail to force-close in a reject loop).
      */
-    /** Параметр стратегии flipEnabled из config-service (hot-reload через ConfigCache). */
+    /** Strategy parameter flipEnabled from config-service (hot-reload via ConfigCache). */
     private boolean isFlipEnabled(String strategyId) {
         if (strategyId == null) {
             return false;
@@ -625,7 +625,7 @@ public class SignalProcessor {
         } catch (RuntimeException e) {
             return escalateReduce(signal, posQty, fraction, accountId, "fraction floors to zero");
         }
-        // Спеки той биржи, где позиция реально стоит: dust считается по её минималкам (V10).
+        // Specs of the exchange where the position actually sits: dust is computed using its minimums (V10).
         SymbolRules rules = configCache.getSymbolRules(position.getExchange(), sym);
         BigDecimal remainder = posQty.subtract(reduceQty);
         boolean dust = remainder.signum() <= 0
