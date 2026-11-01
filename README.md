@@ -50,6 +50,8 @@ selected account and previews its size and risk before anything is sent to an ex
 
 ![Risk preview: each account approved or rejected with quantity and risk in dollars](docs/screenshots/risk-preview.png)
 
+![Open positions on two accounts with their SL/TP, and the resting stop orders on each exchange](docs/screenshots/positions.png)
+
 ![Management tab: per-account risk profile, strategy gates and blacklist](docs/screenshots/management.png)
 
 ## Engineering notes
