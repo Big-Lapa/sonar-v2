@@ -54,6 +54,14 @@ selected account and previews its size and risk before anything is sent to an ex
 
 ![Management tab: per-account risk profile, strategy gates and blacklist](docs/screenshots/management.png)
 
+## Telegram bot
+
+`/status`, `/positions <account>`, `/be`, `/move`, `/closeall`, `/ban`, `/unpause` and `/lang`. The
+destructive ones (`/closeall`, `/move`, `/unpause`) need the PIN. The bot also relays the
+platform's notifications, such as a closed position or a missing stop.
+
+![/positions for two accounts, with entry, mark price and PnL](docs/screenshots/telegram-positions.png)
+
 ## Engineering notes
 
 The decisions that took the most thought, with pointers into the code.
