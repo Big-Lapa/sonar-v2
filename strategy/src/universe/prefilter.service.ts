@@ -11,7 +11,7 @@ interface Ticker24h {
 }
 
 /**
- * 4.4: universe = Binance perps ∩ BingX contracts − open positions (any account) −
+ * universe = Binance perps ∩ BingX contracts − open positions (any account) −
  * trading.symbol_blacklist − 24h volume < min − |24h move| > max − |7d move| > max. All cuts
  * happen BEFORE the LLM ever sees the list — one model call on the whole survivor set.
  */

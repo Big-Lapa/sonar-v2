@@ -8,7 +8,7 @@ import java.math.BigDecimal;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** 4.2: sum(planned risk of open positions) + candidate risk vs maxPortfolioRiskPct × equity. */
+/** sum(planned risk of open positions) + candidate risk vs maxPortfolioRiskPct × equity. */
 class PortfolioRiskRuleTest {
 
     private final PortfolioRiskRule rule = new PortfolioRiskRule();

@@ -1,4 +1,4 @@
-/** 4.5: per-model $/1M token rates. Web search $10/1000 regardless of model. */
+/** per-model $/1M token rates. Web search $10/1000 regardless of model. */
 export interface UsageCost {
   inputTokens: number;
   outputTokens: number;

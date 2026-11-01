@@ -14,9 +14,9 @@ import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * {@code GET /api/v1/accounts/{id}/live-positions} — `/positions` (5): PnL in the moment, straight
+ * {@code GET /api/v1/accounts/{id}/live-positions} — `/positions`: PnL in the moment, straight
  * from the exchange's own response, not the DB snapshot. Same 5s per-account throttle as balance
- * (6) — a live REST call per position check, not a poll.
+ * — a live REST call per position check, not a poll.
  *
  * <p>Venue-agnostic: resolves the account's {@code AccountReader} by venue instead of a
  * hardcoded BingX client.

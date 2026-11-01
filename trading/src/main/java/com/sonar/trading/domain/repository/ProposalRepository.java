@@ -13,7 +13,7 @@ public interface ProposalRepository extends JpaRepository<ProposalEntity, String
     List<ProposalEntity> findByStatusOrderByCreatedAtAsc(String status);
 
     /**
-     * Idempotent claim (4.1/4.8): flips PENDING -> CONFIRMED atomically. Returns the number of
+     * Idempotent claim: flips PENDING -> CONFIRMED atomically. Returns the number of
      * rows updated — 0 means someone else already confirmed/rejected it (a repeat tap), 1 means
      * this call owns execution.
      */

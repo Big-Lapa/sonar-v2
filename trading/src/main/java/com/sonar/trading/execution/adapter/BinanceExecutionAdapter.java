@@ -174,7 +174,7 @@ public class BinanceExecutionAdapter implements ExecutionAdapter {
      * Partial TP1 as an explicit reduce-only {@code TAKE_PROFIT_MARKET} with a real quantity —
      * {@code closePosition=true} (used by the two full-size legs above) is not an option here
      * since it always closes the whole position, not a fraction of it. Scaled down proportionally
-     * when the entry only partially filled, mirroring the parked pre-PR-D implementation this was
+     * when the entry only partially filled, mirroring the earlier implementation this was
      * ported from.
      */
     private void placePartialTakeProfit(String symbol, BinanceOrderSide exitSide, TpSlAttachment tpSl,

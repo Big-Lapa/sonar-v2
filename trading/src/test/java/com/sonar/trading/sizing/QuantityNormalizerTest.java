@@ -11,7 +11,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 
-/** ADR-0009 exchange clamp, rewired onto {@link SymbolRulesCache} (4.0: no config-service in v2). */
+/** Exchange clamp, rewired onto {@link SymbolRulesCache} (no config-service in v2). */
 class QuantityNormalizerTest {
 
     private static SymbolRulesCache cacheWith(SymbolRules rules) {

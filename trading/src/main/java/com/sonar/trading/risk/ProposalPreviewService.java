@@ -24,11 +24,11 @@ import java.util.List;
 
 /**
  * Sizes and risk-gates a candidate LONG entry for ONE targeted account (manual multi-exchange
- * management — 4.8, POST /api/v1/strategy/proposals). Does NOT place any order; that's stage 3
- * (execution). Legacy fan-out across every tradable account (the LLM auto-search path) is kept
+ * management — POST /api/v1/strategy/proposals). Does NOT place any order; that's the
+ * execution service's job. Legacy fan-out across every tradable account (the LLM auto-search path) is kept
  * as the {@code accountId == null} case for now, but every current caller passes an explicit id.
  *
- * <p>Equity is sourced from {@code daily_baseline} (the minute poller, stage 4, keeps it fresh);
+ * <p>Equity is sourced from {@code daily_baseline} (the minute poller keeps it fresh);
  * an account with no baseline row yet is rejected with an explicit reason rather than guessing.
  */
 @Service

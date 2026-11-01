@@ -3,7 +3,7 @@ package com.sonar.trading.domain.entity;
 import jakarta.persistence.*;
 
 /**
- * Second idempotency layer under {@code proposals.status} (4.1): a retried confirm for one
+ * Second idempotency layer under {@code proposals.status}: a retried confirm for one
  * account in the fan-out is keyed by (idempotency_key=proposal_id, account_id) so it doesn't
  * double-fire while other accounts are still pending.
  */

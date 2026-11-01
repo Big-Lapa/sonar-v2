@@ -10,10 +10,10 @@ import org.springframework.stereotype.Component;
 import java.math.BigDecimal;
 
 /**
- * The 3rd invariant, enforced twice: right after an entry fills (4.6 step 5) and again every
- * minute for every open position (4.7) — a position must never sit without a reduce-only stop on
+ * The 3rd invariant, enforced twice: right after an entry fills and again every
+ * minute for every open position — a position must never sit without a reduce-only stop on
  * the exchange. One remediation attempt per check; a still-missing stop after that is the
- * poller's job to escalate loudly (Telegram, stage 6), not to retry silently forever.
+ * poller's job to escalate loudly (Telegram), not to retry silently forever.
  *
  * <p>Venue-agnostic (grilled Q5): resolves the right {@link ExecutionAdapter} per call via
  * {@link ExecutionAdapterRegistry} instead of talking to a BingX-specific client. How a stop is

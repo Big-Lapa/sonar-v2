@@ -10,7 +10,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 
 /**
- * Clamps quantity to exchange constraints (4.2 sizing, step 5): stepSize, minQty, minNotional.
+ * Clamps quantity to exchange constraints: stepSize, minQty, minNotional.
  *
  * <p>Below the exchange minimum, this BUMPS UP to the minimum rather than rejecting — decided
  * with the user 2026-08-21 after a live run showed a far SL (small risk-based qty) getting

@@ -8,7 +8,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.util.Map;
 
-/** 4.8: {@code POST /api/v1/accounts/{id}/auto-pause/clear} — `/unpause` (5). */
+/** {@code POST /api/v1/accounts/{id}/auto-pause/clear} — `/unpause`. */
 @RestController
 @RequestMapping("/api/v1/accounts")
 public class AutoPauseController {

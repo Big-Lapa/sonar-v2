@@ -11,7 +11,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 
-/** 4.2 sizing formula: strict order of the three clamps, and the minNotional-past-limit reject. */
+/** Sizing formula: strict order of the three clamps, and the minNotional-past-limit reject. */
 class RiskBasedPositionSizerTest {
 
     private static AccountRiskProfile profile(String riskPct, String maxNotional, int maxLeverage) {

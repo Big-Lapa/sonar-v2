@@ -11,7 +11,7 @@ export interface VolumeProfile {
 }
 
 /**
- * 4.3.2 — 1:1 port of the coin-analysis skill's reference algorithm (section 3): daily bars,
+ * Volume profile: daily bars,
  * bin = 0.5% of price (or 0.005 absolute below $1), each bar's volume spread evenly across its
  * high-low range, top-10 bins by volume = HVN.
  */

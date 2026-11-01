@@ -9,7 +9,7 @@ import java.util.Optional;
 
 /**
  * Triggers auto-pause when equity has fallen {@code maxEquityDrawdownPct} from its historical
- * peak (4.2) — not a daily measure, and not auto-cleared on the UTC-day boundary like
+ * peak — not a daily measure, and not auto-cleared on the UTC-day boundary like
  * {@link DailyLossLimitRule}; only a human clears it. Risk-reducing actions always allowed.
  */
 @Component

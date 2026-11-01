@@ -6,7 +6,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import jakarta.persistence.Version;
 
-/** Per-account risk profile (4.2). No per-symbol profiles exist in v2. */
+/** Per-account risk profile. No per-symbol profiles exist in v2. */
 @Entity
 @Table(name = "account_risk", schema = "trading")
 public class AccountRiskEntity {

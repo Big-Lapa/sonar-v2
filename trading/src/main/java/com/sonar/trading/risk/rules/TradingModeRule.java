@@ -7,7 +7,7 @@ import org.springframework.stereotype.Component;
 import java.util.Optional;
 
 /**
- * Blocks new entries while auto-pause is active (4.2). Risk-reducing actions (CLOSE/REDUCE) are
+ * Blocks new entries while auto-pause is active. Risk-reducing actions (CLOSE/REDUCE) are
  * always allowed: a paused account must still be able to flatten exposure. v2 has no global kill
  * switch (no config-service) — auto-pause is the only halt mechanism.
  */

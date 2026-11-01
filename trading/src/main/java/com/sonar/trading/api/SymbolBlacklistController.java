@@ -8,8 +8,8 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 import java.util.Map;
 
-/** 4.8: {@code GET /api/v1/strategy/blacklist} — symbols excluded before the universe reaches the LLM.
- *  Add/remove here too (`/ban`, stage 6) so the admin blacklist block (6) has a home to call. */
+/** {@code GET /api/v1/strategy/blacklist} — symbols excluded before the universe reaches the LLM.
+ *  Add/remove here too (`/ban`) so the admin blacklist block has a home to call. */
 @RestController
 @RequestMapping("/api/v1/strategy/blacklist")
 public class SymbolBlacklistController {

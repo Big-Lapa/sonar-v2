@@ -16,7 +16,7 @@ import org.slf4j.LoggerFactory;
 import java.util.Map;
 
 /**
- * Operator-facing event queued by the minute poller (4.7/4.8). Trading has no way to push into
+ * Operator-facing event queued by the minute poller. Trading has no way to push into
  * Telegram (that lives in `strategy`) and `strategy` has no incoming REST — so events land here
  * and `strategy` pulls them with its own minute tick via {@code GET /notifications?after=}.
  */

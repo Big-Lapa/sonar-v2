@@ -10,8 +10,8 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 /**
- * 4.8: {@code GET /api/v1/notifications?after=} — `strategy` has no incoming REST, so it pulls
- * this queue on its own minute tick and relays to Telegram (stage 6).
+ * {@code GET /api/v1/notifications?after=} — `strategy` has no incoming REST, so it pulls
+ * this queue on its own minute tick and relays to Telegram.
  */
 @RestController
 @RequestMapping("/api/v1/notifications")

@@ -21,7 +21,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Evaluates a proposal leg through all registered risk rules in priority order. Persists
- * auto-pause state so it survives restarts. No metrics registry (4.0: logs + Telegram only,
+ * auto-pause state so it survives restarts. No metrics registry (logs + Telegram only,
  * no Prometheus in v2) — breaches are logged and surfaced in the confirm/report flow instead.
  */
 @Service
@@ -76,7 +76,7 @@ public class DefaultRiskEngine implements RiskEngine {
 
     /**
      * Auto-clears DAILY_LOSS pauses once UTC-day rolls over — the poller's daily_baseline row
-     * has already reset by then (4.2). MAX_DRAWDOWN pauses are never auto-cleared — a human clears
+     * has already reset by then. MAX_DRAWDOWN pauses are never auto-cleared — a human clears
      * them after review.
      */
     @Scheduled(fixedDelayString = "${trading.auto-pause.rollover-check-ms:60000}")

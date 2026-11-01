@@ -44,11 +44,11 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * 4.6 execution flow — full multi-venue routing (grilled plan): confirming a proposal fans it out
+ * Execution flow with full multi-venue routing: confirming a proposal fans it out
  * across every tradable account with a free slot, on whichever venue that account is wired to
  * ({@link ExecutionAdapterRegistry}, resolved per {@link AccountProps#exchange()}), not just
- * BingX. Binance still isn't wired (parked in {@code _stage3-pending}) — an account on any venue
- * without a registered adapter fails that one leg with a clear reason, same as before.
+ * BingX. An account on a venue without a registered adapter (Pionex is read-only) fails that one
+ * leg with a clear reason.
  *
  * <p>Sizing + risk gates are recomputed fresh per leg (not trusted from proposal-creation time),
  * MARKET entry with attached absolute TP/SL, then a best-effort stop-verification pass. A partial
@@ -58,7 +58,7 @@ import java.util.UUID;
 public class ProposalExecutionService {
 
     private static final Logger log = LoggerFactory.getLogger(ProposalExecutionService.class);
-    private static final BigDecimal MAX_PRICE_DRIFT = new BigDecimal("0.005"); // 0.5% (4.6 step 1)
+    private static final BigDecimal MAX_PRICE_DRIFT = new BigDecimal("0.005"); // 0.5%
 
     private final ProposalRepository proposals;
     private final AccountRegistry accountRegistry;
@@ -185,7 +185,7 @@ public class ProposalExecutionService {
      * one anyway (a rollback can't undo a filled order), and self-invocation from {@link #confirm}
      * would bypass the Spring proxy regardless. Each {@code repository.save} commits on its own;
      * a crash mid-leg leaves partial rows (e.g. an OrderCommand with no matching Order) — the
-     * stop-watchdog/reconciliation poller (stage 4) is what cleans that up, same as v1's design.
+     * stop-watchdog/reconciliation poller is what cleans that up, same as v1's design.
      */
     private ExecutionLegResult executeLeg(ProposalEntity proposal, AccountLegPreview leg,
                                           BigDecimal sl, BigDecimal tp) {
@@ -289,7 +289,7 @@ public class ProposalExecutionService {
         // A LIMIT order still resting after the short poll window is normal (it's away from
         // market on purpose) — leave it live on the exchange, don't cancel it and don't report it
         // as a failure. Nothing gets recorded as a position until it actually fills; the
-        // reconciliation poller (stage 4) is what picks that up, same as any other exchange-side
+        // reconciliation poller is what picks that up, same as any other exchange-side
         // fill this system didn't directly witness.
         if (isLimit && result.state() != AdapterOrderState.FILLED
                 && result.state() != AdapterOrderState.REJECTED
@@ -362,7 +362,7 @@ public class ProposalExecutionService {
             position.setOpenedAt(System.currentTimeMillis());
             position.setSlPrice(sl.toPlainString());
             position.setTpPrice(tp.toPlainString());
-            // 4.6 step 5 / 3rd invariant: the venue attaches TP/SL atomically at entry, but we
+            // 3rd invariant: the venue attaches TP/SL atomically at entry, but we
             // verify it actually landed rather than trusting the attach silently succeeded.
             stopVerified = stopGuard.verifyAndRepair(account.id(), proposal.getSymbol(), finalQty, sl,
                     stopGuard.inspect(account.id(), proposal.getSymbol()));

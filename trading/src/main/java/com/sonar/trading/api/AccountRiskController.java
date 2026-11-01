@@ -7,7 +7,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-/** Per-account risk profile CRUD (4.1/4.2/6 — admin "Risk" block, PUT with optimistic lock). */
+/** Per-account risk profile CRUD (admin "Risk" block, PUT with optimistic lock). */
 @RestController
 @RequestMapping("/api/v1/accounts")
 public class AccountRiskController {

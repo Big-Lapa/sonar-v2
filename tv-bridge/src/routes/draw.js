@@ -4,7 +4,7 @@ const { evaluate } = require('../cdp');
 const router = express.Router();
 
 /** Every shape this bridge draws is tagged so a redraw only touches its own lines — the user's
- *  own manual drawings (untagged) are never inventoried or removed (skill 4.0: draw_clear
+ *  own manual drawings (untagged) are never inventoried or removed (draw_clear
  *  forbidden precisely because it takes those with it). */
 const TAG = '[sonar]';
 
@@ -16,7 +16,7 @@ const COLOR_BY_KIND = {
 
 /**
  * POST /draw  { symbol, levels: [{price, label, kind: support|resistance|hvn}] }
- * The bridge does NOT compute levels itself (4.3: "the bridge does not compute its own — otherwise the picture
+ * The bridge does NOT compute levels itself ("the bridge does not compute its own — otherwise the picture
  * will diverge from the numbers") — it only draws what `strategy` already computed.
  */
 router.post('/draw', async (req, res) => {

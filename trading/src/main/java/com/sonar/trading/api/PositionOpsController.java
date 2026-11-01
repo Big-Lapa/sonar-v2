@@ -7,7 +7,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
 
-/** 4.8: {@code POST /api/v1/trade/close-all}, {@code /positions/{id}/breakeven}, {@code /positions/{id}/stops}. */
+/** {@code POST /api/v1/trade/close-all}, {@code /positions/{id}/breakeven}, {@code /positions/{id}/stops}. */
 @RestController
 public class PositionOpsController {
 

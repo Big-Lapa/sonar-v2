@@ -10,7 +10,7 @@ const INTERVAL_MS: Record<string, number> = {
 };
 
 /**
- * Binance REST klines for the perp (4.3): 4h x 200 (~33d, near structure), 1d x 300
+ * Binance REST klines for the perp: 4h x 200 (~33d, near structure), 1d x 300
  * (~10mo, macro + volume profile). Disk cache per symbol/interval, invalidated by the age of
  * the last cached bar's close time (not a fixed TTL) — a cache is stale exactly when a new
  * bar should already exist.

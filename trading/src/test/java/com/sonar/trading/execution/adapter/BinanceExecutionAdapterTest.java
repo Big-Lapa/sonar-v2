@@ -31,8 +31,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * Mirrors {@code BybitExecutionAdapterTest}: this adapter shipped with zero coverage (parked in
- * {@code _stage3-pending} since the v1->v2 migration), so these tests pin the behaviour a
+ * Mirrors {@code BybitExecutionAdapterTest}: this adapter shipped with zero coverage, so these tests pin the behaviour a
  * from-scratch implementation must get right — the OCO-equivalent {@code closePosition=true}
  * conditional exits, {@code /fapi/v1/openOrders}-based stop inspection (unlike Bybit's
  * position-level fields, Binance's protective orders are ordinary orders), and the pre-entry

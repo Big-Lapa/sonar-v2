@@ -65,7 +65,7 @@ public class PositionEntity {
     @Column(name = "updated_at", nullable = false)
     private long updatedAt;
 
-    /** Structural SL/TP levels and the planned risk fixed at open (4.1/4.2) — decimal strings. */
+    /** Structural SL/TP levels and the planned risk fixed at open — decimal strings. */
     @Column(name = "sl_price", length = 30)
     private String slPrice;
 
@@ -75,7 +75,7 @@ public class PositionEntity {
     @Column(name = "planned_risk_amount", length = 30)
     private String plannedRiskAmount;
 
-    /** Set by the minute poller (4.7) when DB quantity diverges from the exchange's. */
+    /** Set by the minute poller when DB quantity diverges from the exchange's. */
     @Column(name = "qty_mismatch", nullable = false)
     private boolean qtyMismatch = false;
 

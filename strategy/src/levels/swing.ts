@@ -7,7 +7,7 @@ export interface SwingLevel {
 }
 
 /**
- * 4.3.1: local extremum by raw bars (lookback 3 — a strict local max/min over a 7-bar window),
+ * Local extremum by raw bars (lookback 3 — a strict local max/min over a 7-bar window),
  * then clustered — prices within 0.3% of each other collapse into one level, weight = touch count.
  */
 export function findSwingLevels(bars: Kline[], lookback = 3, clusterPct = 0.003): SwingLevel[] {

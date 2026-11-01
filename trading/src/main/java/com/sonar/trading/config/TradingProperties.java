@@ -6,7 +6,7 @@ import org.springframework.stereotype.Component;
 /**
  * v2's execution surface is far smaller than v1's (no maker-close, no per-strategy TP/SL
  * percentages, no global exchange mode) — TP/SL are always absolute prices from the proposal's
- * levels (4.6). The only thing the execution adapters still need from config is which price
+ * levels. The only thing the execution adapters still need from config is which price
  * source each venue's conditional TP/SL orders trigger against.
  */
 @Component

@@ -6,7 +6,7 @@ import com.sonar.trading.i18n.Msg;
 import java.math.BigDecimal;
 import java.util.Map;
 
-/** One account's line in the post-confirm execution report (4.6 step 7 / 5). */
+/** One account's line in the post-confirm execution report. */
 public record ExecutionLegResult(
         String accountId,
         boolean success,

@@ -8,7 +8,7 @@ import java.math.BigDecimal;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** 4.2: today's REALIZED loss vs maxDailyRealizedLossPct × equity at 00:00 UTC. */
+/** today's REALIZED loss vs maxDailyRealizedLossPct × equity at 00:00 UTC. */
 class DailyLossLimitRuleTest {
 
     private final DailyLossLimitRule rule = new DailyLossLimitRule();

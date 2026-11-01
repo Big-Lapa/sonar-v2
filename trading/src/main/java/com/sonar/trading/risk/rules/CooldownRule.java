@@ -10,8 +10,8 @@ import java.util.Optional;
 /**
  * Blocks new OPEN entries during a cooldown window after a losing trade on the same symbol.
  * Global duration ({@code trading.risk.cooldown-after-loss-ms}) — v2's {@code account_risk}
- * table (4.1) has no per-account cooldown field, unlike v1's config-service RiskProfile; kept as
- * a simple app property since it isn't part of the money-sizing decisions in 4.2.
+ * table has no per-account cooldown field, unlike v1's config-service RiskProfile; kept as
+ * a simple app property since it isn't part of the money-sizing decisions.
  */
 @Component
 public class CooldownRule implements RiskRule {
