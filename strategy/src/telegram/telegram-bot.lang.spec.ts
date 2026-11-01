@@ -169,6 +169,15 @@ describe('TelegramBotService interface language', () => {
       expect(text(OTHER_CHAT)).toBe(`[POSITION_ADOPTED] acc1 BTCUSDT: ${t('en', 'msg.POSITION_ADOPTED', event.params)}`);
     });
 
+    it('a message without language_code does not reset the detected language', async () => {
+      await say('/foo', { languageCode: 'ru' });
+      await say('/foo'); // Telegram sent no code this time
+      sent = [];
+      await relay([event]);
+      const text = sent.find((m) => String(m.chat) === String(CHAT))!.text;
+      expect(text).toBe(`[POSITION_ADOPTED] acc1 BTCUSDT: ${t('ru', 'msg.POSITION_ADOPTED', event.params)}`);
+    });
+
     it('an explicit /lang beats the detected language', async () => {
       await say('/lang en', { languageCode: 'ru' });
       sent = [];

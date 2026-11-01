@@ -89,7 +89,8 @@ export class TelegramBotService implements OnModuleInit {
     const text: string = (msg.text ?? '').trim();
     if (!text) return;
     const lang = this.langOf(chatId, msg.from?.language_code);
-    this.detectedLangs.set(String(chatId), langFromTelegram(msg.from?.language_code));
+    // Remember only a code Telegram actually sent: a message without one must not reset the chat to English.
+    if (msg.from?.language_code) this.detectedLangs.set(String(chatId), langFromTelegram(msg.from.language_code));
 
     // Keyed by chat AND sender, so in a group only the person who asked can answer the PIN prompt.
     const pinKey = `${chatId}:${msg.from?.id ?? ''}`;

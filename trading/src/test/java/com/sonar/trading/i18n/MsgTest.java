@@ -30,9 +30,10 @@ class MsgTest {
 
     @Test
     void ofTreatsNullValueAsAbsentAndKeepsTheRest() {
-        Msg msg = Msg.of(MessageCode.POSITION_CLOSED, "symbol", "BTCUSDT", "pnl", null, "hours", 1, "minutes", 5);
-        assertThat(msg.params()).containsOnlyKeys("symbol", "hours", "minutes");
-        assertThat(msg.text()).isEqualTo("BTCUSDT closed, held 1h5m");
+        Msg msg = Msg.of(MessageCode.NO_OPEN_POSITIONS, "symbol", null);
+        assertThat(msg.params()).isEmpty();
+        assertThat(msg.text()).isEqualTo("no open positions");
+        assertThat(Msg.of(MessageCode.NO_OPEN_POSITIONS, "symbol", "BTCUSDT").text()).isEqualTo("no open positions for BTCUSDT");
     }
 
     @Test

@@ -63,8 +63,8 @@ public enum MessageCode {
     QTY_MISMATCH("quantity mismatch: DB={db} exchange={exchange}"),
     MISSING_STOP("position has no stop, auto-recovery failed — manual intervention required"),
     LIMIT_FILLED_NO_STOP("limit order filled ({qty} @ {price}), but no stop found on the exchange — check the position's protection"),
-    POSITION_CLOSED("{symbol} closed, [PnL={pnl}, ]held {hours}h{minutes}m"),
-    POSITION_CLOSED_DETECTED("{symbol} closed, [PnL={pnl} (since detection, not since open), ]held {hours}h{minutes}m"),
+    POSITION_CLOSED("{symbol} closed, PnL={pnl}, held {hours}h{minutes}m"),
+    POSITION_CLOSED_DETECTED("{symbol} closed, PnL={pnl} (since detection, not since open), held {hours}h{minutes}m"),
     POSITION_CLOSED_PNL_PENDING("{symbol} closed, PnL pending, held {hours}h{minutes}m"),
     POSITION_CLOSED_DETECTED_PNL_PENDING("{symbol} closed, PnL pending (since detection, not since open), held {hours}h{minutes}m"),
     HOLD_REMINDER("{symbol} held for {days} d. (threshold {threshold})");

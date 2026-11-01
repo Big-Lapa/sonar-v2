@@ -131,7 +131,11 @@ export interface OpResult {
   params?: Record<string, string> | null;
 }
 
-/** Ops endpoints return 409 with a structured OpResult body on a business failure — not an exception. */
+/**
+ * Manual-ops endpoints answer 409 with a structured {ok:false, code, params, message} body on a
+ * business failure; the bot reads it (and translates by code) instead of getting an axios exception.
+ * Passed per call, not set on the client: other endpoints must keep throwing on 409.
+ */
 const OP_RESULT_CONFIG = { validateStatus: (s: number) => (s >= 200 && s < 300) || s === 409 };
 
 /** REST client to `trading` (4.8) — X-Admin-Token on every call. */
@@ -140,8 +144,6 @@ export class TradingApiService {
   private readonly client: AxiosInstance;
 
   constructor() {
-    // Manual-ops endpoints answer 409 with a structured {ok:false, code, params, message} body;
-    // the bot must read it (and translate by code) instead of seeing an axios exception.
     this.client = axios.create({
       baseURL: process.env.TRADING_URL ?? 'http://trading:8080',
       timeout: 10_000,
