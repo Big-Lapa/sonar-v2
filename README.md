@@ -37,8 +37,8 @@ flowchart LR
 | [`strategy`](strategy) | Node 22, NestJS 11, TypeScript | Telegram bot: balances, positions, stop moves, `/closeall`, notification relay. Answers only allow-listed chats; destructive commands need a PIN with a lockout |
 | [`tv-bridge`](tv-bridge) | Node, Express, Chrome DevTools Protocol | Experimental host-side bridge to TradingView Desktop (levels drawing, screenshots). Not used by the running stack |
 
-Exchanges: Binance, Bybit and BingX are fully wired (reader and execution adapter). Pionex is
-read-only because its futures API exposes no TP/SL, so the platform refuses to pretend it can
+Exchanges: Bybit and BingX are fully wired (reader and execution adapter). Binance has both too,
+but its stop orders are currently rejected (see the limitations below). Pionex is read-only because its futures API exposes no TP/SL, so the platform refuses to pretend it can
 protect a position there.
 
 ## The admin panel
@@ -130,6 +130,16 @@ codes it renders.
 
 ## Known limitations and roadmap
 
+- **Binance stops do not work yet.** The Binance futures testnet rejects `STOP_MARKET` and
+  `TAKE_PROFIT_MARKET` on the regular order endpoint ("use the Algo Order API instead"), so an
+  entry is filled without its SL/TP. `StopGuard` flags the missing stop but cannot fix it. Moving the Binance adapter to the Algo Order API is the next fix; do not use the Binance
+  account for anything but the entry until then.
+- Confirming a market entry can race with the pending-order poller: both try to insert the same
+  position row, the loser hits a unique-key error and the confirm call returns HTTP 500 even
+  though the order was placed. In the one case observed the position was recorded correctly.
+- On BingX the position shows a different leverage (60x) than the one requested (10x). Not yet
+  investigated.
+- The Trading tab loads open orders only after a refresh click, not when the page opens.
 - A position adopted from the exchange (opened outside the platform) gets `openedAt` = the moment
   the poller found it, so PnL accrued before that is missing from its close notification. It is
   marked in [`MinutePoller`](trading/src/main/java/com/sonar/trading/execution/MinutePoller.java)
