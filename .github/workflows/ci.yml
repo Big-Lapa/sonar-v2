@@ -1,0 +1,58 @@
+name: CI
+
+# Runs on pull requests (every push to a PR branch), after a merge to master,
+# and on demand. Pushes to branches without an open PR do not trigger it.
+on:
+  pull_request:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  trading:
+    name: trading (Java 21)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: trading
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+      - run: mvn -B verify
+
+  strategy:
+    name: strategy (Node 22)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: strategy
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: strategy/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - run: npm test
+
+  docker:
+    name: docker compose build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      # compose interpolates ${VARS} even for `build`; the example file has them all, empty
+      - run: cp .env.example .env
+      - run: docker compose build
