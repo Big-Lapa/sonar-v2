@@ -89,6 +89,8 @@ export interface AccountLegPreview {
   qty: string | null;
   riskUsd: string | null;
   rejectReason: string | null;
+  rejectCode?: string | null;
+  rejectParams?: Record<string, string> | null;
 }
 
 export interface Position {
@@ -117,7 +119,24 @@ export interface ExecutionLegResult {
   riskUsd: string | null;
   stopVerified: boolean;
   errorReason: string | null;
+  errorCode?: string | null;
+  errorParams?: Record<string, string> | null;
 }
+
+/** Result of a manual position operation: `code`/`params` are translatable, `message` is the English fallback. */
+export interface OpResult {
+  ok: boolean;
+  message: string;
+  code?: string | null;
+  params?: Record<string, string> | null;
+}
+
+/**
+ * Manual-ops endpoints answer 409 with a structured {ok:false, code, params, message} body on a
+ * business failure; the bot reads it (and translates by code) instead of getting an axios exception.
+ * Passed per call, not set on the client: other endpoints must keep throwing on 409.
+ */
+const OP_RESULT_CONFIG = { validateStatus: (s: number) => (s >= 200 && s < 300) || s === 409 };
 
 /** REST client to `trading` (4.8) — X-Admin-Token on every call. */
 @Injectable()
@@ -183,17 +202,17 @@ export class TradingApiService {
   }
 
   async closeAll(account: string, symbol?: string) {
-    const resp = await this.client.post<{ ok: boolean; message: string }>('/api/v1/trade/close-all', { account, symbol });
+    const resp = await this.client.post<OpResult>('/api/v1/trade/close-all', { account, symbol }, OP_RESULT_CONFIG);
     return resp.data;
   }
 
   async breakeven(positionId: number) {
-    const resp = await this.client.post<{ ok: boolean; message: string }>(`/api/v1/positions/${positionId}/breakeven`);
+    const resp = await this.client.post<OpResult>(`/api/v1/positions/${positionId}/breakeven`, undefined, OP_RESULT_CONFIG);
     return resp.data;
   }
 
   async moveStop(positionId: number, type: 'sl' | 'tp', price: string) {
-    const resp = await this.client.post<{ ok: boolean; message: string }>(`/api/v1/positions/${positionId}/stops`, { type, price });
+    const resp = await this.client.post<OpResult>(`/api/v1/positions/${positionId}/stops`, { type, price }, OP_RESULT_CONFIG);
     return resp.data;
   }
 
@@ -231,7 +250,7 @@ export class TradingApiService {
   }
 
   async getNotifications(after: number) {
-    const resp = await this.client.get<Array<{ id: number; kind: string; accountId: string | null; symbol: string | null; message: string; createdAt: number }>>(
+    const resp = await this.client.get<Array<{ id: number; kind: string; accountId: string | null; symbol: string | null; message: string; code?: string | null; params?: Record<string, string> | null; createdAt: number }>>(
       '/api/v1/notifications',
       { params: { after } },
     );

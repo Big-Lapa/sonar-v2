@@ -1,5 +1,7 @@
 package com.sonar.trading.execution;
 
+import com.sonar.trading.i18n.MessageCode;
+import com.sonar.trading.i18n.Msg;
 import com.sonar.trading.config.AccountProps;
 import com.sonar.trading.config.AccountRegistry;
 import com.sonar.trading.domain.entity.AccountRiskEntity;
@@ -97,7 +99,7 @@ public class ProposalExecutionService {
     public sealed interface ConfirmOutcome {
         record Executed(List<ExecutionLegResult> legs) implements ConfirmOutcome {}
         record AlreadyProcessed(List<ExecutionLegResult> legs) implements ConfirmOutcome {}
-        record Aborted(String reason) implements ConfirmOutcome {}
+        record Aborted(Msg msg) implements ConfirmOutcome {}
         record NotFound() implements ConfirmOutcome {}
     }
 
@@ -119,9 +121,9 @@ public class ProposalExecutionService {
         // market; comparing it to the live price would abort perfectly normal limit orders.
         boolean isLimit = "LIMIT".equals(proposal.getOrderType());
         if (!isLimit) {
-            String driftReason = checkPriceDrift(proposal.getSymbol(), entry);
+            Msg driftReason = checkPriceDrift(proposal.getSymbol(), entry);
             if (driftReason != null) {
-                log.warn("[{}] confirm aborted: {}", proposalId, driftReason);
+                log.warn("[{}] confirm aborted: {}", proposalId, driftReason.text());
                 return new ConfirmOutcome.Aborted(driftReason);
             }
         }
@@ -152,29 +154,29 @@ public class ProposalExecutionService {
      * {@code TRADING_ACCOUNTS_0}, {@code _1}, ...) is deterministic across restarts and matches
      * pre-multi-venue behaviour (the only account/venue that existed was always account 0's BingX).
      */
-    private String checkPriceDrift(String symbol, BigDecimal proposalEntry) {
+    private Msg checkPriceDrift(String symbol, BigDecimal proposalEntry) {
         ExecutionAdapter adapter = accountRegistry.all().stream()
                 .flatMap(a -> adapters.forAccount(a.id()).stream())
                 .findFirst()
                 .orElse(null);
         if (adapter == null) {
-            return "нет подключённой биржи для проверки цены — исполнение отменено";
+            return Msg.of(MessageCode.NO_EXCHANGE_FOR_PRICE_CHECK);
         }
         try {
             BigDecimal live = adapter.getMarkPrice(symbol);
             if (live == null || live.signum() <= 0) {
-                return "не удалось получить текущую цену " + symbol + " — исполнение отменено";
+                return Msg.of(MessageCode.PRICE_UNAVAILABLE, "symbol", symbol);
             }
             BigDecimal drift = live.subtract(proposalEntry).abs()
                     .divide(proposalEntry, 10, java.math.RoundingMode.HALF_UP);
             if (drift.compareTo(MAX_PRICE_DRIFT) > 0) {
-                return "цена ушла от предложения: entry=" + proposalEntry + " сейчас=" + live
-                        + " drift=" + drift.multiply(new BigDecimal("100")) + "% (лимит 0.5%)";
+                return Msg.of(MessageCode.PRICE_DRIFT, "entry", proposalEntry, "now", live,
+                        "drift", drift.multiply(new BigDecimal("100")));
             }
             return null;
         } catch (RuntimeException e) {
             log.error("checkPriceDrift failed for {}: {}", symbol, e.toString());
-            return "биржа недоступна для проверки цены — исполнение отменено: " + e.getMessage();
+            return Msg.of(MessageCode.EXCHANGE_UNAVAILABLE_FOR_PRICE, "error", e.getMessage());
         }
     }
 
@@ -189,20 +191,20 @@ public class ProposalExecutionService {
                                           BigDecimal sl, BigDecimal tp) {
         String accountId = leg.accountId();
         if (!leg.approved()) {
-            return ExecutionLegResult.failed(accountId, leg.rejectReason());
+            return ExecutionLegResult.failed(accountId, leg.rejectCode(), leg.rejectParams(), leg.rejectReason());
         }
         AccountProps account = accountRegistry.byId(accountId).orElse(null);
         if (account == null) {
-            return ExecutionLegResult.failed(accountId, "аккаунт не найден в реестре");
+            return ExecutionLegResult.failed(accountId, Msg.of(MessageCode.ACCOUNT_NOT_FOUND));
         }
         ExecutionAdapter adapter = adapters.forAccount(account.id()).orElse(null);
         if (adapter == null) {
             return ExecutionLegResult.failed(accountId,
-                    "venue '" + account.exchange() + "' не подключена в этой версии");
+                    Msg.of(MessageCode.VENUE_UNSUPPORTED, "venue", account.exchange()));
         }
         String exchangeLabel = account.exchange().toUpperCase(java.util.Locale.ROOT);
 
-        // Adding to an already-open position ("доливка"): the incremental entry order carries no
+        // Adding to an already-open position ("add-on"): the incremental entry order carries no
         // TP/SL attachment. Bybit's stop is position-level and already covers the combined qty
         // untouched; BingX's attachment would otherwise create a SECOND reduce-only order sized to
         // just this increment, leaving the original stop covering only the old qty. The BingX
@@ -226,7 +228,7 @@ public class ProposalExecutionService {
         // would otherwise sum to N times the account limit with nothing in the pipeline noticing
         // until they've all landed.
         {
-            String rejectReason = checkNotionalCaps(accountId, proposal.getSymbol(),
+            Msg rejectReason = checkNotionalCaps(accountId, proposal.getSymbol(),
                     existingPosition, leg.qty(), new BigDecimal(proposal.getEntryPrice()));
             if (rejectReason != null) {
                 return ExecutionLegResult.failed(accountId, rejectReason);
@@ -235,7 +237,7 @@ public class ProposalExecutionService {
 
         String idempotencyKey = proposal.getProposalId();
         if (signalInboxRepository.findByIdempotencyKeyAndAccountId(idempotencyKey, accountId).isPresent()) {
-            return ExecutionLegResult.failed(accountId, "уже обрабатывалось (idempotency)");
+            return ExecutionLegResult.failed(accountId, Msg.of(MessageCode.ALREADY_PROCESSED));
         }
         signalInboxRepository.save(new SignalInboxEntity(idempotencyKey, accountId, idempotencyKey,
                 System.currentTimeMillis()));
@@ -266,7 +268,7 @@ public class ProposalExecutionService {
                     System.currentTimeMillis());
             orderRepository.save(order);
             markInboxDone(idempotencyKey, accountId);
-            return ExecutionLegResult.failed(accountId, "ошибка размещения ордера: " + e.getMessage());
+            return ExecutionLegResult.failed(accountId, Msg.of(MessageCode.ORDER_PLACE_FAILED, "error", e.getMessage()));
         }
 
         int attempts = 0;
@@ -307,7 +309,7 @@ public class ProposalExecutionService {
         if (result.state() != AdapterOrderState.FILLED) {
             markInboxDone(idempotencyKey, accountId);
             return ExecutionLegResult.failed(accountId,
-                    "ордер не подтвердился как FILLED за 5 попыток (state=" + result.state() + ")");
+                    Msg.of(MessageCode.ORDER_NOT_FILLED, "state", result.state()));
         }
 
         BigDecimal filledQty = result.filledQty() != null ? result.filledQty() : leg.qty();
@@ -394,7 +396,7 @@ public class ProposalExecutionService {
      * in the pipeline, so N of them under the per-order cap would each pass this gate independently
      * and could all land together, well past the account's real limit).
      */
-    private String checkNotionalCaps(String accountId, String symbol, PositionEntity existingPosition,
+    private Msg checkNotionalCaps(String accountId, String symbol, PositionEntity existingPosition,
                                      BigDecimal legQty, BigDecimal entry) {
         AccountRiskEntity riskEntity = accountRiskRepository.findById(accountId).orElse(null);
         if (riskEntity == null) {
@@ -409,11 +411,12 @@ public class ProposalExecutionService {
         BigDecimal committedNotional = existingNotional.add(pendingNotional).add(legNotional);
 
         if (committedNotional.compareTo(profile.maxPositionNotional()) > 0) {
-            return "превысит лимит аккаунта по нотионалу: открыто $" + existingNotional.setScale(2, java.math.RoundingMode.HALF_UP)
-                    + " + в резерве (pending limit) $" + pendingNotional.setScale(2, java.math.RoundingMode.HALF_UP)
-                    + " + новое $" + legNotional.setScale(2, java.math.RoundingMode.HALF_UP)
-                    + " = $" + committedNotional.setScale(2, java.math.RoundingMode.HALF_UP)
-                    + " > лимит $" + profile.maxPositionNotional().setScale(2, java.math.RoundingMode.HALF_UP);
+            return Msg.of(MessageCode.NOTIONAL_CAP_EXCEEDED,
+                    "open", existingNotional.setScale(2, java.math.RoundingMode.HALF_UP),
+                    "pending", pendingNotional.setScale(2, java.math.RoundingMode.HALF_UP),
+                    "added", legNotional.setScale(2, java.math.RoundingMode.HALF_UP),
+                    "total", committedNotional.setScale(2, java.math.RoundingMode.HALF_UP),
+                    "limit", profile.maxPositionNotional().setScale(2, java.math.RoundingMode.HALF_UP));
         }
 
         LocalDate today = LocalDate.now(ZoneOffset.UTC);
@@ -424,9 +427,9 @@ public class ProposalExecutionService {
             if (equity.signum() > 0) {
                 BigDecimal maxLeverageNotional = equity.multiply(BigDecimal.valueOf(profile.maxLeverage()));
                 if (committedNotional.compareTo(maxLeverageNotional) > 0) {
-                    return "превысит лимит аккаунта по плечу: итоговый нотионал $"
-                            + committedNotional.setScale(2, java.math.RoundingMode.HALF_UP)
-                            + " > equity×maxLeverage $" + maxLeverageNotional.setScale(2, java.math.RoundingMode.HALF_UP);
+                    return Msg.of(MessageCode.LEVERAGE_CAP_EXCEEDED,
+                            "notional", committedNotional.setScale(2, java.math.RoundingMode.HALF_UP),
+                            "limit", maxLeverageNotional.setScale(2, java.math.RoundingMode.HALF_UP));
                 }
             }
         }
@@ -468,9 +471,9 @@ public class ProposalExecutionService {
                             order.getAvgFillPrice(), null, null, null, true));
                 } else {
                     out.add(ExecutionLegResult.failed(cmd.getAccountId(),
-                            "ранее завершилось со статусом " + order.getStatus()));
+                            Msg.of(MessageCode.PREVIOUSLY_FINISHED, "status", order.getStatus())));
                 }
-            }, () -> out.add(ExecutionLegResult.failed(cmd.getAccountId(), "ордер не найден")));
+            }, () -> out.add(ExecutionLegResult.failed(cmd.getAccountId(), Msg.of(MessageCode.ORDER_NOT_FOUND))));
         }
         return out;
     }

@@ -34,7 +34,7 @@ router.get('/watchlist', async (req, res) => {
     })()`;
     const result = await evaluate(script);
     if (!result.tabSwitched) {
-      result.warning = 'вкладка "Trade now" не найдена (класс мог смениться) — прочитан текущий список как есть';
+      result.warning = 'the "Trade now" tab was not found (the class may have changed) — the current list was read as is';
     }
     res.json(result);
   } catch (e) {
@@ -50,21 +50,21 @@ router.get('/watchlist', async (req, res) => {
  */
 router.post('/watchlist/add', async (req, res) => {
   const { symbol } = req.body || {};
-  if (!symbol) return res.status(400).json({ error: 'symbol обязателен' });
+  if (!symbol) return res.status(400).json({ error: 'symbol is required' });
   try {
     const script = `(async () => {
       const addBtn = document.querySelector('[data-name="add-symbol-button"], [class*="addButton"]');
-      if (!addBtn) return { added: false, reason: 'кнопка добавления не найдена в DOM' };
+      if (!addBtn) return { added: false, reason: 'add button not found in the DOM' };
       addBtn.click();
       await new Promise((r) => setTimeout(r, 300));
       const input = document.querySelector('input[data-role="search"], input[class*="search"]');
-      if (!input) return { added: false, reason: 'поле поиска не найдено после клика по +' };
+      if (!input) return { added: false, reason: 'search field not found after clicking +' };
       const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
       setter.call(input, ${JSON.stringify(symbol)});
       input.dispatchEvent(new Event('input', { bubbles: true }));
       await new Promise((r) => setTimeout(r, 500));
       const firstResult = document.querySelector('[data-role="list-item"], [class*="symbolTitle"]');
-      if (!firstResult) return { added: false, reason: 'нет результатов поиска' };
+      if (!firstResult) return { added: false, reason: 'no search results' };
       firstResult.click();
       return { added: true };
     })()`;

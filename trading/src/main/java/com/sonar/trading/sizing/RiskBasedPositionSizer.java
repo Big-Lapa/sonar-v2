@@ -3,6 +3,9 @@ package com.sonar.trading.sizing;
 import com.sonar.trading.risk.AccountRiskProfile;
 import org.springframework.stereotype.Component;
 
+import com.sonar.trading.i18n.MessageCode;
+import com.sonar.trading.i18n.Msg;
+
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 
@@ -40,11 +43,11 @@ public class RiskBasedPositionSizer {
     public SizingResult size(AccountRiskProfile profile, String accountId, String symbol,
                              BigDecimal equity, BigDecimal entry, BigDecimal sl) {
         if (equity == null || equity.signum() <= 0) {
-            return new SizingResult.Rejected("эквити недоступно или неположительно");
+            return SizingResult.rejected(Msg.of(MessageCode.EQUITY_UNAVAILABLE));
         }
         BigDecimal slDistance = entry.subtract(sl).abs();
         if (slDistance.signum() <= 0) {
-            return new SizingResult.Rejected("SL совпадает с ценой входа");
+            return SizingResult.rejected(Msg.of(MessageCode.SL_EQUALS_ENTRY));
         }
 
         BigDecimal riskUsd = equity.multiply(profile.riskPctPerTrade());
@@ -65,15 +68,15 @@ public class RiskBasedPositionSizer {
         try {
             normalizedQty = normalizer.normalize(accountId, symbol, qty, entry);
         } catch (IllegalArgumentException e) {
-            return new SizingResult.Rejected("не прошёл биржевые минималки: " + e.getMessage());
+            return SizingResult.rejected(Msg.of(MessageCode.BELOW_EXCHANGE_MINIMUM, "error", e.getMessage()));
         }
 
         BigDecimal normalizedNotional = normalizedQty.multiply(entry);
         BigDecimal notionalCap = profile.maxPositionNotional().min(maxLeverageNotional);
         if (normalizedNotional.compareTo(notionalCap) > 0) {
-            return new SizingResult.Rejected(
-                    "биржевой минимум лота (" + normalizedQty + ", notional $" + normalizedNotional.setScale(2, RoundingMode.HALF_UP)
-                            + ") превышает лимит аккаунта $" + notionalCap.setScale(2, RoundingMode.HALF_UP));
+            return SizingResult.rejected(Msg.of(MessageCode.EXCEEDS_ACCOUNT_LIMITS, "qty", normalizedQty,
+                    "notional", normalizedNotional.setScale(2, RoundingMode.HALF_UP),
+                    "limit", notionalCap.setScale(2, RoundingMode.HALF_UP)));
         }
 
         BigDecimal actualRisk = normalizedQty.multiply(slDistance);
@@ -91,11 +94,11 @@ public class RiskBasedPositionSizer {
     public SizingResult sizeManual(AccountRiskProfile profile, String accountId, String symbol,
                                    BigDecimal equity, BigDecimal notional, BigDecimal entry, BigDecimal sl) {
         if (notional == null || notional.signum() <= 0) {
-            return new SizingResult.Rejected("нотионал должен быть положительным");
+            return SizingResult.rejected(Msg.of(MessageCode.NOTIONAL_MUST_BE_POSITIVE));
         }
         BigDecimal slDistance = sl != null ? entry.subtract(sl).abs() : null;
         if (sl != null && slDistance.signum() <= 0) {
-            return new SizingResult.Rejected("SL совпадает с ценой входа");
+            return SizingResult.rejected(Msg.of(MessageCode.SL_EQUALS_ENTRY));
         }
 
         // The operator typed this notional in on purpose — unlike size()'s risk%-derived qty, a cap
@@ -103,15 +106,16 @@ public class RiskBasedPositionSizer {
         // be too big. Reject with the numbers rather than silently opening 1/5th of what they asked
         // for and letting them find out from the preview qty alone.
         if (notional.compareTo(profile.maxPositionNotional()) > 0) {
-            return new SizingResult.Rejected("нотионал $" + notional.setScale(2, RoundingMode.HALF_UP)
-                    + " превышает лимит аккаунта по позиции $" + profile.maxPositionNotional().setScale(2, RoundingMode.HALF_UP));
+            return SizingResult.rejected(Msg.of(MessageCode.NOTIONAL_EXCEEDS_POSITION_LIMIT,
+                    "notional", notional.setScale(2, RoundingMode.HALF_UP),
+                    "limit", profile.maxPositionNotional().setScale(2, RoundingMode.HALF_UP)));
         }
         BigDecimal maxLeverageNotional = equity != null && equity.signum() > 0
                 ? equity.multiply(BigDecimal.valueOf(profile.maxLeverage())) : null;
         if (maxLeverageNotional != null && notional.compareTo(maxLeverageNotional) > 0) {
-            return new SizingResult.Rejected("нотионал $" + notional.setScale(2, RoundingMode.HALF_UP)
-                    + " превышает лимит аккаунта по плечу (equity×maxLeverage $"
-                    + maxLeverageNotional.setScale(2, RoundingMode.HALF_UP) + ")");
+            return SizingResult.rejected(Msg.of(MessageCode.NOTIONAL_EXCEEDS_LEVERAGE_LIMIT,
+                    "notional", notional.setScale(2, RoundingMode.HALF_UP),
+                    "limit", maxLeverageNotional.setScale(2, RoundingMode.HALF_UP)));
         }
 
         BigDecimal qty = notional.divide(entry, SCALE, RoundingMode.DOWN);
@@ -120,16 +124,16 @@ public class RiskBasedPositionSizer {
         try {
             normalizedQty = normalizer.normalize(accountId, symbol, qty, entry);
         } catch (IllegalArgumentException e) {
-            return new SizingResult.Rejected("не прошёл биржевые минималки: " + e.getMessage());
+            return SizingResult.rejected(Msg.of(MessageCode.BELOW_EXCHANGE_MINIMUM, "error", e.getMessage()));
         }
 
         BigDecimal normalizedNotional = normalizedQty.multiply(entry);
         BigDecimal notionalCap = maxLeverageNotional != null
                 ? profile.maxPositionNotional().min(maxLeverageNotional) : profile.maxPositionNotional();
         if (normalizedNotional.compareTo(notionalCap) > 0) {
-            return new SizingResult.Rejected(
-                    "биржевой минимум лота (" + normalizedQty + ", notional $" + normalizedNotional.setScale(2, RoundingMode.HALF_UP)
-                            + ") превышает лимит аккаунта $" + notionalCap.setScale(2, RoundingMode.HALF_UP));
+            return SizingResult.rejected(Msg.of(MessageCode.EXCEEDS_ACCOUNT_LIMITS, "qty", normalizedQty,
+                    "notional", normalizedNotional.setScale(2, RoundingMode.HALF_UP),
+                    "limit", notionalCap.setScale(2, RoundingMode.HALF_UP)));
         }
 
         BigDecimal actualRisk = slDistance != null ? normalizedQty.multiply(slDistance) : null;

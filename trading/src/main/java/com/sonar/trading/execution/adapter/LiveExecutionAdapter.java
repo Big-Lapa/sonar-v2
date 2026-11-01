@@ -102,10 +102,10 @@ public class LiveExecutionAdapter implements ExecutionAdapter {
             tpOrder = BingxTpSlOrder.of(BingxOrderType.TAKE_PROFIT, tpSlAtt.takeProfitPrice(), workingType);
             slOrder = BingxTpSlOrder.of(BingxOrderType.STOP_MARKET, tpSlAtt.stopLossPrice(), workingType);
             if (tpSlAtt.hasPartial()) {
-                // BingX-путь частичную ногу не реализует — при фан-ауте на два венью объёмы
-                // разойдутся молча, если не сказать об этом вслух (ревью #88).
-                log.warn("[BINGX] partial TP1 leg not supported on this venue — игнорируется "
-                        + "(Binance-аккаунты ногу ставят)");
+                // The BingX path does not implement the partial leg — with fan-out to two venues the volumes
+                // will silently diverge unless this is said out loud (review #88).
+                log.warn("[BINGX] partial TP1 leg not supported on this venue — ignored "
+                        + "(Binance accounts place the leg)");
             }
         }
 

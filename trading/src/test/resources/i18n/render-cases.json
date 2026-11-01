@@ -1,0 +1,12 @@
+[
+  { "name": "plain text", "template": "no params", "params": {}, "expected": "no params" },
+  { "name": "param", "template": "{a} and {b}", "params": { "a": "1", "b": "2" }, "expected": "1 and 2" },
+  { "name": "missing param renders empty", "template": "x={a}.", "params": {}, "expected": "x=." },
+  { "name": "optional group kept when all params present", "template": "closed, [PnL={pnl}, ]held", "params": { "pnl": "5" }, "expected": "closed, PnL=5, held" },
+  { "name": "optional group dropped when a param is missing", "template": "closed, [PnL={pnl}, ]held", "params": {}, "expected": "closed, held" },
+  { "name": "group needs every param inside it", "template": "[{a}-{b}]!", "params": { "a": "1" }, "expected": "!" },
+  { "name": "two groups are independent", "template": "[{a}][{b}]", "params": { "b": "2" }, "expected": "2" },
+  { "name": "dollar sign in a value is literal", "template": "cap ${limit}", "params": { "limit": "$5" }, "expected": "cap $$5" },
+  { "name": "backslash in a value is literal", "template": "path {p}", "params": { "p": "a\\b" }, "expected": "path a\\b" },
+  { "name": "value is not re-scanned for placeholders", "template": "{a}", "params": { "a": "{b}", "b": "x" }, "expected": "{b}" }
+]

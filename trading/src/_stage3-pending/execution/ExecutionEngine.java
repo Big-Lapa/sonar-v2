@@ -73,7 +73,7 @@ public class ExecutionEngine implements SignalExecutionPort {
                                       String clientOrderId, ExecutionAdapter execAdapter) {
         OrderIntent intent = resolveIntent(signal);
         AdapterOrderSide adapterSide = resolveAdapterSide(signal);
-        // Биржа исполнения этой ноги: спеки клэмпа и округления берутся именно по ней (V10).
+        // Execution exchange of this leg: clamp and rounding specs are taken from it (V10).
         String venue = execAdapter.adapterName();
 
         AdapterOrderType type = AdapterOrderType.MARKET;
@@ -163,59 +163,59 @@ public class ExecutionEngine implements SignalExecutionPort {
      * LONG:  TP = entryPrice * (1 + tpPct), SL = entryPrice * (1 - slPct)
      * SHORT: TP = entryPrice * (1 - tpPct), SL = entryPrice * (1 + slPct)
      *
-     * <p>Приоритет: strategy params {@code slPct}/{@code tpPct} из config-service (пара
-     * both-or-neither; их наличие ВКЛЮЧАЕТ TP/SL для стратегии независимо от глобального
-     * {@code trading.tp-sl.enabled}) → иначе глобальный конфиг как раньше. Частичный фикс
-     * ({@code partialTpEnabled/tp1Pct/tp1QtyPct}) добавляет tp1-цену/объём в attachment;
-     * перенос стопа в безубыток после фикса пока не автоматизирован.
+     * <p>Priority: strategy params {@code slPct}/{@code tpPct} from config-service (pair
+     * both-or-neither; their presence ENABLES TP/SL for the strategy regardless of the global
+     * {@code trading.tp-sl.enabled}) → otherwise the global config as before. Partial take-profit
+     * ({@code partialTpEnabled/tp1Pct/tp1QtyPct}) adds the tp1 price/quantity to the attachment;
+     * moving the stop to breakeven after the partial fill is not automated yet.
      */
     @Override
     public String validateStrategyTpSlParams(TradingSignalPayload signal) {
-        // ADR-0031: явные абсолютные цены (discretionary-swing-service) — свой путь валидации,
-        // % strategy params тут ни при чём. Та же логика "непарность фатальна" (ревью #88):
-        // одна цена без другой — позиция без стопа, отвергаем ДО входа.
+        // ADR-0031: explicit absolute prices (discretionary-swing-service) — own validation path,
+        // the % strategy params are irrelevant here. Same "unpaired is fatal" logic (review #88):
+        // one price without the other — a position without a stop, reject BEFORE entry.
         if (signal.slPrice() != null || signal.tpPrice() != null) {
             BigDecimal sl = parsePrice(signal.slPrice());
             BigDecimal tp = parsePrice(signal.tpPrice());
             if (sl == null || tp == null || sl.signum() <= 0 || tp.signum() <= 0) {
                 return "BAD_EXPLICIT_TP_SL: strategy " + signal.strategyId()
                         + " slPrice='" + signal.slPrice() + "' tpPrice='" + signal.tpPrice()
-                        + "' — непарные/нечисловые (позиция без стопа недопустима)";
+                        + "' — unpaired/non-numeric (a position without a stop is not allowed)";
             }
             return null;
         }
         String slRaw = strategyParam(signal, "slPct");
         String tpRaw = strategyParam(signal, "tpPct");
         if (slRaw == null && tpRaw == null) {
-            return null; // стратегия per-strategy TP/SL не заявляет — работает глобальный конфиг
+            return null; // the strategy does not declare per-strategy TP/SL — the global config applies
         }
         BigDecimal slPct = strategyParamDecimal(signal, "slPct");
         BigDecimal tpPct = strategyParamDecimal(signal, "tpPct");
         if (slPct == null || tpPct == null || slPct.signum() <= 0 || tpPct.signum() <= 0) {
             return "BAD_STRATEGY_PARAMS: strategy " + signal.strategyId()
                     + " slPct='" + slRaw + "' tpPct='" + tpRaw
-                    + "' — непарные/нечисловые (позиция без стопа недопустима)";
+                    + "' — unpaired/non-numeric (a position without a stop is not allowed)";
         }
         return null;
     }
 
     private TpSlAttachment resolveTpSl(String venue, TradingSignalPayload signal, BigDecimal entryPrice, BigDecimal quantity) {
-        // Стратегия ЗАЯВИЛА per-strategy TP/SL (любой из ключей присутствует) — битый набор
-        // ФАТАЛЕН для входа: опечатка ("1,0") давала непарность → фоллбэк на выключенный
-        // глобальный конфиг → позиция вообще без биржевого стопа до 12ч-backstop (ревью #88).
-        // Штатно это отсекается ДО Tx1 в SignalProcessor через validateStrategyTpSlParams();
-        // throw здесь — страховка на случай нового пути исполнения мимо той проверки.
+        // The strategy DECLARED per-strategy TP/SL (any of the keys is present) — a broken set is
+        // FATAL for entry: a typo ("1,0") produced an unpaired value → fallback to the disabled
+        // global config → a position with no exchange stop at all until the 12h backstop (review #88).
+        // Normally this is rejected BEFORE Tx1 in SignalProcessor via validateStrategyTpSlParams();
+        // the throw here is a safety net in case a new execution path bypasses that check.
         String reason = validateStrategyTpSlParams(signal);
         if (reason != null) {
             throw new IllegalStateException(reason);
         }
 
-        // ADR-0031: абсолютные уровни (swing high/low + volume-profile HVN) уже посчитаны
-        // ОТПРАВИТЕЛЕМ для этой конкретной сделки — % от entryPrice тут смысла не имеет (уровень
-        // стоит там, где реальная структура рынка, а не в фиксированном проценте). referencePrice
-        // сознательно НЕ передаётся: TpSlAttachment.rescaledTo() не должен масштабировать
-        // абсолютные технические уровни при отличии факта филла от referencePrice (это исказило
-        // бы swing/HVN-цель) — двухаргументный конструктор оставляет referencePrice/tickSize null.
+        // ADR-0031: absolute levels (swing high/low + volume-profile HVN) have already been computed
+        // by the SENDER for this specific trade — % of entryPrice makes no sense here (the level
+        // sits where the real market structure is, not at a fixed percentage). referencePrice
+        // is deliberately NOT passed: TpSlAttachment.rescaledTo() must not scale
+        // absolute technical levels when the actual fill differs from referencePrice (that would distort
+        // the swing/HVN target) — the two-argument constructor leaves referencePrice/tickSize null.
         if (signal.slPrice() != null || signal.tpPrice() != null) {
             BigDecimal explicitSl = parsePrice(signal.slPrice());
             BigDecimal explicitTp = parsePrice(signal.tpPrice());
@@ -248,9 +248,9 @@ public class ExecutionEngine implements SignalExecutionPort {
         BigDecimal tp1Price = null;
         BigDecimal tp1Qty = null;
         if ("true".equalsIgnoreCase(strategyParam(signal, "partialTpEnabled"))) {
-            // Напоминание на каждый вход: перенос стопа в безубыток после TP1 НЕ автоматизирован —
-            // после фикса части SL остаётся исходным на остаток (консервативнее TV; ревью #88).
-            log.warn("partialTp {}: TP1-нога будет выставлена, но авто-переноса SL в безубыток НЕТ",
+            // Reminder on every entry: moving the stop to breakeven after TP1 is NOT automated —
+            // after the partial take-profit the SL stays at the original level for the remainder (more conservative than TV; review #88).
+            log.warn("partialTp {}: TP1 leg will be placed, but there is NO auto-move of SL to breakeven",
                     signal.strategyId());
             BigDecimal tp1Pct = strategyParamDecimal(signal, "tp1Pct");
             BigDecimal tp1QtyPct = strategyParamDecimal(signal, "tp1QtyPct");
@@ -271,10 +271,10 @@ public class ExecutionEngine implements SignalExecutionPort {
             }
         }
 
-        // referencePrice + tickSize едут вместе с уровнями: адаптер, который ставит условные ноги
-        // отдельными ордерами уже после филла (Binance), пересчитает их от фактической цены входа
-        // через TpSlAttachment.rescaledTo(). Здешний entryPrice — закрытие последней свечи со
-        // спота, до минуты давности; проценты стратегии должны считаться от того, по чему вошли.
+        // referencePrice + tickSize travel together with the levels: an adapter that places conditional legs
+        // as separate orders after the fill (Binance) will recalculate them from the actual entry price
+        // via TpSlAttachment.rescaledTo(). The entryPrice here is the last candle close from
+        // spot, up to a minute old; strategy percentages must be computed from what we actually entered at.
         return new TpSlAttachment(
                 roundToTickSize(venue, signal.symbol(), tp),
                 roundToTickSize(venue, signal.symbol(), sl),
@@ -285,7 +285,7 @@ public class ExecutionEngine implements SignalExecutionPort {
         );
     }
 
-    /** Целевое плечо ENTRY из strategy params ({@code leverage}); null = плечо биржи не трогаем. */
+    /** Target ENTRY leverage from strategy params ({@code leverage}); null = leave the exchange leverage untouched. */
     private Integer resolveLeverage(TradingSignalPayload signal) {
         BigDecimal lev = strategyParamDecimal(signal, "leverage");
         if (lev == null) {
@@ -304,7 +304,7 @@ public class ExecutionEngine implements SignalExecutionPort {
             return null;
         }
         Optional<String> value = configCache.getStrategyParam(signal.strategyId(), key);
-        return value == null ? null : value.orElse(null); // null-guard: мок в юнит-тестах
+        return value == null ? null : value.orElse(null); // null-guard: mock in unit tests
     }
 
     private BigDecimal strategyParamDecimal(TradingSignalPayload signal, String key) {
@@ -320,7 +320,7 @@ public class ExecutionEngine implements SignalExecutionPort {
         }
     }
 
-    /** Парсит decimal-строку из сигнала (не strategy-param); null на пустой/невалидной строке. */
+    /** Parses a decimal string from a signal (not a strategy param); null on an empty/invalid string. */
     private static BigDecimal parsePrice(String raw) {
         if (raw == null || raw.isBlank()) {
             return null;
@@ -332,7 +332,7 @@ public class ExecutionEngine implements SignalExecutionPort {
         }
     }
 
-    /** Округление количества ВНИЗ к шагу лота (частичная нога не должна превысить позицию). */
+    /** Rounds the quantity DOWN to the lot step (a partial leg must not exceed the position). */
     private BigDecimal roundToStepSize(String venue, String symbol, BigDecimal qty) {
         BigDecimal step = configCache.getSymbolRules(venue, symbol).stepSize();
         if (step == null || step.signum() <= 0) {
@@ -361,8 +361,8 @@ public class ExecutionEngine implements SignalExecutionPort {
      * {@link ConfigCache#getSymbolRules} never returns null (falls back to {@code SymbolRules.DEFAULT},
      * tickSize {@code 0.01}).
      *
-     * <p>С V10 спеки берутся по бирже исполнения: шаг цены у одного тикера на BingX и Binance
-     * разный, и округление TP/SL обязано считаться по той, куда уходит ордер.
+     * <p>Since V10, specs are taken from the execution exchange: the price step for the same ticker differs between BingX and Binance
+     * and TP/SL rounding must be computed using the one the order goes to.
      */
     private BigDecimal tickSizeFor(String venue, String symbol) {
         return configCache.getSymbolRules(venue, symbol).tickSize();

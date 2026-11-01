@@ -38,20 +38,20 @@ public class BinanceExecutionGateway extends ResilientExecutionGateway {
     }
 
     /**
-     * Плечо символа перед ENTRY (per-strategy параметр); идемпотентно на том же значении.
-     * Идёт CLOSE-путём, как и {@link #cancelAllOpenOrders}: служебный вызов через invoke(ENTRY,...)
-     * кормил ошибками ENTRY-брейкер — систематический отказ /fapi/v1/leverage (бракет ниже 20x,
-     * права ключа) открывал circuit и глушил ВСЕ входы аккаунта, включая чужие стратегии
-     * (ревью #88). CLOSE_REDUCE не участвует в circuitBreaker.onError и не берёт его permission,
-     * но сохраняет rate-limit и retry — голый вызов мимо всего контура терял и их. Отказ
-     * обрабатывает адаптер (warn + вход на текущем плече + TTL-кэш отказа).
+     * Symbol leverage before ENTRY (per-strategy parameter); idempotent on the same value.
+     * Goes via the CLOSE path, like {@link #cancelAllOpenOrders}: a service call via invoke(ENTRY,...)
+     * fed errors to the ENTRY breaker — a systematic rejection of /fapi/v1/leverage (bracket below 20x,
+     * key permissions) opened the circuit and silenced ALL entries of the account, including other strategies'
+     * (review #88). CLOSE_REDUCE does not participate in circuitBreaker.onError and does not take its permission,
+     * but keeps rate-limit and retry — a bare call bypassing the whole pipeline lost those too. The rejection
+     * is handled by the adapter (warn + entry at the current leverage + TTL cache of the rejection).
      */
     public Map<String, Object> setLeverage(String symbol, int leverage) {
         return invoke(OrderIntent.CLOSE_REDUCE, "leverage", false, () -> client.setLeverage(symbol, leverage));
     }
 
-    /** Снять ВСЕ открытые ордера символа (условные TP/SL ноги). Идёт CLOSE-путём: уборка
-     *  снижает риск и обязана проходить под деградацией, permission брейкера не берётся. */
+    /** Cancel ALL open orders of a symbol (conditional TP/SL legs). Goes via the CLOSE path: cleanup
+     *  reduces risk and must pass under degradation, the breaker's permission is not taken. */
     public Map<String, Object> cancelAllOpenOrders(String symbol) {
         return invoke(OrderIntent.CLOSE_REDUCE, "cancelAll", false, () -> client.cancelAllOpenOrders(symbol));
     }

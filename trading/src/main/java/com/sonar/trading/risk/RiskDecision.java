@@ -17,14 +17,14 @@ public record RiskDecision(
     }
 
     /**
-     * Причина auto-pause — определяет, как пауза снимается (ADR-0018).
+     * Auto-pause cause — determines how the pause is lifted (ADR-0018).
      *
-     * <p>{@link #DAILY_LOSS} привязан к торговым суткам: лимит дневного убытка обнуляется на смене
-     * UTC-даты вместе с {@code daily_pnl}, поэтому пауза снимается автоматически. Раньше она жила
-     * вечно и переживала свою причину — платформа молча не торговала, пока кто-нибудь не заметит.
+     * <p>{@link #DAILY_LOSS} is tied to the trading day: the daily loss limit resets on the UTC date
+     * change together with {@code daily_pnl}, so the pause is lifted automatically. It used to live
+     * forever and outlived its cause — the platform silently stopped trading until someone noticed.
      *
-     * <p>{@link #MAX_DRAWDOWN} считается от пика equity и ко дню не привязан: смена даты его не
-     * лечит. Такая пауза снимается только руками, после разбора.
+     * <p>{@link #MAX_DRAWDOWN} is measured from the equity peak and is not tied to a day: a date change does not
+     * cure it. Such a pause is lifted only manually, after investigation.
      */
     public enum PauseCause {
         DAILY_LOSS,

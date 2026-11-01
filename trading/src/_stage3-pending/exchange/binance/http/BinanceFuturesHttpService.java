@@ -95,9 +95,9 @@ public class BinanceFuturesHttpService implements BinanceFuturesClient {
             q.put("timeInForce", request.timeInForce() != null ? request.timeInForce().name() : "GTC");
         }
         if (request.closePosition()) {
-            // closePosition несовместим с quantity/reduceOnly (Binance -1106) — они выше уже
-            // не кладутся вызывающей стороной для таких ног, но страхуемся порядком: quantity
-            // кладётся всегда, поэтому здесь удаляем.
+            // closePosition is incompatible with quantity/reduceOnly (Binance -1106) — the caller already
+            // does not set them for such legs, but we hedge on ordering: quantity
+            // is always set, so we remove it here.
             q.remove("quantity");
             q.put("closePosition", "true");
         } else if (request.reduceOnly()) {
@@ -115,7 +115,7 @@ public class BinanceFuturesHttpService implements BinanceFuturesClient {
         return q;
     }
 
-    /** Cancel all open orders of a symbol (условные TP/SL ноги в том числе). */
+    /** Cancel all open orders of a symbol (including conditional TP/SL legs). */
     @Override
     public Map<String, Object> cancelAllOpenOrders(String symbol) {
         Map<String, String> q = new LinkedHashMap<>();

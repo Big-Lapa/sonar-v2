@@ -1,12 +1,12 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <title>Sonar v2 Admin</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="stylesheet" href="app.css?v=2026-08-21">
 <style>
-  /* Doля-полей теперь показываются/вводятся в %, "%" — визуальный суффикс поверх обычного input.num. */
+  /* Fractions are shown/entered as %, "%" is a visual suffix over a plain input.num. */
   .pct-wrap { position: relative; display: inline-flex; align-items: center; }
   .pct-wrap input { padding-right: 18px; }
   .pct-wrap::after { content: "%"; position: absolute; right: 6px; color: var(--faint); font-size: 11px; pointer-events: none; }
@@ -16,46 +16,47 @@
 <div class="appbar">
   <h1>Sonar v2 Admin <small>trading · token-gated</small></h1>
   <span class="spacer"></span>
-  <a href="#" id="btn-token">токен</a>
+  <a href="#" id="btn-token" data-i18n="s.token">token</a>
   <span id="status">connecting…</span>
 </div>
 
 <div class="panel full" id="sec-risk">
-  <h2>Риск</h2>
+  <h2 data-i18n="s.risk.title">Risk</h2>
   <div class="form-row">
-    <label>Аккаунт</label>
+    <label data-i18n="s.risk.account">Account</label>
     <select id="risk-account"></select>
   </div>
   <div id="risk-form"></div>
   <div class="form-row">
-    <button class="primary" id="risk-save">Save</button>
+    <button class="primary" id="risk-save" data-i18n="s.save">Save</button>
     <span id="risk-status" class="muted"></span>
   </div>
 </div>
 
 <div class="panel full" id="sec-strategy">
-  <h2>Стратегия</h2>
+  <h2 data-i18n="s.strategy.title">Strategy</h2>
   <div id="strategy-form"></div>
   <div class="form-row">
-    <button class="primary" id="strategy-save">Save</button>
+    <button class="primary" id="strategy-save" data-i18n="s.save">Save</button>
     <span id="strategy-status" class="muted"></span>
   </div>
-  <h2 style="margin-top:14px">Чёрный список</h2>
+  <h2 style="margin-top:14px" data-i18n="s.blacklist.title">Blacklist</h2>
   <div class="form-row">
     <input id="bl-symbol" class="num" placeholder="SYMBOL" style="width:140px">
-    <input id="bl-reason" placeholder="причина" style="width:220px">
-    <button id="bl-add">Добавить</button>
+    <input id="bl-reason" placeholder="reason" data-i18n-placeholder="s.blacklist.reason_ph" style="width:220px">
+    <button id="bl-add" data-i18n="s.blacklist.add">Add</button>
   </div>
-  <table id="bl-table"><thead><tr><th>Symbol</th><th>Причина</th><th></th></tr></thead><tbody></tbody></table>
+  <table id="bl-table"><thead><tr><th>Symbol</th><th data-i18n="s.blacklist.reason">Reason</th><th></th></tr></thead><tbody></tbody></table>
 </div>
 
 <div class="panel full" id="sec-positions">
-  <h2>Позиции</h2>
+  <h2 data-i18n="s.positions.title">Positions</h2>
   <div id="positions"></div>
 </div>
 
 <div class="toast" id="toast"></div>
 
+<script src="admin/i18n.js"></script>
 <script>
 const $ = (s, el) => (el || document).querySelector(s);
 const $$ = (s, el) => Array.from((el || document).querySelectorAll(s));
@@ -75,6 +76,15 @@ $('#btn-token').onclick = (e) => {
   const t = prompt('ADMIN_TOKEN', getToken());
   if (t !== null) { setToken(t); location.reload(); }
 };
+
+// Status line under a form: tagged with its key so a language switch re-translates it in place
+// (I18N.applyDom) — the forms are never rebuilt, so unsaved edits survive.
+function setStatus(sel, key, version) {
+  const el = $(sel);
+  el.setAttribute('data-i18n', key);
+  el.setAttribute('data-args', JSON.stringify({ version }));
+  el.textContent = I18N.t(key, { version });
+}
 
 function toast(msg, ok) {
   const el = $('#toast');
@@ -96,23 +106,23 @@ async function api(path, opts) {
   return ct.includes('application/json') ? resp.json() : null;
 }
 
-// ---- Риск ----
+// ---- Risk ----
 
 const RISK_FIELDS = [
-  ['riskPctPerTrade', 'Риск на сделку, %', 'pct'],
-  ['maxPortfolioRiskPct', 'Макс. портфельный риск, %', 'pct'],
-  ['maxPositionNotional', 'Макс. notional ($)'],
-  ['maxDailyRealizedLossPct', 'Дневной лимит убытка, %', 'pct'],
-  ['maxEquityDrawdownPct', 'Лимит просадки от пика, %', 'pct'],
-  ['maxOpenPositions', 'Макс. открытых позиций'],
-  ['maxLeverage', 'Макс. плечо (клэмп sizing)'],
-  ['active', 'Активен — тянем баланс/позиции (чекбокс)', 'checkbox'],
-  ['tradable', 'Торгует — Sonar может открывать (чекбокс)', 'checkbox'],
+  ['riskPctPerTrade', 'pct'],
+  ['maxPortfolioRiskPct', 'pct'],
+  ['maxPositionNotional'],
+  ['maxDailyRealizedLossPct', 'pct'],
+  ['maxEquityDrawdownPct', 'pct'],
+  ['maxOpenPositions'],
+  ['maxLeverage'],
+  ['active', 'checkbox'],
+  ['tradable', 'checkbox'],
 ];
 
-// Доля (0.008) в БД ⇄ проценты (0.8) на экране — только для полей, помеченных 'pct' выше. Округление
-// на выводе только чтобы не плодить 0.008000000000000001 из float-арифметики; в БД уходит обратно то,
-// что реально ввели (parseFloat/100), без повторного округления round-trip'ом.
+// A fraction (0.008) in the DB <-> percent (0.8) on screen — only for fields marked 'pct' above. Rounding
+// happens on display only, to avoid 0.008000000000000001 from float arithmetic; what the user typed
+// (parseFloat/100) goes back to the DB as-is, with no round-trip rounding.
 function pctToFraction(pctStr) {
   const n = parseFloat(pctStr);
   return Number.isFinite(n) ? String(n / 100) : pctStr;
@@ -138,22 +148,23 @@ async function loadRisk() {
   if (!id) return;
   riskEntity = await api(`/api/v1/accounts/${encodeURIComponent(id)}/risk`);
   const form = $('#risk-form');
-  form.innerHTML = RISK_FIELDS.map(([key, label, kind]) => {
+  form.innerHTML = RISK_FIELDS.map(([key, kind]) => {
+    const label = I18N.t('s.field.' + key);
     if (kind === 'checkbox') {
-      return `<div class="form-row"><label>${label}</label><input type="checkbox" id="f-${key}" ${riskEntity[key] ? 'checked' : ''}></div>`;
+      return `<div class="form-row"><label data-i18n="s.field.${key}">${label}</label><input type="checkbox" id="f-${key}" ${riskEntity[key] ? 'checked' : ''}></div>`;
     }
     if (kind === 'pct') {
-      return `<div class="form-row"><label>${label}</label><span class="pct-wrap"><input class="num" id="f-${key}" value="${esc(fractionToPctDisplay(riskEntity[key]))}"></span></div>`;
+      return `<div class="form-row"><label data-i18n="s.field.${key}">${label}</label><span class="pct-wrap"><input class="num" id="f-${key}" value="${esc(fractionToPctDisplay(riskEntity[key]))}"></span></div>`;
     }
-    return `<div class="form-row"><label>${label}</label><input class="num" id="f-${key}" value="${esc(riskEntity[key])}"></div>`;
+    return `<div class="form-row"><label data-i18n="s.field.${key}">${label}</label><input class="num" id="f-${key}" value="${esc(riskEntity[key])}"></div>`;
   }).join('');
-  $('#risk-status').textContent = `version ${riskEntity.version}`;
+  setStatus('#risk-status', 's.status.version', riskEntity.version);
 }
 
 $('#risk-save').onclick = async () => {
   const id = $('#risk-account').value;
   const body = { version: riskEntity.version };
-  for (const [key, , kind] of RISK_FIELDS) {
+  for (const [key, kind] of RISK_FIELDS) {
     const el = $(`#f-${key}`);
     body[key] = kind === 'checkbox' ? el.checked
       : (key === 'maxOpenPositions' || key === 'maxLeverage') ? parseInt(el.value, 10)
@@ -161,14 +172,14 @@ $('#risk-save').onclick = async () => {
   }
   try {
     riskEntity = await api(`/api/v1/accounts/${encodeURIComponent(id)}/risk`, { method: 'PUT', body: JSON.stringify(body) });
-    $('#risk-status').textContent = `сохранено, version ${riskEntity.version}`;
-    toast('Риск-профиль сохранён — действует на следующую сделку без рестарта', true);
+    setStatus('#risk-status', 's.status.saved', riskEntity.version);
+    toast(I18N.t('s.toast.risk_saved'), true);
   } catch (e) {
-    toast('Ошибка сохранения: ' + e.message, false);
+    toast(I18N.t('s.toast.save_error', { error: e.message }), false);
   }
 };
 
-// ---- Стратегия ----
+// ---- Strategy ----
 
 // keep in sync: StrategySettingsController.ALLOWED_MODELS (Java), model-pricing.ts RATES (TS), candidate-search.service.ts ADAPTIVE_THINKING_MODELS (TS)
 const LLM_MODELS = [
@@ -178,19 +189,19 @@ const LLM_MODELS = [
 ];
 
 const STRATEGY_FIELDS = [
-  ['minSlDistancePct', 'Мин. дистанция SL, %', 'pct'],
-  ['minSlCostMult', 'Мин. дистанция SL × cost'],
-  ['maxSlDistancePct', 'Макс. дистанция SL, %', 'pct'],
-  ['minRr', 'Мин. R:R'],
-  ['min24hVolumeUsd', 'Мин. 24ч объём ($)'],
-  ['maxMove24hPct', 'Макс. движение 24ч, %', 'pct'],
-  ['maxMove7dPct', 'Макс. движение 7д, %', 'pct'],
-  ['maxCandidates', 'Макс. кандидатов от LLM'],
-  ['llmModel', 'LLM модель', 'select'],
-  ['alwaysDrawTv', 'Всегда рисовать в TV (чекбокс)'],
-  ['proposalTtlMs', 'TTL предложения (мс)'],
-  ['holdReminderDays', 'Напоминание об удержании (дней)'],
-  ['searchCronHours', 'Часы крона (UTC, "*" или "9,13,17")'],
+  ['minSlDistancePct', 'pct'],
+  ['minSlCostMult'],
+  ['maxSlDistancePct', 'pct'],
+  ['minRr'],
+  ['min24hVolumeUsd'],
+  ['maxMove24hPct', 'pct'],
+  ['maxMove7dPct', 'pct'],
+  ['maxCandidates'],
+  ['llmModel', 'select'],
+  ['alwaysDrawTv'],
+  ['proposalTtlMs'],
+  ['holdReminderDays'],
+  ['searchCronHours'],
 ];
 
 let settingsEntity = null;
@@ -198,34 +209,35 @@ let settingsEntity = null;
 async function loadStrategy() {
   settingsEntity = await api('/api/v1/strategy/settings');
   const form = $('#strategy-form');
-  form.innerHTML = STRATEGY_FIELDS.map(([key, label, kind]) => {
+  form.innerHTML = STRATEGY_FIELDS.map(([key, kind]) => {
+    const label = I18N.t('s.field.' + key);
     if (key === 'alwaysDrawTv') {
-      return `<div class="form-row"><label>${label}</label><input type="checkbox" id="s-${key}" ${settingsEntity[key] ? 'checked' : ''}></div>`;
+      return `<div class="form-row"><label data-i18n="s.field.${key}">${label}</label><input type="checkbox" id="s-${key}" ${settingsEntity[key] ? 'checked' : ''}></div>`;
     }
     if (kind === 'select' && key === 'llmModel') {
       const current = settingsEntity[key];
-      // Значение из БД вне LLM_MODELS (легаси или выставленное через API) не должно молча
-      // подменяться первым option — показываем его как выбранное, save упрётся в ALLOWED_MODELS.
+      // A DB value outside LLM_MODELS (legacy, or set via the API) must not be silently
+      // replaced by the first option — show it as selected; save will hit ALLOWED_MODELS.
       const known = LLM_MODELS.some(([value]) => value === current);
       const unknownOption = known ? ''
-        : `<option value="${esc(current)}" selected>${esc(current)} — неизвестная, выберите модель</option>`;
+        : `<option value="${esc(current)}" selected data-i18n="s.model.unknown" data-args='${esc(JSON.stringify({ model: current }))}'>${esc(I18N.t('s.model.unknown', { model: current }))}</option>`;
       const options = LLM_MODELS.map(([value, optLabel]) =>
         `<option value="${value}" ${current === value ? 'selected' : ''}>${optLabel}</option>`
       ).join('');
-      return `<div class="form-row"><label>${label}</label><select id="s-${key}">${unknownOption}${options}</select></div>`;
+      return `<div class="form-row"><label data-i18n="s.field.${key}">${label}</label><select id="s-${key}">${unknownOption}${options}</select></div>`;
     }
     if (kind === 'pct') {
-      return `<div class="form-row"><label>${label}</label><span class="pct-wrap"><input class="num" id="s-${key}" value="${esc(fractionToPctDisplay(settingsEntity[key]))}" style="width:200px"></span></div>`;
+      return `<div class="form-row"><label data-i18n="s.field.${key}">${label}</label><span class="pct-wrap"><input class="num" id="s-${key}" value="${esc(fractionToPctDisplay(settingsEntity[key]))}" style="width:200px"></span></div>`;
     }
-    return `<div class="form-row"><label>${label}</label><input class="num" id="s-${key}" value="${esc(settingsEntity[key])}" style="width:200px"></div>`;
+    return `<div class="form-row"><label data-i18n="s.field.${key}">${label}</label><input class="num" id="s-${key}" value="${esc(settingsEntity[key])}" style="width:200px"></div>`;
   }).join('');
-  $('#strategy-status').textContent = `version ${settingsEntity.version}`;
+  setStatus('#strategy-status', 's.status.version', settingsEntity.version);
   await loadBlacklist();
 }
 
 $('#strategy-save').onclick = async () => {
   const body = { version: settingsEntity.version };
-  for (const [key, , kind] of STRATEGY_FIELDS) {
+  for (const [key, kind] of STRATEGY_FIELDS) {
     const el = $(`#s-${key}`);
     if (key === 'alwaysDrawTv') { body[key] = el.checked; continue; }
     if (key === 'maxCandidates' || key === 'holdReminderDays') { body[key] = parseInt(el.value, 10); continue; }
@@ -234,10 +246,10 @@ $('#strategy-save').onclick = async () => {
   }
   try {
     settingsEntity = await api('/api/v1/strategy/settings', { method: 'PUT', body: JSON.stringify(body) });
-    $('#strategy-status').textContent = `сохранено, version ${settingsEntity.version}`;
-    toast('Настройки стратегии сохранены', true);
+    setStatus('#strategy-status', 's.status.saved', settingsEntity.version);
+    toast(I18N.t('s.toast.strategy_saved'), true);
   } catch (e) {
-    toast('Ошибка сохранения: ' + e.message, false);
+    toast(I18N.t('s.toast.save_error', { error: e.message }), false);
   }
 };
 
@@ -261,7 +273,7 @@ $('#bl-add').onclick = async () => {
   await loadBlacklist();
 };
 
-// ---- Позиции (аккордеон, свёрнут по умолчанию, троттл 5с на аккаунт) ----
+// ---- Positions (accordion, collapsed by default, 5s throttle per account) ----
 
 const lastFetch = {};
 
@@ -288,7 +300,7 @@ async function loadPositions(accounts) {
 
 async function refreshAccount(id) {
   const body = document.getElementById('body-' + id);
-  body.innerHTML = 'загрузка…';
+  body.innerHTML = esc(I18N.t('s.loading'));
   try {
     const [balance, positions] = await Promise.all([
       api(`/api/v1/accounts/${encodeURIComponent(id)}/balance?refresh=true`),
@@ -297,7 +309,7 @@ async function refreshAccount(id) {
     lastFetch[id] = Date.now();
     renderAccountBody(id, balance, positions);
   } catch (e) {
-    body.innerHTML = `<span class="red">ошибка: ${esc(e.message)}</span>`;
+    body.innerHTML = `<span class="red">${esc(I18N.t('s.error', { error: e.message }))}</span>`;
   }
 }
 
@@ -310,7 +322,7 @@ function renderAccountBody(id, balance, positions) {
     <tr class="${p.qtyMismatch ? 'bad' : ''}">
       <td>${esc(p.symbol)}</td><td>${esc(p.side)}</td><td class="num">${esc(p.quantity)}</td>
       <td class="num">${esc(p.entryPrice)}</td><td class="num">${esc(p.slPrice ?? '—')}</td><td class="num">${esc(p.tpPrice ?? '—')}</td>
-      <td>${p.qtyMismatch ? '<span class="red">расхождение с биржей</span>' : ''}</td>
+      <td>${p.qtyMismatch ? `<span class="red">${esc(I18N.t('s.positions.mismatch'))}</span>` : ''}</td>
     </tr>`).join('');
   body.innerHTML = `
     <div class="form-row">
@@ -320,7 +332,7 @@ function renderAccountBody(id, balance, positions) {
     </div>
     <table><thead><tr><th>Symbol</th><th>Side</th><th class="num">Qty</th><th class="num">Entry</th>
       <th class="num">SL</th><th class="num">TP</th><th></th></tr></thead>
-      <tbody>${rows || '<tr><td colspan="7" class="muted">нет открытых позиций</td></tr>'}</tbody></table>`;
+      <tbody>${rows || `<tr><td colspan="7" class="muted">${esc(I18N.t('s.positions.none'))}</td></tr>`}</tbody></table>`;
   document.getElementById('refresh-' + id).onclick = () => refreshAccount(id);
   tickAge(id);
 }
@@ -329,13 +341,20 @@ function tickAge(id) {
   const el = document.getElementById('age-' + id);
   if (!el) return;
   const sec = Math.round((Date.now() - lastFetch[id]) / 1000);
-  el.textContent = `обновлено ${sec} сек назад`;
+  el.textContent = I18N.t('s.age', { sec });
   setTimeout(() => tickAge(id), 1000);
 }
 
 // ---- boot ----
 
+// The language switcher lives in index.html (this page is embedded there). A switch fires
+// 'langchange' here via the storage event, and I18N.applyDom has already re-translated every
+// data-i18n label (form labels and status lines included). The page is deliberately NOT reloaded:
+// that would silently discard unsaved edits to the risk / strategy forms. Transient texts
+// (positions "loading…" / "updated N s ago") refresh on their next poll.
+
 (async () => {
+  await I18N.ready;
   if (!getToken()) {
     const t = prompt('ADMIN_TOKEN');
     if (t) setToken(t);
@@ -347,7 +366,7 @@ function tickAge(id) {
   } catch (e) {
     $('#status').textContent = 'error';
     $('#status').className = 'err';
-    toast('Ошибка загрузки: ' + e.message, false);
+    toast(I18N.t('s.toast.load_error', { error: e.message }), false);
   }
 })();
 </script>

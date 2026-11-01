@@ -87,7 +87,8 @@ class RiskBasedPositionSizerTest {
                 new BigDecimal("10000"), new BigDecimal("100"), new BigDecimal("95"));
 
         assertThat(result).isInstanceOf(SizingResult.Rejected.class);
-        assertThat(((SizingResult.Rejected) result).reason()).contains("превышает лимит аккаунта");
+        assertThat(((SizingResult.Rejected) result).code()).isEqualTo("EXCEEDS_ACCOUNT_LIMITS");
+        assertThat(((SizingResult.Rejected) result).reason()).contains("exceeds account limit");
     }
 
     @Test
@@ -101,7 +102,8 @@ class RiskBasedPositionSizerTest {
                 new BigDecimal("10000"), new BigDecimal("100"), new BigDecimal("95"));
 
         assertThat(result).isInstanceOf(SizingResult.Rejected.class);
-        assertThat(((SizingResult.Rejected) result).reason()).contains("минималки");
+        assertThat(((SizingResult.Rejected) result).code()).isEqualTo("BELOW_EXCHANGE_MINIMUM");
+        assertThat(((SizingResult.Rejected) result).reason()).contains("exchange minimum");
     }
 
     @Test

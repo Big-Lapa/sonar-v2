@@ -34,17 +34,17 @@ public class MarketPriceController {
     public PriceResponse price(@RequestParam String symbol, @RequestParam String account) {
         ExecutionAdapter adapter = adapters.forAccount(account).orElse(null);
         if (adapter == null) {
-            return new PriceResponse(symbol, account, null, "аккаунт '" + account + "' не подключён");
+            return new PriceResponse(symbol, account, null, "account '" + account + "' is not connected");
         }
         try {
             var price = adapter.getMarkPrice(symbol);
             if (price == null) {
-                return new PriceResponse(symbol, account, null, "цена недоступна");
+                return new PriceResponse(symbol, account, null, "price unavailable");
             }
             return new PriceResponse(symbol, account, price.toPlainString(), null);
         } catch (RuntimeException e) {
             log.warn("[{}] getMarkPrice({}) failed: {}", account, symbol, e.toString());
-            return new PriceResponse(symbol, account, null, "цена недоступна");
+            return new PriceResponse(symbol, account, null, "price unavailable");
         }
     }
 }

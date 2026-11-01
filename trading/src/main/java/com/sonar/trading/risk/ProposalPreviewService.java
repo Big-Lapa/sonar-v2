@@ -9,6 +9,8 @@ import com.sonar.trading.domain.repository.AccountRiskRepository;
 import com.sonar.trading.domain.repository.CooldownRepository;
 import com.sonar.trading.domain.repository.DailyBaselineRepository;
 import com.sonar.trading.domain.repository.PositionRepository;
+import com.sonar.trading.i18n.MessageCode;
+import com.sonar.trading.i18n.Msg;
 import com.sonar.trading.sizing.RiskBasedPositionSizer;
 import com.sonar.trading.sizing.SizingResult;
 import org.springframework.stereotype.Service;
@@ -70,7 +72,7 @@ public class ProposalPreviewService {
         if (accountId != null) {
             return accountRegistry.byId(accountId)
                     .<List<AccountLegPreview>>map(account -> List.of(previewOne(account, symbol, entry, sl, manualNotional)))
-                    .orElseGet(() -> List.of(AccountLegPreview.rejected(accountId, "аккаунт не найден в реестре")));
+                    .orElseGet(() -> List.of(AccountLegPreview.rejected(accountId, Msg.of(MessageCode.ACCOUNT_NOT_FOUND))));
         }
         List<AccountLegPreview> legs = new ArrayList<>();
         for (AccountProps account : accountRegistry.all()) {
@@ -85,15 +87,14 @@ public class ProposalPreviewService {
         AccountRiskEntity riskEntity = accountRiskRepository.findById(accountId)
                 .orElseGet(() -> accountRiskRepository.save(AccountRiskEntity.defaultsFor(accountId)));
         if (!riskEntity.isTradable()) {
-            return AccountLegPreview.rejected(accountId, "аккаунт выключен из торговли (tradable=false)");
+            return AccountLegPreview.rejected(accountId, Msg.of(MessageCode.ACCOUNT_NOT_TRADABLE));
         }
         AccountRiskProfile profile = AccountRiskProfile.from(riskEntity);
 
         LocalDate today = LocalDate.now(ZoneOffset.UTC);
         var baseline = dailyBaselineRepository.findByIdAccountIdAndIdTradingDay(accountId, today);
         if (baseline.isEmpty()) {
-            return AccountLegPreview.rejected(accountId,
-                    "нет данных по эквити на сегодня — дождитесь минутного поллера (этап 4)");
+            return AccountLegPreview.rejected(accountId, Msg.of(MessageCode.NO_EQUITY_DATA));
         }
         DailyBaselineEntity b = baseline.get();
         BigDecimal equity = new BigDecimal(b.getEquityAtOpen());
@@ -126,7 +127,7 @@ public class ProposalPreviewService {
             return AccountLegPreview.rejected(accountId, decision.reason());
         }
         if (sizing instanceof SizingResult.Rejected r) {
-            return AccountLegPreview.rejected(accountId, r.reason());
+            return AccountLegPreview.rejected(accountId, r.code(), r.params(), r.reason());
         }
         SizingResult.Approved approved = (SizingResult.Approved) sizing;
         return AccountLegPreview.approved(accountId, approved.qty(), approved.actualRisk());

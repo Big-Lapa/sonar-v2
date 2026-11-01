@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru" data-theme="night">
+<html lang="en" data-theme="night">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -58,10 +58,10 @@
 <dialog id="tokenModal" class="modal">
   <div class="modal-box">
     <h3 class="font-bold text-lg">Admin token</h3>
-    <p class="text-sm text-base-content/60 mt-1">Тот же X-Admin-Token, что в .env (ADMIN_TOKEN). Хранится только в этом браузере.</p>
-    <input id="tokenInput" type="password" class="input input-bordered w-full mt-3 mono" placeholder="токен" />
+    <p class="text-sm text-base-content/60 mt-1" data-i18n="token.hint">Same X-Admin-Token as in .env (ADMIN_TOKEN). Stored only in this browser.</p>
+    <input id="tokenInput" type="password" class="input input-bordered w-full mt-3 mono" placeholder="token" data-i18n-placeholder="token.placeholder" />
     <div class="modal-action">
-      <button id="tokenSave" class="btn btn-primary">Сохранить</button>
+      <button id="tokenSave" class="btn btn-primary" data-i18n="token.save">Save</button>
     </div>
   </div>
 </dialog>
@@ -73,7 +73,12 @@
     <span class="badge badge-ghost badge-sm">manual mode</span>
   </div>
   <div id="acctBar" class="flex-none flex items-center gap-3 text-sm"></div>
-  <button id="changeTokenBtn" class="btn btn-ghost btn-xs ml-3">токен</button>
+  <!-- Language switcher: EN | RU (active one highlighted by the page script) -->
+  <div id="lang-switch" class="join ml-3" role="group" aria-label="Language">
+    <button type="button" class="btn btn-xs join-item" data-lang="en">EN</button>
+    <button type="button" class="btn btn-xs join-item" data-lang="ru">RU</button>
+  </div>
+  <button id="changeTokenBtn" class="btn btn-ghost btn-xs ml-2" data-i18n="token.change">token</button>
 </div>
 
 <!-- ============ TABS ============ -->
@@ -91,12 +96,12 @@
 <!-- ============ BALANCES ============ -->
 <div class="px-4 pt-4">
   <div class="flex items-center justify-between mb-2 flex-wrap gap-2">
-    <h2 class="text-sm font-semibold text-base-content/60">Балансы</h2>
+    <h2 class="text-sm font-semibold text-base-content/60" data-i18n="balances.title">Balances</h2>
     <div class="flex items-center gap-2">
       <span class="text-xs text-base-content/40" id="balanceAge"></span>
       <label class="label cursor-pointer gap-1.5 text-xs text-base-content/60">
         <input type="checkbox" id="balanceAutoRefresh" class="checkbox checkbox-xs checkbox-primary" />
-        автообновление 15с
+        <span data-i18n="common.autoRefresh15">auto-refresh 15s</span>
       </label>
       <button id="refreshBalancesBtn" class="btn btn-xs btn-ghost">↻</button>
     </div>
@@ -112,8 +117,8 @@
     <div class="card-body p-3 gap-2">
       <div class="flex items-center gap-2 flex-wrap">
         <div class="join">
-          <input id="symbolInput" list="symbolList" value="BTCUSDT" class="input input-sm join-item mono w-32" placeholder="Символ" />
-          <button id="symbolGo" class="btn btn-sm join-item">График</button>
+          <input id="symbolInput" list="symbolList" value="BTCUSDT" class="input input-sm join-item mono w-32" placeholder="Symbol" data-i18n-placeholder="chart.symbolPlaceholder" />
+          <button id="symbolGo" class="btn btn-sm join-item" data-i18n="chart.go">Chart</button>
         </div>
         <datalist id="symbolList">
           <option value="BTCUSDT"></option>
@@ -124,10 +129,10 @@
           <option value="BNBUSDT"></option>
         </datalist>
         <div class="flex gap-1 ml-auto">
-          <button class="btn btn-xs btn-ghost tf-btn" data-tf="15">15м</button>
-          <button class="btn btn-xs btn-ghost tf-btn tf-active btn-active" data-tf="60">1ч</button>
-          <button class="btn btn-xs btn-ghost tf-btn" data-tf="240">4ч</button>
-          <button class="btn btn-xs btn-ghost tf-btn" data-tf="D">1д</button>
+          <button class="btn btn-xs btn-ghost tf-btn" data-tf="15" data-i18n="tf.15">15m</button>
+          <button class="btn btn-xs btn-ghost tf-btn tf-active btn-active" data-tf="60" data-i18n="tf.60">1h</button>
+          <button class="btn btn-xs btn-ghost tf-btn" data-tf="240" data-i18n="tf.240">4h</button>
+          <button class="btn btn-xs btn-ghost tf-btn" data-tf="D" data-i18n="tf.D">1D</button>
         </div>
       </div>
       <div class="rounded-box overflow-hidden border border-base-content/10" style="height: 560px;">
@@ -139,20 +144,20 @@
   <!-- ---- Order ticket ---- -->
   <div class="card bg-base-100 border border-base-content/10 sticky top-4">
     <div class="card-body p-4 gap-3">
-      <h2 class="card-title text-base">Новая позиция <span id="tickerLabel" class="badge badge-primary badge-outline mono">BTCUSDT</span></h2>
+      <h2 class="card-title text-base"><span data-i18n="order.title">New position</span> <span id="tickerLabel" class="badge badge-primary badge-outline mono">BTCUSDT</span></h2>
       <div class="text-xs text-base-content/60">mark ≈ <span id="markPriceLabel" class="mono">—</span> <button id="refreshPriceBtn" class="link link-hover ml-1">↻</button></div>
 
       <!-- Side -->
-      <div class="flex gap-2" role="group" aria-label="сторона">
+      <div class="flex gap-2" role="group" aria-label="side" data-i18n-aria="order.sideLabel">
         <button type="button" id="sideLong" class="btn btn-success side-btn" data-side="LONG">Long</button>
-        <div class="tooltip flex-1" data-tip="Short пока не поддержан — система LONG-only">
-          <button type="button" id="sideShort" class="btn btn-outline btn-error side-btn w-full btn-disabled" disabled>Short <span class="badge badge-xs ml-1">скоро</span></button>
+        <div class="tooltip flex-1" data-tip="Short is not supported yet — the system is LONG-only" data-i18n-tip="order.shortTip">
+          <button type="button" id="sideShort" class="btn btn-outline btn-error side-btn w-full btn-disabled" disabled>Short <span class="badge badge-xs ml-1" data-i18n="order.soon">soon</span></button>
         </div>
       </div>
 
       <!-- Order type -->
       <fieldset class="fieldset py-0">
-        <legend class="fieldset-legend text-xs">Тип ордера</legend>
+        <legend class="fieldset-legend text-xs" data-i18n="order.type">Order type</legend>
         <div class="join w-full">
           <button type="button" id="typeMarket" class="btn btn-sm join-item flex-1 btn-active">Market</button>
           <button type="button" id="typeLimit" class="btn btn-sm join-item flex-1">Limit</button>
@@ -161,27 +166,27 @@
 
       <!-- Limit price (hidden unless Limit) -->
       <label id="limitPriceWrap" class="input input-sm w-full hidden fade-in">
-        <span class="label mono text-xs">Цена входа</span>
+        <span class="label mono text-xs" data-i18n="order.entryPrice">Entry price</span>
         <input id="limitPrice" type="number" step="any" class="mono" placeholder="0.00" />
       </label>
 
       <!-- Sizing mode -->
       <fieldset class="fieldset py-0">
-        <legend class="fieldset-legend text-xs">Режим размера</legend>
+        <legend class="fieldset-legend text-xs" data-i18n="order.sizeMode">Size mode</legend>
         <div class="join w-full">
-          <button type="button" id="sizeModeUsd" class="btn btn-sm join-item flex-1 btn-active">$ нотионал</button>
-          <button type="button" id="sizeModePct" class="btn btn-sm join-item flex-1">% от баланса</button>
+          <button type="button" id="sizeModeUsd" class="btn btn-sm join-item flex-1 btn-active" data-i18n="order.sizeUsd">$ notional</button>
+          <button type="button" id="sizeModePct" class="btn btn-sm join-item flex-1" data-i18n="order.sizePct">% of balance</button>
         </div>
       </fieldset>
 
       <!-- Notional/% + leverage -->
       <div class="grid grid-cols-2 gap-2">
         <label class="input input-sm w-full">
-          <span class="label text-xs" id="notionalLabel">Нотионал $</span>
+          <span class="label text-xs" id="notionalLabel" data-i18n="order.notionalUsd">Notional $</span>
           <input id="notional" type="number" step="any" value="500" class="mono" />
         </label>
         <label class="input input-sm w-full">
-          <span class="label text-xs">Плечо</span>
+          <span class="label text-xs" data-i18n="order.leverage">Leverage</span>
           <input id="leverage" type="number" min="1" max="125" value="20" class="mono" />
         </label>
       </div>
@@ -191,7 +196,7 @@
         <button type="button" class="btn btn-xs btn-ghost lev-quick" data-lev="20">20x</button>
         <button type="button" class="btn btn-xs btn-ghost lev-quick" data-lev="50">50x</button>
         <button type="button" class="btn btn-xs btn-ghost lev-quick" data-lev="100">100x</button>
-        <span id="marginEst" class="ml-auto text-xs text-base-content/60 self-center mono">маржа ≈ $25.00</span>
+        <span id="marginEst" class="ml-auto text-xs text-base-content/60 self-center mono" data-i18n="order.marginEst" data-args='{"margin":"25.00"}'>margin ≈ $25.00</span>
       </div>
 
       <!-- SL / TP: start empty (0.00) — never auto-filled, so a stale/wrong mark never rides along
@@ -203,48 +208,48 @@
           <span class="label text-xs text-error">SL</span>
           <input id="slPrice" type="number" step="any" placeholder="0.00" class="mono" />
           <span class="stepper-btns">
-            <button type="button" class="price-step" data-target="slPrice" data-dir="1" title="+1% от mark">▲</button>
-            <button type="button" class="price-step" data-target="slPrice" data-dir="-1" title="-1% от mark">▼</button>
+            <button type="button" class="price-step" data-target="slPrice" data-dir="1" title="+1% of mark" data-i18n-title="order.stepUp">▲</button>
+            <button type="button" class="price-step" data-target="slPrice" data-dir="-1" title="-1% of mark" data-i18n-title="order.stepDown">▼</button>
           </span>
         </label>
         <label class="input input-sm w-full stepper-input">
           <span class="label text-xs text-success">TP</span>
           <input id="tpPrice" type="number" step="any" placeholder="0.00" class="mono" />
           <span class="stepper-btns">
-            <button type="button" class="price-step" data-target="tpPrice" data-dir="1" title="+1% от mark">▲</button>
-            <button type="button" class="price-step" data-target="tpPrice" data-dir="-1" title="-1% от mark">▼</button>
+            <button type="button" class="price-step" data-target="tpPrice" data-dir="1" title="+1% of mark" data-i18n-title="order.stepUp">▲</button>
+            <button type="button" class="price-step" data-target="tpPrice" data-dir="-1" title="-1% of mark" data-i18n-title="order.stepDown">▼</button>
           </span>
         </label>
       </div>
-      <div id="rrHint" class="text-xs text-base-content/50 -mt-1">укажи SL и TP для расчёта R:R</div>
+      <div id="rrHint" class="text-xs text-base-content/50 -mt-1" data-i18n="order.rrEmpty">enter SL and TP to compute R:R</div>
 
       <!-- Accounts -->
       <fieldset class="fieldset py-0">
-        <legend class="fieldset-legend text-xs">Аккаунты (открыть на каждом отдельно)</legend>
+        <legend class="fieldset-legend text-xs" data-i18n="order.accounts">Accounts (open on each separately)</legend>
         <div id="accountChecks" class="flex flex-col gap-1.5"></div>
       </fieldset>
 
       <div role="alert" class="alert alert-info alert-soft py-2 text-xs">
-        <span id="sizeModeHint">Несколько аккаунтов ⇒ отдельный proposal на каждый, один и тот же нотионал/плечо на все.</span>
+        <span id="sizeModeHint" data-i18n="order.hintUsd">Several accounts ⇒ a separate proposal for each, the same notional/leverage for all.</span>
         <span id="pctStalenessHint" class="hidden text-warning block mt-1"></span>
       </div>
 
-      <button id="previewBtn" class="btn btn-primary btn-block mt-1">Проверить →</button>
+      <button id="previewBtn" class="btn btn-primary btn-block mt-1" data-i18n="order.preview">Check →</button>
     </div>
   </div>
 
-  <!-- ---- Preview / confirm (full width, appears after "Проверить") ---- -->
+  <!-- ---- Preview / confirm (full width, appears after "Check") ---- -->
   <div id="previewSection" class="xl:col-span-2 hidden fade-in">
     <div class="card bg-base-100 border border-base-content/10">
       <div class="card-body p-4 gap-3">
         <div class="flex items-center justify-between">
-          <h3 class="font-semibold">Risk-preview по аккаунтам</h3>
-          <button id="confirmAllBtn" class="btn btn-success btn-sm">Подтвердить все approved</button>
+          <h3 class="font-semibold" data-i18n="preview.title">Risk preview per account</h3>
+          <button id="confirmAllBtn" class="btn btn-success btn-sm" data-i18n="preview.confirmAll">Confirm all approved</button>
         </div>
         <div class="overflow-x-auto">
           <table class="table table-sm">
             <thead>
-              <tr><th>Аккаунт</th><th>Статус</th><th>Qty</th><th>Risk $</th><th>Причина отказа</th><th></th></tr>
+              <tr><th data-i18n="common.account">Account</th><th data-i18n="common.status">Status</th><th>Qty</th><th>Risk $</th><th data-i18n="preview.thReason">Rejection reason</th><th></th></tr>
             </thead>
             <tbody id="previewTbody"></tbody>
           </table>
@@ -258,17 +263,17 @@
 <!-- ============ POSITIONS ============ -->
 <section class="px-4 pb-4">
   <div class="flex items-center justify-between mb-2 flex-wrap gap-2">
-    <h2 class="text-sm font-semibold text-base-content/60">Открытые позиции</h2>
+    <h2 class="text-sm font-semibold text-base-content/60" data-i18n="pos.title">Open positions</h2>
     <div class="flex items-center gap-2">
       <select id="filterAccount" class="select select-sm w-40">
-        <option value="">Все аккаунты</option>
+        <option value="" data-i18n="common.allAccounts">All accounts</option>
       </select>
       <select id="filterSymbol" class="select select-sm w-40 mono">
-        <option value="">Все символы</option>
+        <option value="" data-i18n="common.allSymbols">All symbols</option>
       </select>
       <label class="label cursor-pointer gap-1.5 text-xs text-base-content/60">
         <input type="checkbox" id="positionsAutoRefresh" class="checkbox checkbox-xs checkbox-primary" />
-        автообновление 15с
+        <span data-i18n="common.autoRefresh15">auto-refresh 15s</span>
       </label>
       <button id="refreshPositionsBtn" class="btn btn-sm btn-ghost">↻</button>
     </div>
@@ -281,20 +286,20 @@
           <thead>
             <tr>
               <th class="w-8"><input type="checkbox" id="selectAllPos" class="checkbox checkbox-xs" /></th>
-              <th class="sortable" data-key="accountId">Аккаунт ⇅</th>
-              <th class="sortable" data-key="symbol">Контракт ⇅</th>
+              <th class="sortable" data-key="accountId" data-i18n="pos.thAccount">Account ⇅</th>
+              <th class="sortable" data-key="symbol" data-i18n="pos.thContract">Contract ⇅</th>
               <th>Side</th>
-              <th class="sortable text-right" data-key="qty">Кол-во ⇅</th>
-              <th class="sortable text-right" data-key="notional">Нотионал ⇅</th>
-              <th class="text-right">Маржа</th>
+              <th class="sortable text-right" data-key="qty" data-i18n="pos.thQty">Qty ⇅</th>
+              <th class="sortable text-right" data-key="notional" data-i18n="pos.thNotional">Notional ⇅</th>
+              <th class="text-right" data-i18n="pos.thMargin">Margin</th>
               <th class="text-right">Entry</th>
               <th class="text-right">Mark</th>
               <th class="text-right">SL / TP</th>
               <th class="sortable text-right" data-key="upnl">uPnL ⇅</th>
-              <th class="text-center">Закрыть</th>
+              <th class="text-center" data-i18n="pos.thClose">Close</th>
             </tr>
           </thead>
-          <tbody id="posTbody"><tr><td colspan="12" class="text-center text-base-content/40 py-6">загрузка…</td></tr></tbody>
+          <tbody id="posTbody"><tr><td colspan="12" class="text-center text-base-content/40 py-6" data-i18n="common.loading">loading…</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -302,8 +307,8 @@
 
   <div id="bulkBar" class="bulk-bar hidden fade-in mt-2">
     <div class="alert bg-base-100 border border-primary/30 flex items-center justify-between shadow-lg">
-      <span class="text-sm"><b id="bulkCount">0</b> позиций выбрано</span>
-      <button id="bulkCloseBtn" class="btn btn-error btn-sm">Закрыть выбранные →</button>
+      <span class="text-sm"><b id="bulkCount">0</b> <span data-i18n="bulk.selected">positions selected</span></span>
+      <button id="bulkCloseBtn" class="btn btn-error btn-sm" data-i18n="bulk.closeSelected">Close selected →</button>
     </div>
   </div>
 </section>
@@ -311,13 +316,13 @@
 <!-- ============ OPEN ORDERS ============ -->
 <section class="px-4 pb-4">
   <div class="flex items-center justify-between mb-2 flex-wrap gap-2">
-    <h2 class="text-sm font-semibold text-base-content/60">Открытые ордера</h2>
+    <h2 class="text-sm font-semibold text-base-content/60" data-i18n="orders.title">Open orders</h2>
     <div class="flex items-center gap-2">
       <select id="ordersAccount" class="select select-sm w-44"></select>
       <select id="ordersSymbol" class="select select-sm w-40 mono"></select>
       <label class="label cursor-pointer gap-1.5 text-xs text-base-content/60">
         <input type="checkbox" id="ordersAutoRefresh" class="checkbox checkbox-xs checkbox-primary" />
-        автообновление 15с
+        <span data-i18n="common.autoRefresh15">auto-refresh 15s</span>
       </label>
       <button id="refreshOrdersBtn" class="btn btn-sm btn-ghost">↻</button>
     </div>
@@ -328,11 +333,11 @@
         <table class="table table-sm">
           <thead>
             <tr>
-              <th>Аккаунт</th><th>Контракт</th><th>Тип</th><th>Side</th><th class="text-right">Qty</th>
-              <th class="text-right">Цена / триггер</th><th>Статус</th><th class="text-center">Отмена</th>
+              <th data-i18n="common.account">Account</th><th data-i18n="common.contract">Contract</th><th data-i18n="orders.thType">Type</th><th>Side</th><th class="text-right">Qty</th>
+              <th class="text-right" data-i18n="orders.thPrice">Price / trigger</th><th data-i18n="common.status">Status</th><th class="text-center" data-i18n="orders.thCancel">Cancel</th>
             </tr>
           </thead>
-          <tbody id="ordersTbody"><tr><td colspan="8" class="text-center text-base-content/40 py-6">загрузка…</td></tr></tbody>
+          <tbody id="ordersTbody"><tr><td colspan="8" class="text-center text-base-content/40 py-6" data-i18n="common.loading">loading…</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -348,8 +353,8 @@
 <!-- ============ CLOSE MODAL (single position) ============ -->
 <dialog id="closeModal" class="modal">
   <div class="modal-box max-w-md">
-    <h3 class="font-bold text-lg">Закрыть позицию <span id="closeModalSymbol" class="badge badge-outline mono ml-1"></span></h3>
-    <p class="text-xs text-base-content/50 mt-1">Открыто: <span id="closeModalQty" class="mono"></span> · счёт <span id="closeModalAccount" class="mono"></span></p>
+    <h3 class="font-bold text-lg"><span data-i18n="close.title">Close position</span> <span id="closeModalSymbol" class="badge badge-outline mono ml-1"></span></h3>
+    <p class="text-xs text-base-content/50 mt-1"><span data-i18n="close.opened">Opened:</span> <span id="closeModalQty" class="mono"></span> · <span data-i18n="close.account">account</span> <span id="closeModalAccount" class="mono"></span></p>
 
     <div class="join w-full mt-4">
       <button type="button" id="closeTypeMarket" class="btn btn-sm join-item flex-1 btn-active">Market</button>
@@ -357,13 +362,13 @@
     </div>
 
     <label id="closeLimitPriceWrap" class="input input-sm w-full mt-3 hidden fade-in">
-      <span class="label mono text-xs">Цена</span>
+      <span class="label mono text-xs" data-i18n="close.price">Price</span>
       <input id="closeLimitPrice" type="number" step="any" class="mono" placeholder="0.00" />
     </label>
 
     <div class="mt-4">
       <div class="flex items-center justify-between text-xs text-base-content/60 mb-1">
-        <span>Размер закрытия</span>
+        <span data-i18n="close.size">Close size</span>
         <span><span id="closePctLabel">100</span>%</span>
       </div>
       <input id="closeQtyInput" type="number" step="any" class="input input-sm w-full mono mb-2" />
@@ -377,8 +382,8 @@
     <div id="closeModalError" class="text-error text-xs mt-2 hidden"></div>
 
     <div class="modal-action">
-      <form method="dialog"><button class="btn btn-sm">Отмена</button></form>
-      <button id="closeConfirmBtn" class="btn btn-error btn-sm"><span id="closeConfirmPrefix">Закрыть market</span>&nbsp;<span id="closeConfirmPct">100%</span></button>
+      <form method="dialog"><button class="btn btn-sm" data-i18n="common.cancel">Cancel</button></form>
+      <button id="closeConfirmBtn" class="btn btn-error btn-sm"><span id="closeConfirmPrefix" data-i18n="close.market">Close market</span>&nbsp;<span id="closeConfirmPct">100%</span></button>
     </div>
   </div>
   <form method="dialog" class="modal-backdrop"><button>close</button></form>
@@ -387,12 +392,12 @@
 <!-- ============ BULK CLOSE MODAL ============ -->
 <dialog id="bulkCloseModal" class="modal">
   <div class="modal-box max-w-md">
-    <h3 class="font-bold text-lg">Закрыть <span id="bulkModalCount">0</span> позиций</h3>
-    <p class="text-xs text-base-content/50 mt-1">Один процент на все — размеры позиций разные, qty каждой считается от её собственного объёма. Всегда market.</p>
+    <h3 class="font-bold text-lg"><span data-i18n="bulk.titlePrefix">Close</span> <span id="bulkModalCount">0</span> <span data-i18n="bulk.titleSuffix">positions</span></h3>
+    <p class="text-xs text-base-content/50 mt-1" data-i18n="bulk.note">One percent for all — position sizes differ, each qty is computed from its own size. Always market.</p>
 
     <div class="mt-4">
       <div class="flex items-center justify-between text-xs text-base-content/60 mb-1">
-        <span>Размер закрытия (для каждой позиции)</span>
+        <span data-i18n="bulk.size">Close size (for each position)</span>
         <span><span id="bulkPctLabel">100</span>%</span>
       </div>
       <div class="slider-shell">
@@ -405,20 +410,21 @@
 
     <div class="mt-3 rounded-box border border-base-content/10 overflow-hidden max-h-48 overflow-y-auto">
       <table class="table table-xs">
-        <thead><tr><th>Контракт</th><th>Счёт</th><th class="text-right">Закроется</th></tr></thead>
+        <thead><tr><th data-i18n="common.contract">Contract</th><th data-i18n="bulk.thAccount">Account</th><th class="text-right" data-i18n="bulk.thCloses">Closes</th></tr></thead>
         <tbody id="bulkPreviewTbody"></tbody>
       </table>
     </div>
     <div id="bulkModalStatus" class="text-xs mt-2"></div>
 
     <div class="modal-action">
-      <form method="dialog"><button class="btn btn-sm">Отмена</button></form>
-      <button id="bulkConfirmBtn" class="btn btn-error btn-sm">Закрыть все market <span id="bulkConfirmPct">100%</span></button>
+      <form method="dialog"><button class="btn btn-sm" data-i18n="common.cancel">Cancel</button></form>
+      <button id="bulkConfirmBtn" class="btn btn-error btn-sm"><span data-i18n="bulk.confirm">Close all market</span> <span id="bulkConfirmPct">100%</span></button>
     </div>
   </div>
   <form method="dialog" class="modal-backdrop"><button>close</button></form>
 </dialog>
 
+<script src="/admin/i18n.js"></script>
 <script>
   const API_BASE = '';
   let token = localStorage.getItem('sonar_admin_token') || '';
@@ -443,6 +449,42 @@
   // against a real attacker, but it costs nothing and these strings genuinely aren't ours.
   function esc(s) {
     return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  // ---- i18n helpers (dictionaries live in /admin/i18n/{en,ru}.json, runtime in /admin/i18n.js).
+  // Anything translated at runtime carries data-i18n / data-msg so I18N.applyDom() can re-translate
+  // it on 'langchange' without re-rendering the whole page. ----
+  const t = (key, params) => I18N.t(key, params);
+  /** Sets translated text and remembers key/params for re-translation on language change. */
+  function setT(el, key, params) {
+    el.setAttribute('data-i18n', key);
+    if (params) el.setAttribute('data-args', JSON.stringify(params)); else el.removeAttribute('data-args');
+    el.textContent = t(key, params);
+  }
+  /** Sets final text (exchange/exception strings, numbers) and detaches the element from translation. */
+  function setRaw(el, text) {
+    el.removeAttribute('data-i18n');
+    el.removeAttribute('data-args');
+    el.textContent = text;
+  }
+  /** Sets the text of an API message {code, params, message}; fbKey is used when it carries no text. */
+  function setMsg(el, m, fbKey) {
+    el.setAttribute('data-msg', m.code ?? '');
+    el.setAttribute('data-msg-args', JSON.stringify(m.params ?? {}));
+    el.setAttribute('data-msg-text', m.message ?? '');
+    if (fbKey) el.setAttribute('data-msg-fb', fbKey);
+    el.textContent = I18N.tm(m) || (fbKey ? t(fbKey) : '');
+  }
+  /** Markup helpers for innerHTML templates: attributes (single-quoted) + escaped default text. */
+  function tAttr(key, params) {
+    return `data-i18n='${esc(key)}'` + (params ? ` data-args='${esc(JSON.stringify(params))}'` : '');
+  }
+  function tText(key, params) { return esc(t(key, params)); }
+  /** A message cell: translated through its code when the API sent one, "—" when it sent nothing. */
+  function msgCell(cls, m) {
+    if (!m.code && !m.message) return `<td class="${cls}">—</td>`;
+    const args = `data-msg='${esc(m.code ?? '')}' data-msg-args='${esc(JSON.stringify(m.params ?? {}))}' data-msg-text='${esc(m.message ?? '')}'`;
+    return `<td class="${cls}" ${args}>${esc(I18N.tm(m))}</td>`;
   }
 
   // ---- Auth ----
@@ -473,7 +515,7 @@
       headers: { 'Content-Type': 'application/json', 'X-Admin-Token': token, ...(opts.headers || {}) },
     });
     if (resp.status === 401) {
-      showError('неверный admin token');
+      showError(t('err.badToken'));
       localStorage.removeItem('sonar_admin_token');
       token = '';
       tokenModal.showModal();
@@ -482,7 +524,7 @@
     let body = null;
     try { body = await resp.json(); } catch (e) { /* no body */ }
     if (!resp.ok) {
-      throw new Error((body && (body.error || body.message)) || `HTTP ${resp.status}`);
+      throw new Error((body && (I18N.tm(body) || body.error)) || `HTTP ${resp.status}`);
     }
     return body;
   }
@@ -500,7 +542,7 @@
     try {
       accounts = await api('/api/v1/accounts');
     } catch (e) {
-      showError('не удалось загрузить аккаунты: ' + e.message);
+      showError(t('err.loadAccounts', { error: e.message }));
       return;
     }
     renderAccountBarSkeleton();
@@ -537,7 +579,7 @@
 
   function populateAccountFilter() {
     const sel = document.getElementById('filterAccount');
-    sel.innerHTML = '<option value="">Все аккаунты</option>' +
+    sel.innerHTML = `<option value="" ${tAttr('common.allAccounts')}>${tText('common.allAccounts')}</option>` +
       accounts.map(a => `<option value="${esc(a.id)}">${esc(a.id)}</option>`).join('');
   }
 
@@ -570,7 +612,7 @@
   function populateOrdersAccount() {
     const sel = document.getElementById('ordersAccount');
     const prev = sel.value;
-    sel.innerHTML = '<option value="">Все аккаунты</option>'
+    sel.innerHTML = `<option value="" ${tAttr('common.allAccounts')}>${tText('common.allAccounts')}</option>`
       + accounts.map(a => `<option value="${esc(a.id)}">${esc(a.id)} (${esc(a.exchange)})</option>`).join('');
     sel.value = prev || '';
   }
@@ -584,7 +626,7 @@
     const sel = document.getElementById('ordersSymbol');
     const prev = sel.value;
     const symbols = [...new Set(allPositions.map(p => p.symbol))].sort();
-    sel.innerHTML = '<option value="">Все символы</option>'
+    sel.innerHTML = `<option value="" ${tAttr('common.allSymbols')}>${tText('common.allSymbols')}</option>`
       + symbols.map(sym => `<option value="${esc(sym)}">${esc(sym)}</option>`).join('');
     sel.value = symbols.includes(prev) ? prev : '';
   }
@@ -608,11 +650,11 @@
     const targetAccounts = accountFilter ? [accountFilter] : accounts.map(a => a.id);
     const targetSymbols = symbolFilter ? [symbolFilter] : [...new Set(allPositions.map(p => p.symbol))];
     if (!targetSymbols.length) {
-      tbody.innerHTML = '<tr><td colspan="8" class="text-center text-base-content/40 py-6">нет открытых позиций — нечего запрашивать</td></tr>';
+      tbody.innerHTML = `<tr><td colspan="8" class="text-center text-base-content/40 py-6" ${tAttr('orders.noPositions')}>${tText('orders.noPositions')}</td></tr>`;
       return;
     }
 
-    tbody.innerHTML = '<tr><td colspan="8" class="text-center text-base-content/40 py-6">загрузка…</td></tr>';
+    tbody.innerHTML = `<tr><td colspan="8" class="text-center text-base-content/40 py-6" ${tAttr('common.loading')}>${tText('common.loading')}</td></tr>`;
     const pairs = targetAccounts.flatMap(acc => targetSymbols.map(sym => ({ acc, sym })));
     const results = await Promise.all(pairs.map(async ({ acc, sym }) => {
       try {
@@ -628,7 +670,7 @@
     const rows = results.flat();
 
     if (!rows.length) {
-      tbody.innerHTML = '<tr><td colspan="8" class="text-center text-base-content/40 py-6">нет открытых ордеров</td></tr>';
+      tbody.innerHTML = `<tr><td colspan="8" class="text-center text-base-content/40 py-6" ${tAttr('orders.none')}>${tText('orders.none')}</td></tr>`;
       return;
     }
     tbody.innerHTML = rows.map(o => `
@@ -641,7 +683,7 @@
         <td class="text-right mono">${esc(orderLevel(o))}</td>
         <td class="text-xs">${esc(o.status ?? '—')}</td>
         <td class="text-center"><button class="btn btn-xs btn-outline btn-error cancel-order"
-              data-order-id="${esc(o.orderId)}" data-account="${esc(o.accountId)}" data-symbol="${esc(o.symbol)}">Отменить</button></td>
+              data-order-id="${esc(o.orderId)}" data-account="${esc(o.accountId)}" data-symbol="${esc(o.symbol)}" ${tAttr('orders.cancel')}>${tText('orders.cancel')}</button></td>
       </tr>`).join('');
     tbody.querySelectorAll('.cancel-order').forEach(btn => btn.addEventListener('click', () => cancelOrder(btn)));
   }
@@ -653,15 +695,15 @@
     const symbol = btn.dataset.symbol;
     const orderId = btn.dataset.orderId;
     btn.disabled = true;
-    btn.textContent = '...';
+    setRaw(btn, '...');
     try {
       await api(`/api/v1/accounts/${accountId}/orders/${encodeURIComponent(orderId)}/cancel?symbol=${encodeURIComponent(symbol)}`,
         { method: 'POST' });
       loadOpenOrders();
     } catch (e) {
       btn.disabled = false;
-      btn.textContent = 'Отменить';
-      showError('не удалось отменить ордер: ' + e.message);
+      setT(btn, 'orders.cancel');
+      showError(t('err.cancelOrder', { error: e.message }));
     }
   }
   document.getElementById('refreshOrdersBtn').addEventListener('click', loadOpenOrders);
@@ -682,7 +724,7 @@
             <span class="font-semibold">${esc(a.id)}</span>
             <span class="badge badge-ghost badge-xs">${esc(a.exchange)}</span>
           </div>
-          <div class="text-xs text-base-content/50">загрузка…</div>
+          <div class="text-xs text-base-content/50" ${tAttr('common.loading')}>${tText('common.loading')}</div>
         </div>
       </div>`).join('');
   }
@@ -701,7 +743,7 @@
     wrap.innerHTML = accounts.map(a => {
       const b = lastBalances[a.id];
       const body = !b
-        ? '<div class="text-xs text-base-content/50">загрузка…</div>'
+        ? `<div class="text-xs text-base-content/50" ${tAttr('common.loading')}>${tText('common.loading')}</div>`
         : b.error
         ? `<div class="text-error text-xs">${esc(b.error)}</div>`
         : (() => {
@@ -747,7 +789,7 @@
     const el = document.getElementById('balanceAge');
     if (el && lastBalanceFetch != null) {
       const sec = Math.round((Date.now() - lastBalanceFetch) / 1000);
-      el.textContent = `обновлено ${sec}с назад`;
+      setT(el, 'balance.age', { sec });
     }
     // % sizing goes stale on the same clock — the balance card's own age readout ticks every
     // second regardless of mode, so piggyback on it instead of a second interval.
@@ -805,7 +847,7 @@
   function renderChart(symbol, tf) {
     const params = new URLSearchParams({
       symbol: 'BYBIT:' + symbol + '.P', interval: tf, timezone: 'Etc/UTC',
-      theme: 'dark', style: '1', locale: 'ru', toolbarbg: '1d232a',
+      theme: 'dark', style: '1', locale: I18N.getLang(), toolbarbg: '1d232a',
       saveimage: '0', hideideas: '1', symboledit: '1',
     });
     const frame = document.createElement('iframe');
@@ -819,7 +861,6 @@
     frame.style.height = '100%';
     document.getElementById('tv_chart').replaceChildren(frame);
   }
-  renderChart(currentSymbol, currentTf);
 
   document.getElementById('symbolGo').addEventListener('click', updateSymbol);
   document.getElementById('symbolInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') updateSymbol(); });
@@ -849,12 +890,12 @@
     if (!accountId) return;
     try {
       const r = await api(`/api/v1/market/price?symbol=${encodeURIComponent(currentSymbol)}&account=${encodeURIComponent(accountId)}`);
-      if (r.error) { document.getElementById('markPriceLabel').textContent = r.error; return; }
+      if (r.error) { setRaw(document.getElementById('markPriceLabel'), r.error); return; }
       currentMarkPrice = parseFloat(r.price);
-      document.getElementById('markPriceLabel').textContent = r.price + ' (' + accountId + ')';
+      setRaw(document.getElementById('markPriceLabel'), r.price + ' (' + accountId + ')');
       if (orderType === 'MARKET') updateMarginEst();
       updateRr();
-    } catch (e) { document.getElementById('markPriceLabel').textContent = 'н/д'; }
+    } catch (e) { setT(document.getElementById('markPriceLabel'), 'common.na'); }
   }
 
   // ---- Side toggle (Short disabled — see button) ----
@@ -884,11 +925,11 @@
   function updateMarginEst() {
     const l = parseFloat(leverageInput.value) || 1;
     if (sizeMode === 'PCT') {
-      marginEstEl.textContent = 'маржа — своя на каждый аккаунт (см. список ниже)';
+      setT(marginEstEl, 'order.marginPerAccount');
       return;
     }
     const n = parseFloat(notionalInput.value) || 0;
-    marginEstEl.textContent = 'маржа ≈ $' + (n / l).toFixed(2);
+    setT(marginEstEl, 'order.marginEst', { margin: (n / l).toFixed(2) });
   }
   notionalInput.addEventListener('input', () => { updateMarginEst(); updateAccountSizeHints(); });
   leverageInput.addEventListener('input', updateMarginEst);
@@ -908,11 +949,9 @@
     sizeMode = mode;
     sizeModeUsdBtn.classList.toggle('btn-active', mode === 'USD');
     sizeModePctBtn.classList.toggle('btn-active', mode === 'PCT');
-    notionalLabel.textContent = mode === 'USD' ? 'Нотионал $' : '% от equity';
+    setT(notionalLabel, mode === 'USD' ? 'order.notionalUsd' : 'order.pctEquity');
     notionalInput.value = sizeModeValues[mode];
-    sizeModeHint.textContent = mode === 'USD'
-      ? 'Несколько аккаунтов ⇒ отдельный proposal на каждый, один и тот же нотионал/плечо на все.'
-      : 'Несколько аккаунтов ⇒ отдельный proposal на каждый; нотионал считается от equity каждого аккаунта отдельно (equity × %), плечо и % — одни на все.';
+    setT(sizeModeHint, mode === 'USD' ? 'order.hintUsd' : 'order.hintPct');
     updateMarginEst();
     updateAccountSizeHints();
   }
@@ -944,7 +983,7 @@
     if (sizeMode !== 'PCT' || lastBalanceFetch == null) { hint.classList.add('hidden'); return; }
     const ageSec = Math.round((Date.now() - lastBalanceFetch) / 1000);
     if (Date.now() - lastBalanceFetch < PCT_STALE_WARN_MS) { hint.classList.add('hidden'); return; }
-    hint.textContent = `баланс обновлялся ${ageSec}с назад — % считается от него, включи автообновление баланса или обнови вручную (↻ у «Балансы»)`;
+    setT(hint, 'order.staleBalance', { sec: ageSec });
     hint.classList.remove('hidden');
   }
 
@@ -970,10 +1009,10 @@
   }
   function updateRr() {
     const sl = parseFloat(slInput.value), tp = parseFloat(tpInput.value), entry = referenceEntry();
-    if (!sl || !tp || !entry) { rrHint.textContent = 'укажи SL и TP для расчёта R:R'; return; }
+    if (!sl || !tp || !entry) { setT(rrHint, 'order.rrEmpty'); return; }
     const risk = Math.abs(entry - sl), reward = Math.abs(tp - entry);
     const rr = risk > 0 ? (reward / risk).toFixed(2) : '—';
-    rrHint.textContent = `R:R ≈ ${rr} (от цены ${entry})`;
+    setT(rrHint, 'order.rr', { rr, entry });
   }
   slInput.addEventListener('input', updateRr);
   tpInput.addEventListener('input', updateRr);
@@ -984,7 +1023,7 @@
   // float noise (63588.199999999997) without hard-coding a decimal count per symbol. ----
   function roundPrice(n) { return parseFloat(n.toFixed(8)); }
   function stepPrice(input, dir) {
-    if (!Number.isFinite(currentMarkPrice)) { showError('нет mark price — обнови котировку (↻)'); return; }
+    if (!Number.isFinite(currentMarkPrice)) { showError(t('err.noMark')); return; }
     const cur = parseFloat(input.value);
     input.value = (input.value === '' || !Number.isFinite(cur))
       ? roundPrice(currentMarkPrice)
@@ -1001,18 +1040,18 @@
   document.getElementById('previewBtn').addEventListener('click', async () => {
     if (!ensureToken()) return;
     const checked = [...document.querySelectorAll('.account-cb:checked')];
-    if (checked.length === 0) { showError('выбери хотя бы один аккаунт'); return; }
+    if (checked.length === 0) { showError(t('err.pickAccount')); return; }
     const entry = referenceEntry();
-    if (!entry) { showError('нет цены входа — дождись котировки или укажи limit-цену'); return; }
+    if (!entry) { showError(t('err.noEntry')); return; }
     const sl = slInput.value, tp = tpInput.value;
-    if (!sl || !tp) { showError('укажи SL и TP'); return; }
+    if (!sl || !tp) { showError(t('err.needSlTp')); return; }
 
-    previewTbody.innerHTML = '<tr><td colspan="6" class="text-center text-base-content/50">считаю...</td></tr>';
+    previewTbody.innerHTML = `<tr><td colspan="6" class="text-center text-base-content/50" ${tAttr('preview.calculating')}>${tText('preview.calculating')}</td></tr>`;
     previewSection.classList.remove('hidden');
     previewState = [];
     const confirmAllBtn = document.getElementById('confirmAllBtn');
     confirmAllBtn.disabled = false;
-    confirmAllBtn.textContent = 'Подтвердить все approved';
+    setT(confirmAllBtn, 'preview.confirmAll');
 
     for (const cb of checked) {
       const accountId = cb.value;
@@ -1021,7 +1060,7 @@
       const manualNotional = resolveNotionalFor(accountId);
       if (sizeMode === 'PCT' && manualNotional == null) {
         row.innerHTML = `<td class="mono">${esc(accountId)}</td><td><span class="badge badge-error badge-sm">error</span></td>
-             <td colspan="3" class="text-xs text-error">нет баланса для расчёта % — обнови балансы (↻ у «Балансы»)</td><td></td>`;
+             <td colspan="3" class="text-xs text-error" ${tAttr('preview.noBalancePct')}>${tText('preview.noBalancePct')}</td><td></td>`;
         if (previewTbody.querySelector('td[colspan]')) previewTbody.innerHTML = '';
         previewTbody.appendChild(row);
         continue;
@@ -1042,10 +1081,10 @@
         row.innerHTML = leg.approved
           ? `<td class="mono">${esc(accountId)}</td><td><span class="badge badge-success badge-sm">approved</span></td>
              <td class="mono">${esc(leg.qty ?? '—')}</td><td class="mono">${esc(leg.riskUsd ?? '—')}</td><td class="text-base-content/40">—</td>
-             <td><button class="btn btn-xs btn-success confirm-one">Подтвердить</button></td>`
+             <td><button class="btn btn-xs btn-success confirm-one" ${tAttr('preview.confirm')}>${tText('preview.confirm')}</button></td>`
           : `<td class="mono">${esc(accountId)}</td><td><span class="badge badge-error badge-sm">rejected</span></td>
              <td class="text-base-content/40">—</td><td class="text-base-content/40">—</td>
-             <td class="text-xs">${esc(leg.rejectReason ?? '—')}</td><td></td>`;
+             ${msgCell('text-xs', { code: leg.rejectCode, params: leg.rejectParams, message: leg.rejectReason })}<td></td>`;
       } catch (e) {
         row.innerHTML = `<td class="mono">${esc(accountId)}</td><td><span class="badge badge-error badge-sm">error</span></td>
              <td colspan="3" class="text-xs text-error">${esc(e.message)}</td><td></td>`;
@@ -1058,12 +1097,16 @@
     previewSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   });
 
-  // Replaces btn with a <span class="badge {cls}">{text}</span>, text always via textContent —
-  // these strings come from exchange/exception responses, not fully trusted input.
-  function replaceWithBadge(btn, cls, text) {
+  // Replaces btn with a <span class="badge {cls}">{prefix}<span>{text}</span></span>; fill(el) sets
+  // the inner text, always via textContent (setT / setMsg / setRaw) — these strings come from
+  // exchange/exception responses, not fully trusted input.
+  function replaceWithBadge(btn, cls, prefix, fill) {
     const span = document.createElement('span');
     span.className = 'badge badge-outline ' + cls;
-    span.textContent = text;
+    if (prefix) span.append(prefix);
+    const inner = document.createElement('span');
+    fill(inner);
+    span.append(inner);
     btn.replaceWith(span);
   }
 
@@ -1071,26 +1114,29 @@
     const row = btn.closest('tr');
     const proposalId = row.dataset.proposalId;
     btn.disabled = true;
-    btn.textContent = '...';
+    setRaw(btn, '...');
     try {
       const resp = await api(`/api/v1/strategy/proposals/${proposalId}/confirm`, { method: 'POST' });
       if (resp.status === 'ABORTED') {
-        replaceWithBadge(btn, 'badge-error', '⛔ ' + (resp.abortReason || 'отменено'));
+        replaceWithBadge(btn, 'badge-error', '⛔ ', el => setMsg(el,
+          { code: resp.abortCode, params: resp.abortParams, message: resp.abortReason }, 'preview.aborted'));
         return;
       }
       const leg = resp.accounts[0];
       if (leg && leg.success && leg.filledQty == null) {
         // LIMIT entry placed but not yet filled — live on the exchange, not a position yet.
-        replaceWithBadge(btn, 'badge-warning', '⏳ ' + (leg.errorReason || 'лимитный ордер выставлен'));
+        replaceWithBadge(btn, 'badge-warning', '⏳ ', el => setMsg(el,
+          { code: leg.errorCode, params: leg.errorParams, message: leg.errorReason }, 'preview.limitPlaced'));
       } else if (leg && leg.success) {
-        replaceWithBadge(btn, 'badge-success', 'открыто ✓ @ ' + (leg.avgPrice ?? ''));
+        replaceWithBadge(btn, 'badge-success', '', el => setT(el, 'preview.opened', { price: leg.avgPrice ?? '' }));
         refreshPrice();
         refreshPositionsSoon();
       } else {
-        replaceWithBadge(btn, 'badge-error', '✗ ' + ((leg && leg.errorReason) || 'ошибка'));
+        replaceWithBadge(btn, 'badge-error', '✗ ', el => setMsg(el, leg
+          ? { code: leg.errorCode, params: leg.errorParams, message: leg.errorReason } : {}, 'preview.failed'));
       }
     } catch (e) {
-      replaceWithBadge(btn, 'badge-error', '✗ ' + e.message);
+      replaceWithBadge(btn, 'badge-error', '✗ ', el => setRaw(el, e.message));
     }
   }
   document.getElementById('confirmAllBtn').addEventListener('click', async (ev) => {
@@ -1101,11 +1147,11 @@
     allBtn.disabled = true;
     let done = 0;
     for (const btn of buttons) {
-      allBtn.textContent = `Подтверждаю... (${done}/${buttons.length})`;
+      setT(allBtn, 'preview.confirming', { done, total: buttons.length });
       await confirmRow(btn);
       done++;
     }
-    allBtn.textContent = `Подтверждено ${done}/${buttons.length}`;
+    setT(allBtn, 'preview.confirmed', { done, total: buttons.length });
   });
 
   // ---- Positions: DB rows (id, entry, sl/tp) merged with per-account live rows (mark/uPnL/leverage) ----
@@ -1160,7 +1206,7 @@
     const sel = document.getElementById('filterSymbol');
     const prev = sel.value;
     const symbols = [...new Set(allPositions.map(p => p.symbol))].sort();
-    sel.innerHTML = '<option value="">Все символы</option>' + symbols.map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join('');
+    sel.innerHTML = `<option value="" ${tAttr('common.allSymbols')}>${tText('common.allSymbols')}</option>` + symbols.map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join('');
     if (symbols.includes(prev)) sel.value = prev;
     else posFilterSymbol = '';
   }
@@ -1182,7 +1228,7 @@
       <tr data-position-id="${esc(p.positionId)}">
         <td><input type="checkbox" class="checkbox checkbox-xs pos-select" value="${esc(p.positionId)}" /></td>
         <td class="mono text-xs">${esc(p.accountId)}</td>
-        <td class="mono">${esc(p.symbol)} <span class="badge badge-ghost badge-xs">${esc(p.exchange)}</span>${p.openedVia === 'EXCHANGE' ? ' <span class="badge badge-warning badge-outline badge-xs" title="открыта на бирже напрямую, SL/TP неизвестны">биржа</span>' : ''}</td>
+        <td class="mono">${esc(p.symbol)} <span class="badge badge-ghost badge-xs">${esc(p.exchange)}</span>${p.openedVia === 'EXCHANGE' ? ` <span class="badge badge-warning badge-outline badge-xs" title="${esc(t('pos.exchangeTip'))}" data-i18n-title="pos.exchangeTip" ${tAttr('pos.exchangeBadge')}>${tText('pos.exchangeBadge')}</span>` : ''}</td>
         <td><span class="badge badge-success badge-xs">${esc(p.side)}</span></td>
         <td class="text-right mono">${esc(p.qty)}</td>
         <td class="text-right mono">${p.notional != null ? '$' + fmt(p.notional) : '—'}</td>
@@ -1191,8 +1237,8 @@
         <td class="text-right mono">${p.mark != null ? fmt(p.mark) : '—'}</td>
         <td class="text-right mono text-xs"><span class="text-error">${p.sl != null ? fmt(p.sl) : '—'}</span> / <span class="text-success">${p.tp != null ? fmt(p.tp) : '—'}</span></td>
         <td class="text-right mono ${p.upnl != null ? (p.upnl >= 0 ? 'pnl-pos' : 'pnl-neg') : ''}">${p.upnl != null ? (p.upnl >= 0 ? '+' : '') + fmt(p.upnl) : '—'}</td>
-        <td class="text-center"><button class="btn btn-xs btn-outline btn-error open-close" data-position-id="${esc(p.positionId)}">Закрыть</button></td>
-      </tr>`).join('') || '<tr><td colspan="12" class="text-center text-base-content/40 py-6">нет открытых позиций</td></tr>';
+        <td class="text-center"><button class="btn btn-xs btn-outline btn-error open-close" data-position-id="${esc(p.positionId)}" ${tAttr('pos.close')}>${tText('pos.close')}</button></td>
+      </tr>`).join('') || `<tr><td colspan="12" class="text-center text-base-content/40 py-6" ${tAttr('pos.none')}>${tText('pos.none')}</td></tr>`;
 
     tbody.querySelectorAll('.open-close').forEach(b => b.addEventListener('click', () => openCloseModal(+b.dataset.positionId)));
     tbody.querySelectorAll('.pos-select').forEach(cb => cb.addEventListener('change', updateBulkBar));
@@ -1247,7 +1293,7 @@
     updateCloseConfirmLabel();
   }
   function updateCloseConfirmLabel() {
-    document.getElementById('closeConfirmPrefix').textContent = closeType === 'MARKET' ? 'Закрыть market' : 'Поставить limit';
+    setT(document.getElementById('closeConfirmPrefix'), closeType === 'MARKET' ? 'close.market' : 'close.limit');
   }
   document.getElementById('closeTypeMarket').addEventListener('click', () => setCloseType('MARKET'));
   document.getElementById('closeTypeLimit').addEventListener('click', () => setCloseType('LIMIT'));
@@ -1272,19 +1318,19 @@
     const qty = parseFloat(document.getElementById('closeQtyInput').value);
     const errEl = document.getElementById('closeModalError');
     errEl.classList.add('hidden');
-    if (!qty || qty <= 0) { errEl.textContent = 'qty должен быть положительным'; errEl.classList.remove('hidden'); return; }
+    if (!qty || qty <= 0) { setT(errEl, 'err.qtyPositive'); errEl.classList.remove('hidden'); return; }
     const price = closeType === 'LIMIT' ? document.getElementById('closeLimitPrice').value : null;
-    if (closeType === 'LIMIT' && !price) { errEl.textContent = 'укажи цену для limit'; errEl.classList.remove('hidden'); return; }
+    if (closeType === 'LIMIT' && !price) { setT(errEl, 'err.limitPrice'); errEl.classList.remove('hidden'); return; }
     try {
       const resp = await api(`/api/v1/positions/${closeTarget.positionId}/close`, {
         method: 'POST',
         body: JSON.stringify({ type: closeType, qty: String(qty), price: price ? String(price) : null }),
       });
       closeModal.close();
-      showError(resp.message || 'отправлено'); // reuse the banner for a success toast too — good enough for now
+      showError(I18N.tm(resp) || t('close.sent')); // reuse the banner for a success toast too — good enough for now
       refreshPositionsSoon();
     } catch (e) {
-      errEl.textContent = e.message;
+      setRaw(errEl, e.message);
       errEl.classList.remove('hidden');
     }
   });
@@ -1301,7 +1347,7 @@
     paintSlider('bulkFillBar', 100);
     document.getElementById('bulkPctLabel').textContent = 100;
     document.getElementById('bulkConfirmPct').textContent = '100%';
-    document.getElementById('bulkModalStatus').textContent = '';
+    setRaw(document.getElementById('bulkModalStatus'), '');
     renderBulkPreview(100);
     bulkModal.showModal();
   });
@@ -1330,13 +1376,35 @@
         });
         ok++;
       } catch (e) { fail++; }
-      statusEl.textContent = `отправлено: ${ok} ок, ${fail} ошибок из ${bulkTargets.length}`;
+      setT(statusEl, 'bulk.status', { ok, fail, total: bulkTargets.length });
     }
     setTimeout(() => { bulkModal.close(); refreshPositionsSoon(); }, 1200);
   });
 
-  updateMarginEst();
-  init();
+  // ---- Language switcher (EN | RU) ----
+  function paintLangSwitch() {
+    document.querySelectorAll('#lang-switch [data-lang]').forEach(b =>
+      b.classList.toggle('btn-active', b.dataset.lang === I18N.getLang()));
+  }
+  document.querySelectorAll('#lang-switch [data-lang]').forEach(b =>
+    b.addEventListener('click', () => I18N.setLang(b.dataset.lang)));
+  // Static markup and everything rendered with data-i18n / data-msg is re-translated by I18N itself
+  // before this event fires; what is left is the switcher highlight and the TradingView widget
+  // (its locale is a URL parameter, so it has to be reloaded). Known trade-off: re-creating the
+  // widget drops chart state that lives only in it (zoom, hand-drawn shapes, added indicators);
+  // acceptable because a language switch is rare.
+  window.addEventListener('langchange', () => {
+    paintLangSwitch();
+    renderChart(currentSymbol, currentTf);
+  });
+
+  // No UI text is initialised before the dictionaries are loaded.
+  I18N.ready.then(() => {
+    paintLangSwitch();
+    renderChart(currentSymbol, currentTf);
+    updateMarginEst();
+    init();
+  });
 </script>
 </body>
 </html>

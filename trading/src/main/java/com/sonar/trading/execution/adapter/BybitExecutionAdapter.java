@@ -94,7 +94,7 @@ public class BybitExecutionAdapter implements ExecutionAdapter {
             triggerBy = BybitTriggerBy.valueOf(props.getBybit().getTriggerBy());
             if (tpSlAtt.hasPartial()) {
                 // Same gap as BingX's path (T23 partial leg) — documented there, not implemented here either.
-                log.warn("[BYBIT] partial TP1 leg not supported on this venue — игнорируется");
+                log.warn("[BYBIT] partial TP1 leg not supported on this venue — ignored");
             }
         }
 

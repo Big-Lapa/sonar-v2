@@ -6,6 +6,8 @@ import com.sonar.trading.domain.entity.PositionEntity;
 import com.sonar.trading.domain.repository.NotificationRepository;
 import com.sonar.trading.domain.repository.PositionRepository;
 import com.sonar.trading.exchange.dto.AdapterOrderRequest;
+import com.sonar.trading.i18n.MessageCode;
+import com.sonar.trading.i18n.Msg;
 import com.sonar.trading.exchange.dto.AdapterOrderResult;
 import com.sonar.trading.exchange.model.AdapterOrderSide;
 import com.sonar.trading.exchange.model.AdapterOrderType;
@@ -54,8 +56,11 @@ public class PositionOpsService {
     }
 
     public sealed interface OpResult {
-        record Ok(String message) implements OpResult {}
-        record Failed(String reason) implements OpResult {}
+        record Ok(String code, java.util.Map<String, String> params, String message) implements OpResult {}
+        record Failed(String code, java.util.Map<String, String> params, String reason) implements OpResult {}
+
+        static Ok ok(Msg msg) { return new Ok(msg.code().name(), msg.params(), msg.text()); }
+        static Failed failed(Msg msg) { return new Failed(msg.code().name(), msg.params(), msg.text()); }
     }
 
     /**
@@ -70,11 +75,11 @@ public class PositionOpsService {
                         .map(List::of).orElse(List.of())
                 : positionRepository.findAllOpenByAccountId(accountId);
         if (targets.isEmpty()) {
-            return new OpResult.Failed("нет открытых позиций" + (symbol != null ? " по " + symbol : ""));
+            return OpResult.failed(Msg.of(MessageCode.NO_OPEN_POSITIONS, "symbol", symbol));
         }
         ExecutionAdapter adapter = resolveAdapter(accountId);
         if (adapter == null) {
-            return new OpResult.Failed("venue аккаунта '" + accountId + "' не подключена");
+            return OpResult.failed(Msg.of(MessageCode.VENUE_NOT_CONNECTED, "account", accountId));
         }
         try {
             if (symbol != null) {
@@ -84,10 +89,10 @@ public class PositionOpsService {
                     adapter.closeAllPositions(p.getSymbol());
                 }
             }
-            return new OpResult.Ok("close-all отправлен для " + targets.size() + " позици(й), подтверждение придёт с поллером");
+            return OpResult.ok(Msg.of(MessageCode.CLOSE_ALL_SENT, "count", targets.size()));
         } catch (RuntimeException e) {
             log.error("[close-all] {} failed: {}", accountId, e.toString());
-            return new OpResult.Failed("ошибка close-all: " + e.getMessage());
+            return OpResult.failed(Msg.of(MessageCode.CLOSE_ALL_FAILED, "error", e.getMessage()));
         }
     }
 
@@ -110,20 +115,20 @@ public class PositionOpsService {
     public OpResult closePartial(Long positionId, String orderType, BigDecimal qty, BigDecimal price) {
         PositionEntity position = positionRepository.findById(positionId).orElse(null);
         if (position == null || !"OPEN".equals(position.getStatus())) {
-            return new OpResult.Failed("позиция не найдена или не открыта");
+            return OpResult.failed(Msg.of(MessageCode.POSITION_NOT_FOUND));
         }
         if (qty == null || qty.signum() <= 0) {
-            return new OpResult.Failed("qty должен быть положительным");
+            return OpResult.failed(Msg.of(MessageCode.QTY_MUST_BE_POSITIVE));
         }
         boolean limit = "LIMIT".equalsIgnoreCase(orderType);
         if (limit && (price == null || price.signum() <= 0)) {
-            return new OpResult.Failed("price обязателен для limit-закрытия");
+            return OpResult.failed(Msg.of(MessageCode.PRICE_REQUIRED_FOR_LIMIT));
         }
 
         var account = accountRegistry.byId(position.getAccountId()).orElse(null);
         ExecutionAdapter adapter = account != null ? adapters.forAccount(account.id()).orElse(null) : null;
         if (adapter == null) {
-            return new OpResult.Failed("venue аккаунта '" + position.getAccountId() + "' не подключена");
+            return OpResult.failed(Msg.of(MessageCode.VENUE_NOT_CONNECTED, "account", position.getAccountId()));
         }
 
         // Clamp against the LIVE exchange qty, not the DB row: the DB is updated by the minute
@@ -145,7 +150,7 @@ public class PositionOpsService {
                         .findFirst().map(p -> p.qty()).orElse(BigDecimal.ZERO))
                 .orElse(position.getQuantity());
         if (liveQty.signum() <= 0) {
-            return new OpResult.Failed("позиция уже закрыта на бирже");
+            return OpResult.failed(Msg.of(MessageCode.POSITION_ALREADY_CLOSED));
         }
         BigDecimal clampedQty = qty.min(liveQty);
 
@@ -155,7 +160,7 @@ public class PositionOpsService {
         BigDecimal normalizedQty = quantityNormalizer.floorForClose(account.id(), position.getSymbol(),
                 clampedQty, price != null ? price : position.getEntryPrice());
         if (normalizedQty == null) {
-            return new OpResult.Failed("qty " + clampedQty + " меньше шага лота биржи для " + position.getSymbol());
+            return OpResult.failed(Msg.of(MessageCode.QTY_BELOW_LOT_STEP, "qty", clampedQty, "symbol", position.getSymbol()));
         }
         clampedQty = normalizedQty;
         try {
@@ -182,16 +187,15 @@ public class PositionOpsService {
                             position.getAccountId(), position.getSymbol(), e.toString());
                     notificationRepository.save(new NotificationEntity(NotificationEntity.MISSING_STOP,
                             position.getAccountId(), position.getSymbol(),
-                            "SL/TP после частичного закрытия не пересчитан, проверить защиту позиции: " + e.getMessage()));
+                            Msg.of(MessageCode.PARTIAL_CLOSE_STOPS_NOT_RESCALED, "error", e.getMessage())));
                 }
             }
 
-            return new OpResult.Ok((limit ? "limit-заявка на закрытие " : "закрытие market ")
-                    + clampedQty + " " + position.getSymbol() + " отправлено (state=" + result.state() + ")"
-                    + ", подтверждение придёт с поллером");
+            return OpResult.ok(Msg.of(limit ? MessageCode.CLOSE_LIMIT_SENT : MessageCode.CLOSE_MARKET_SENT,
+                    "qty", clampedQty, "symbol", position.getSymbol(), "state", result.state()));
         } catch (RuntimeException e) {
             log.error("[{}] closePartial {} {} failed: {}", position.getAccountId(), position.getSymbol(), clampedQty, e.toString());
-            return new OpResult.Failed("ошибка закрытия: " + e.getMessage());
+            return OpResult.failed(Msg.of(MessageCode.CLOSE_FAILED, "error", e.getMessage()));
         }
     }
 
@@ -199,7 +203,7 @@ public class PositionOpsService {
     public OpResult breakeven(Long positionId) {
         PositionEntity position = positionRepository.findById(positionId).orElse(null);
         if (position == null || !"OPEN".equals(position.getStatus())) {
-            return new OpResult.Failed("позиция не найдена или не открыта");
+            return OpResult.failed(Msg.of(MessageCode.POSITION_NOT_FOUND));
         }
         return moveStopOrTp(position, "sl", position.getEntryPrice(), true);
     }
@@ -208,10 +212,10 @@ public class PositionOpsService {
     public OpResult move(Long positionId, String type, BigDecimal price) {
         PositionEntity position = positionRepository.findById(positionId).orElse(null);
         if (position == null || !"OPEN".equals(position.getStatus())) {
-            return new OpResult.Failed("позиция не найдена или не открыта");
+            return OpResult.failed(Msg.of(MessageCode.POSITION_NOT_FOUND));
         }
         if (!"sl".equalsIgnoreCase(type) && !"tp".equalsIgnoreCase(type)) {
-            return new OpResult.Failed("type должен быть sl или tp");
+            return OpResult.failed(Msg.of(MessageCode.STOP_TYPE_INVALID));
         }
         return moveStopOrTp(position, type.toLowerCase(), price, false);
     }
@@ -220,7 +224,7 @@ public class PositionOpsService {
         boolean wantsSl = "sl".equals(type);
         ExecutionAdapter adapter = resolveAdapter(position.getAccountId());
         if (adapter == null) {
-            return new OpResult.Failed("venue аккаунта '" + position.getAccountId() + "' не подключена");
+            return OpResult.failed(Msg.of(MessageCode.VENUE_NOT_CONNECTED, "account", position.getAccountId()));
         }
         try {
             adapter.cancelReduceOnlyOrder(position.getSymbol(), wantsSl);
@@ -240,8 +244,8 @@ public class PositionOpsService {
             }
             positionRepository.save(position);
 
-            return new OpResult.Ok((isBreakeven ? "стоп переставлен в безубыток " : (wantsSl ? "SL " : "TP ") + "переставлен на ")
-                    + price);
+            return OpResult.ok(Msg.of(isBreakeven ? MessageCode.STOP_MOVED_BREAKEVEN
+                    : (wantsSl ? MessageCode.SL_MOVED : MessageCode.TP_MOVED), "price", price));
         } catch (RuntimeException e) {
             log.error("[{}] move {} failed: {}", position.getAccountId(), type, e.toString());
             if (wantsSl) {
@@ -254,9 +258,9 @@ public class PositionOpsService {
                 // just an OpResult.Failed to whoever typed the command.
                 notificationRepository.save(new NotificationEntity(NotificationEntity.MISSING_STOP,
                         position.getAccountId(), position.getSymbol(),
-                        "перестановка стопа не удалась, проверить защиту позиции: " + e.getMessage()));
+                        Msg.of(MessageCode.STOP_MOVE_UNPROTECTED, "error", e.getMessage())));
             }
-            return new OpResult.Failed("ошибка перестановки: " + e.getMessage());
+            return OpResult.failed(Msg.of(MessageCode.STOP_MOVE_FAILED, "error", e.getMessage()));
         }
     }
 

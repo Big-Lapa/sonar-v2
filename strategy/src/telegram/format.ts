@@ -1,4 +1,5 @@
 import { AccountLegPreview, ExecutionLegResult } from '../trading-client/trading-api.service';
+import { DEFAULT_LANG, Lang, t, tMsg } from '../i18n';
 
 export function formatProposalMessage(
   symbol: string,
@@ -9,28 +10,50 @@ export function formatProposalMessage(
   rationale: string,
   legs: AccountLegPreview[],
   costUsd: number | undefined,
+  lang: Lang = DEFAULT_LANG,
 ): string {
   const slPct = (((parseFloat(sl) - parseFloat(entry)) / parseFloat(entry)) * 100).toFixed(2);
   const tpPct = (((parseFloat(tp) - parseFloat(entry)) / parseFloat(entry)) * 100).toFixed(2);
   const lines = [
     `📈 ${symbol} LONG`,
-    `Вход: ${entry}  SL: ${sl} (${slPct}%)  TP: ${tp} (+${tpPct}%)  R:R ${rr.toFixed(2)}`,
+    t(lang, 'fmt.entry', { entry, sl, slPct, tp, tpPct, rr: rr.toFixed(2) }),
     '',
-    ...legs.map((l) => (l.approved ? `${l.accountId}: риск $${parseFloat(l.riskUsd!).toFixed(2)}, qty ${l.qty}` : `${l.accountId}: отклонён — ${l.rejectReason}`)),
+    ...legs.map((l) =>
+      l.approved
+        ? t(lang, 'fmt.leg_ok', { account: l.accountId, risk: parseFloat(l.riskUsd!).toFixed(2), qty: l.qty })
+        : t(lang, 'fmt.leg_rejected', {
+            account: l.accountId,
+            reason: tMsg(lang, l.rejectCode, l.rejectParams, l.rejectReason),
+          }),
+    ),
     '',
     rationale,
     '',
-    `стоимость прогона: ${costUsd !== undefined ? '$' + costUsd.toFixed(4) : 'н/д'}`,
+    t(lang, 'fmt.cost', { cost: costUsd !== undefined ? '$' + costUsd.toFixed(4) : t(lang, 'fmt.cost_na') }),
   ];
   return lines.join('\n');
 }
 
-export function formatExecutionReport(legs: ExecutionLegResult[]): string {
+export function formatExecutionReport(legs: ExecutionLegResult[], lang: Lang = DEFAULT_LANG): string {
   return legs
     .map((l) => {
-      if (!l.success) return `${l.accountId} ✗ отклонён: ${l.errorReason}`;
-      const stopNote = l.stopVerified ? '' : ' ⚠️ СТОП НЕ ПОДТВЕРЖДЁН';
-      return `${l.accountId} ✓ ${l.filledQty} @ ${l.avgPrice} · SL ${l.slPrice} · TP ${l.tpPrice} · риск $${parseFloat(l.riskUsd ?? '0').toFixed(2)}${stopNote}`;
+      if (!l.success) {
+        return t(lang, 'fmt.exec_rejected', {
+          account: l.accountId,
+          reason: tMsg(lang, l.errorCode, l.errorParams, l.errorReason),
+        });
+      }
+      const stopNote = l.stopVerified ? '' : t(lang, 'fmt.stop_unverified');
+      return (
+        t(lang, 'fmt.exec_ok', {
+          account: l.accountId,
+          qty: l.filledQty,
+          price: l.avgPrice,
+          sl: l.slPrice,
+          tp: l.tpPrice,
+          risk: parseFloat(l.riskUsd ?? '0').toFixed(2),
+        }) + stopNote
+      );
     })
     .join('\n');
 }

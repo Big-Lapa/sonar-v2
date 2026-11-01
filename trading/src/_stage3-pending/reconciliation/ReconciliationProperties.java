@@ -15,12 +15,12 @@ public class ReconciliationProperties {
     private long intervalMs = 5_000;
 
     /**
-     * Period between periodic sync cycles while NO position is open, in ms. Идея адаптивной
-     * каденции: выход из позиции — только биржевыми SL/TP, т.е. биржа закрывает позицию БЕЗ
-     * нашего ордера, и узнаём мы об этом лишь из recon. Пока позиция висит, задержка цикла =
-     * задержка realized PnL, события CLOSED и освобождения символа под следующий вход, поэтому
-     * там держим {@link #intervalMs}. Во флэте узнавать не о чем — частый опрос биржи там чистый
-     * трафик. Реализовано пропуском тиков планировщика, а не сменой расписания.
+     * Period between periodic sync cycles while NO position is open, in ms. The idea of adaptive
+     * cadence: a position exits only via exchange SL/TP, i.e. the exchange closes the position WITHOUT
+     * our order, and we learn about it only from recon. While a position is open, the cycle delay =
+     * the delay of realized PnL, the CLOSED event and freeing the symbol for the next entry, so
+     * there we keep {@link #intervalMs}. When flat there is nothing to learn — frequent exchange polling there is pure
+     * traffic. Implemented by skipping scheduler ticks, not by changing the schedule.
      */
     private long idleIntervalMs = 60_000;
 

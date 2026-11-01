@@ -34,10 +34,10 @@ import java.util.UUID;
  * CLOSE/REDUCE legs additionally set {@code reduceOnly=true} so they can only reduce exposure.
  *
  * <p>Scope: MARKET/LIMIT place, getOrder, cancel, {@link #closeAllPositions(String)} via
- * reduce-only MARKET. PR-D (volspike-pressure-v1): TP/SL attachment исполняется как ОТДЕЛЬНЫЕ
- * reduce-only условные ордера (STOP_MARKET + TAKE_PROFIT_MARKET, опц. частичная TP1-нога) —
- * у Binance нет attached-OCO как у BingX; плечо выставляется перед ENTRY per-strategy
- * параметром с кэшем по символу.
+ * reduce-only MARKET. PR-D (volspike-pressure-v1): TP/SL attachment is executed as SEPARATE
+ * reduce-only conditional orders (STOP_MARKET + TAKE_PROFIT_MARKET, optional partial TP1 leg) —
+ * Binance has no attached-OCO like BingX; leverage is set before ENTRY per strategy
+ * as a parameter, cached per symbol.
  */
 @Component("binanceExecutionAdapter")
 @ConditionalOnProperty(name = "trading.exchange", havingValue = "BINANCE")
@@ -45,27 +45,27 @@ public class BinanceExecutionAdapter implements ExecutionAdapter {
 
     private static final Logger log = LoggerFactory.getLogger(BinanceExecutionAdapter.class);
 
-    /** TTL кэша неустранимого отказа setLeverage — не долбить /fapi/v1/leverage каждый вход. */
+    /** TTL of the cache for an unrecoverable setLeverage rejection — don't hammer /fapi/v1/leverage on every entry. */
     private static final long LEVERAGE_FAILURE_TTL_MS = 10 * 60_000L;
 
     private final BinanceExecutionGateway gateway;
     private final com.sonar.trading.config.TradingProperties props;
     private final MeterRegistry meterRegistry;
-    /** Тег account у tp_sl_leg_failed_total — иначе два Binance-аккаунта делят один счётчик
-     *  и алерт не говорит, чья позиция осталась без стопа (ADR-0025, funding-counter паттерн). */
+    /** Account tag on tp_sl_leg_failed_total — otherwise two Binance accounts share one counter
+     *  and the alert doesn't say whose position was left without a stop (ADR-0025, funding-counter pattern). */
     private final String accountId;
-    /** Последнее выставленное плечо per symbol — не дёргать /fapi/v1/leverage на каждый вход. */
+    /** Last leverage set per symbol — don't hit /fapi/v1/leverage on every entry. */
     private final java.util.concurrent.ConcurrentHashMap<String, Integer> leverageBySymbol =
             new java.util.concurrent.ConcurrentHashMap<>();
-    /** symbol → epoch-ms, до которого попытки setLeverage подавлены после отказа (ревью #88). */
+    /** symbol → epoch-ms until which setLeverage attempts are suppressed after a rejection (review #88). */
     private final java.util.concurrent.ConcurrentHashMap<String, Long> leverageFailedUntil =
             new java.util.concurrent.ConcurrentHashMap<>();
-    /** tp_sl_leg_failed_total{symbol,leg} counters, per symbol+leg (funding-counter паттерн). */
+    /** tp_sl_leg_failed_total{symbol,leg} counters, per symbol+leg (funding-counter pattern). */
     private final java.util.concurrent.ConcurrentHashMap<String, Counter> legFailureCounters =
             new java.util.concurrent.ConcurrentHashMap<>();
 
-    /** Одно-аккаунтный путь (trading.exchange=BINANCE, бин): тот же DEFAULT_ACCOUNT, что и у
-     *  {@code BinanceExecutionGatewayConfig}. Мульти-аккаунтный — через ctor с accountId. */
+    /** Single-account path (trading.exchange=BINANCE, bean): the same DEFAULT_ACCOUNT as in
+     *  {@code BinanceExecutionGatewayConfig}. Multi-account — via the ctor with accountId. */
     @org.springframework.beans.factory.annotation.Autowired
     public BinanceExecutionAdapter(BinanceExecutionGateway gateway,
                                    com.sonar.trading.config.TradingProperties props,
@@ -100,9 +100,9 @@ public class BinanceExecutionAdapter implements ExecutionAdapter {
         }
 
         if (request.intent() == OrderIntent.ENTRY) {
-            // Уборка ПЕРЕД входом: условные TP/SL ноги прошлого цикла (сработавший TP оставляет
-            // SL в книге) иначе валидны против НОВОЙ позиции и закрывают её на чужом уровне —
-            // зомби-стоп, CRITICAL ревью #88. DELETE allOpenOrders идемпотентен и дёшев.
+            // Cleanup BEFORE entry: conditional TP/SL legs from the previous cycle (a triggered TP leaves
+            // the SL in the book) would otherwise be valid against the NEW position and close it at a foreign level —
+            // a zombie stop, CRITICAL review #88. DELETE allOpenOrders is idempotent and cheap.
             cancelAllOpenOrdersSafely(binanceSymbol, "pre-entry");
             ensureLeverage(binanceSymbol, request.leverage());
         }
@@ -150,9 +150,9 @@ public class BinanceExecutionAdapter implements ExecutionAdapter {
             }
         }
 
-        // Exchange-side TP/SL (PR-D): у Binance нет attached-OCO как у BingX — вешаем ОТДЕЛЬНЫЕ
-        // условные ордера после входа. Best-effort: упавшая нога логируется, вход уже состоялся,
-        // страховкой остаётся time-stop backstop + ручной closeall.
+        // Exchange-side TP/SL (PR-D): Binance has no attached-OCO like BingX — we attach SEPARATE
+        // conditional orders after entry. Best-effort: a failed leg is logged, the entry has already happened,
+        // the safety net remains the time-stop backstop + manual closeall.
         if (request.tpSl() != null && request.intent() == OrderIntent.ENTRY
                 && placed.state() != AdapterOrderState.REJECTED && placed.state() != AdapterOrderState.FAILED) {
             placeConditionalExits(binanceSymbol, side, request, placed);
@@ -161,26 +161,26 @@ public class BinanceExecutionAdapter implements ExecutionAdapter {
     }
 
     /**
-     * Условные выходы противоположной стороной: полнообъёмные SL/TP идут с
-     * {@code closePosition=true} — Binance сам снимает такой триггер при обнулении позиции и
-     * при срабатывании парной ноги (OCO-эквивалент; на флэте триггер — no-op), объём не нужен,
-     * dust-расхождений при частичном филле нет. Частичная TP1-нога ({@code partialTpEnabled}) —
-     * reduce-only с объёмом от ФАКТИЧЕСКОГО филла (не запрошенного; ревью #88), её убирает
-     * pre-entry/close-all cancelAllOpenOrders. workingType — из trading.tp-sl (BingX-путь его
-     * всегда уважал, Binance молча брал last price — ревью #88).
+     * Conditional exits on the opposite side: full-size SL/TP go with
+     * {@code closePosition=true} — Binance itself removes such a trigger when the position goes to zero and
+     * when the paired leg fires (OCO equivalent; on a flat position the trigger is a no-op), no quantity is needed,
+     * no dust discrepancies on a partial fill. The partial TP1 leg ({@code partialTpEnabled}) is
+     * reduce-only with a quantity based on the ACTUAL fill (not the requested one; review #88); it is removed by
+     * pre-entry/close-all cancelAllOpenOrders. workingType comes from trading.tp-sl (the BingX path
+     * always honored it, Binance silently used last price — review #88).
      */
     private void placeConditionalExits(String binanceSymbol, BinanceOrderSide entrySide,
                                        AdapterOrderRequest request, AdapterOrderResult placed) {
         BinanceOrderSide exitSide = entrySide == BinanceOrderSide.BUY
                 ? BinanceOrderSide.SELL : BinanceOrderSide.BUY;
-        // Уровни якорятся на ФАКТИЧЕСКУЮ цену входа: пришедшие из ExecutionEngine посчитаны от
-        // закрытия последней свечи (спот, до минуты давности), а исполняемся на перпе. Ноги
-        // ставятся всё равно после ответа биржи, так что пересчёт не добавляет ни запроса, ни
-        // задержки. Нет филла (ордер ещё NEW) — остаются исходные уровни, позиция без защиты не
-        // остаётся.
+        // Levels are anchored to the ACTUAL entry price: those coming from ExecutionEngine are computed from
+        // the last candle close (spot, up to a minute old), while we execute on the perp. The legs
+        // are placed after the exchange response anyway, so recalculation adds neither a request nor
+        // latency. No fill (order still NEW) — the original levels stay, the position is not left
+        // unprotected.
         var tpSl = request.tpSl().rescaledTo(placed.avgPrice());
         if (tpSl != request.tpSl()) {
-            log.info("[BINANCE] TP/SL пересчитаны от факт. входа {}: tp={} sl={} (было tp={} sl={})",
+            log.info("[BINANCE] TP/SL recalculated from actual entry {}: tp={} sl={} (was tp={} sl={})",
                     placed.avgPrice(), tpSl.takeProfitPrice(), tpSl.stopLossPrice(),
                     request.tpSl().takeProfitPrice(), request.tpSl().stopLossPrice());
         }
@@ -194,13 +194,13 @@ public class BinanceExecutionAdapter implements ExecutionAdapter {
             BigDecimal filled = placed.filledQty();
             BigDecimal tp1Qty = tpSl.tp1Quantity();
             if (filled != null && filled.signum() > 0 && filled.compareTo(request.quantity()) < 0) {
-                // Частичный филл входа: масштабируем ногу пропорционально, не больше филла.
+                // Partial entry fill: scale the leg proportionally, no more than the fill.
                 tp1Qty = tp1Qty.multiply(filled)
                         .divide(request.quantity(), 10, java.math.RoundingMode.DOWN);
             }
             if (filled == null || filled.signum() == 0) {
-                log.warn("[BINANCE] partial TP1 skipped for {} — вход ещё без филла (state={}), "
-                        + "объём ноги неизвестен", binanceSymbol, placed.state());
+                log.warn("[BINANCE] partial TP1 skipped for {} — entry has no fill yet (state={}), "
+                        + "leg quantity unknown", binanceSymbol, placed.state());
             } else if (tp1Qty.signum() > 0) {
                 placeConditional(binanceSymbol, exitSide, BinanceOrderType.TAKE_PROFIT_MARKET,
                         toPlain(tp1Qty), false, tpSl.tp1Price(), workingType, "TP1-" + shortId(), "TP1");
@@ -213,7 +213,7 @@ public class BinanceExecutionAdapter implements ExecutionAdapter {
         if ("MARK_PRICE".equals(wt) || "CONTRACT_PRICE".equals(wt)) {
             return wt;
         }
-        log.warn("[BINANCE] unknown trading.tp-sl.working-type '{}' — используем биржевой дефолт", wt);
+        log.warn("[BINANCE] unknown trading.tp-sl.working-type '{}' — using exchange default", wt);
         return null;
     }
 
@@ -232,14 +232,14 @@ public class BinanceExecutionAdapter implements ExecutionAdapter {
                     type, binanceSymbol, quantity, closePosition, stopPrice, cid);
             gateway.placeOrder(order, OrderIntent.CLOSE_REDUCE);
         } catch (RuntimeException e) {
-            log.error("[BINANCE] conditional exit {} for {} failed (позиция БЕЗ этой ноги защиты, "
-                    + "time-stop остаётся страховкой): {}", type, binanceSymbol, e.getMessage());
+            log.error("[BINANCE] conditional exit {} for {} failed (position WITHOUT this protection leg, "
+                    + "time-stop remains the safety net): {}", type, binanceSymbol, e.getMessage());
             legFailureCounter(binanceSymbol, leg).increment();
         }
     }
 
-    /** tp_sl_leg_failed_total{symbol,leg}: скрапится monitoring-service (TP_SL_LEG_FAILED алерт,
-     *  см. docs/contracts/monitoring-alerts.md) — best-effort лог выше сам по себе незаметен. */
+    /** tp_sl_leg_failed_total{symbol,leg}: scraped by monitoring-service (TP_SL_LEG_FAILED alert,
+     *  see docs/contracts/monitoring-alerts.md) — the best-effort log above is easy to miss on its own. */
     private Counter legFailureCounter(String binanceSymbol, String leg) {
         return legFailureCounters.computeIfAbsent(binanceSymbol + '|' + leg,
                 k -> Counter.builder("tp_sl_leg_failed_total")
@@ -251,8 +251,8 @@ public class BinanceExecutionAdapter implements ExecutionAdapter {
                         .register(meterRegistry));
     }
 
-    /** Снять все открытые ордера символа; отказ не блокирует основной путь (уборка best-effort,
-     *  повторится на следующем входе/close-all). */
+    /** Cancel all open orders of a symbol; a failure does not block the main path (cleanup is best-effort,
+     *  will be repeated on the next entry/close-all). */
     private void cancelAllOpenOrdersSafely(String binanceSymbol, String reason) {
         try {
             gateway.cancelAllOpenOrders(binanceSymbol);
@@ -262,16 +262,16 @@ public class BinanceExecutionAdapter implements ExecutionAdapter {
         }
     }
 
-    /** Выставить плечо перед входом (per-strategy параметр), с кэшем по символу и TTL-кэшем
-     *  отказа. Отказ не блокирует вход: торговать на текущем плече биржи безопаснее, чем не
-     *  войти вовсе — нотионал фиксирован сайзингом, плечо влияет только на маржу. */
+    /** Set leverage before entry (per-strategy parameter), with a per-symbol cache and a TTL cache
+     *  of rejections. A rejection does not block the entry: trading at the exchange's current leverage is safer than not
+     *  entering at all — notional is fixed by sizing, leverage only affects margin. */
     private void ensureLeverage(String binanceSymbol, Integer leverage) {
         if (leverage == null || leverage.equals(leverageBySymbol.get(binanceSymbol))) {
             return;
         }
         Long failedUntil = leverageFailedUntil.get(binanceSymbol);
         if (failedUntil != null && failedUntil > System.currentTimeMillis()) {
-            return; // недавний отказ (бракет/права ключа) — не долбим эндпоинт каждый вход
+            return; // recent rejection (bracket/key permissions) — don't hammer the endpoint on every entry
         }
         try {
             gateway.setLeverage(binanceSymbol, leverage);
@@ -280,8 +280,8 @@ public class BinanceExecutionAdapter implements ExecutionAdapter {
             log.info("[BINANCE] leverage {}x set for {}", leverage, binanceSymbol);
         } catch (RuntimeException e) {
             leverageFailedUntil.put(binanceSymbol, System.currentTimeMillis() + LEVERAGE_FAILURE_TTL_MS);
-            log.warn("[BINANCE] setLeverage {}x for {} failed (продолжаем на текущем плече биржи, "
-                    + "ретрай через {} мин): {}", leverage, binanceSymbol,
+            log.warn("[BINANCE] setLeverage {}x for {} failed (continuing on the exchange's current leverage, "
+                    + "retry in {} min): {}", leverage, binanceSymbol,
                     LEVERAGE_FAILURE_TTL_MS / 60_000, e.getMessage());
         }
     }
@@ -311,8 +311,8 @@ public class BinanceExecutionAdapter implements ExecutionAdapter {
         String binanceSymbol = symbol == null ? null : BinanceOrderMapper.toBinanceSymbol(symbol);
         log.info("[BINANCE] CLOSE ALL POSITIONS symbol={}", binanceSymbol);
 
-        // Сначала снять условные TP/SL ноги: reduce-only MARKET ниже обнулит позицию, а их
-        // непогашенные триггеры остались бы жить против следующего входа (ревью #88).
+        // First cancel the conditional TP/SL legs: the reduce-only MARKET below will zero the position, and their
+        // outstanding triggers would stay alive against the next entry (review #88).
         if (binanceSymbol != null) {
             cancelAllOpenOrdersSafely(binanceSymbol, "close-all");
         }
@@ -346,7 +346,7 @@ public class BinanceExecutionAdapter implements ExecutionAdapter {
             log.info("[BINANCE] closeAllPositions: {} {} qty={} (reduceOnly)", closeSide, posSymbol, qty);
             gateway.placeOrder(close, OrderIntent.CLOSE_REDUCE);
             if (binanceSymbol == null) {
-                cancelAllOpenOrdersSafely(posSymbol, "close-all"); // per-symbol уборка при закрытии всего
+                cancelAllOpenOrdersSafely(posSymbol, "close-all"); // per-symbol cleanup when closing everything
             }
         }
     }

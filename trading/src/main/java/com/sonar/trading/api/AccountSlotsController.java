@@ -19,7 +19,7 @@ import java.util.List;
 
 /**
  * 4.8: {@code GET /api/v1/accounts/slots} — per tradable account: free slots, equity, auto-pause
- * state, open symbols. Drives the search-prompt gate (5: "есть свободный слот") and the universe
+ * state, open symbols. Drives the search-prompt gate (5: "there is a free slot") and the universe
  * filter (4.4: exclude symbols already open on any account).
  */
 @RestController

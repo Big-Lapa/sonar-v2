@@ -1,5 +1,5 @@
-/* Sonar v2 admin — lean subset of the v1 monitoring-service tokens (6: "брать только каркас и
-   стили, 80% содержимого не нужно" — v2 has no backtest/symbols/charts panels, just 3 blocks). */
+/* Sonar v2 admin — lean subset of the v1 monitoring-service tokens (6: "take only the skeleton and
+   styles, 80% of the content is not needed" — v2 has no backtest/symbols/charts panels, just 3 blocks). */
 :root {
   --bg: #0b0e14;
   --panel: #11161f;

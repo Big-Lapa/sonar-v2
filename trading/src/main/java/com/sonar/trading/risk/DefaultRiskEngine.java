@@ -65,7 +65,7 @@ public class DefaultRiskEngine implements RiskEngine {
             try {
                 causeByAccount.put(accountId, RiskDecision.PauseCause.valueOf(meta.getValue()));
             } catch (IllegalArgumentException e) {
-                log.warn("Unknown auto-pause cause '{}' for account {} — считаем причину неизвестной",
+                log.warn("Unknown auto-pause cause '{}' for account {} — treating the cause as unknown",
                         meta.getValue(), accountId);
                 return;
             }
@@ -90,8 +90,8 @@ public class DefaultRiskEngine implements RiskEngine {
             if (pausedOn == null || !pausedOn.isBefore(today)) {
                 continue;
             }
-            log.warn("Auto-pause for account {} снята автоматически: причина DAILY_LOSS относилась "
-                    + "к {}, наступили новые UTC-сутки {}", accountId, pausedOn, today);
+            log.warn("Auto-pause for account {} cleared automatically: the DAILY_LOSS cause belonged "
+                    + "to {}, a new UTC day {} has started", accountId, pausedOn, today);
             clearAutoPause(accountId);
         }
     }

@@ -16,13 +16,13 @@ const COLOR_BY_KIND = {
 
 /**
  * POST /draw  { symbol, levels: [{price, label, kind: support|resistance|hvn}] }
- * The bridge does NOT compute levels itself (4.3: "мостик не считает свои — иначе картинка
- * разойдётся с числами") — it only draws what `strategy` already computed.
+ * The bridge does NOT compute levels itself (4.3: "the bridge does not compute its own — otherwise the picture
+ * will diverge from the numbers") — it only draws what `strategy` already computed.
  */
 router.post('/draw', async (req, res) => {
   const { symbol, levels } = req.body || {};
   if (!symbol || !Array.isArray(levels)) {
-    return res.status(400).json({ error: 'symbol и levels[] обязательны' });
+    return res.status(400).json({ error: 'symbol and levels[] are required' });
   }
 
   try {

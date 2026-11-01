@@ -25,8 +25,8 @@ import org.springframework.transaction.event.TransactionalEventListener;
  *   <li><b>on-startup</b> — runs before signals are trusted; until the first cycle succeeds the
  *       global reconciliation flag is {@code false}, so the health gate blocks all new entries
  *       (closes/reduces stay exempt). Safe default: trade only once we've matched the exchange.</li>
- *   <li><b>periodic</b> — адаптивно: {@code trading.reconciliation.interval-ms} (5s) пока открыта
- *       хотя бы одна позиция, иначе {@code trading.reconciliation.idle-interval-ms} (60s).</li>
+ *   <li><b>periodic</b> — adaptive: {@code trading.reconciliation.interval-ms} (5s) while at least
+ *       one position is open, otherwise {@code trading.reconciliation.idle-interval-ms} (60s).</li>
  *   <li><b>post-order</b> — after an order action settles (handled after the producing tx commits).</li>
  * </ul>
  * Per-symbol mismatches are handled inside the cycle (per-symbol block). The global flag is flipped
@@ -47,7 +47,7 @@ public class ReconciliationWorker {
     private final ReconciliationProperties reconProps;
     private final PositionRepository positionRepository;
 
-    /** Момент последнего периодического цикла — база для idle-каденции. */
+    /** Moment of the last periodic cycle — the basis for idle cadence. */
     private volatile long lastPeriodicRunMs;
 
     public ReconciliationWorker(ReconciliationService service,
@@ -92,18 +92,18 @@ public class ReconciliationWorker {
     }
 
     /**
-     * Периодический цикл с адаптивной каденцией. Планировщик тикает с шагом
-     * {@code trading.reconciliation.interval-ms}, но пока открытых позиций нет, цикл реально
-     * выполняется не чаще {@code idle-interval-ms} — остальные тики пропускаются.
+     * Periodic cycle with adaptive cadence. The scheduler ticks with a step of
+     * {@code trading.reconciliation.interval-ms}, but while there are no open positions the cycle actually
+     * runs no more often than {@code idle-interval-ms} — the other ticks are skipped.
      *
-     * <p>Почему именно так: выход из позиции — биржевые SL/TP, т.е. биржа закрывает позицию без
-     * нашего ордера. Единственный, кто это замечает, — recon, поэтому пока позиция открыта нужна
-     * частая сверка (задержка = задержка realized PnL, CLOSED и освобождения символа). Во флэте
-     * сверять нечего, и опрос биржи каждые 5с — чистый трафик.
+     * <p>Why this way: a position exits via exchange SL/TP, i.e. the exchange closes the position without
+     * our order. The only one who notices this is recon, so while a position is open frequent
+     * reconciliation is needed (delay = delay of realized PnL, CLOSED and freeing the symbol). When flat
+     * there is nothing to reconcile, and polling the exchange every 5s is pure traffic.
      *
-     * <p>Счётчик открытых позиций читается из локальной БД, не с биржи, так что сам гейт бесплатен.
-     * Ошибка чтения БД трактуется в пользу частого цикла (safe default: лучше лишний опрос, чем
-     * пропущенное закрытие).
+     * <p>The open-position count is read from the local DB, not from the exchange, so the gate itself is free.
+     * A DB read error is treated in favor of the frequent cycle (safe default: better an extra poll than a
+     * missed close).
      */
     @Scheduled(fixedDelayString = "${trading.reconciliation.interval-ms:5000}")
     public void onSchedule() {
@@ -117,14 +117,14 @@ public class ReconciliationWorker {
         runCycle("periodic");
     }
 
-    /** Тик исполняется, если есть открытые позиции, либо с прошлого цикла прошло idle-окно. */
+    /** The tick runs if there are open positions, or the idle window has elapsed since the last cycle. */
     private boolean periodicCycleDue() {
         if (hasOpenPositions()) {
             return true;
         }
         long idleMs = reconProps.getIdleIntervalMs();
         if (idleMs <= reconProps.getIntervalMs()) {
-            return true; // idle-каденция отключена/бессмысленна — ведём себя как раньше
+            return true; // idle cadence is disabled/meaningless — behave as before
         }
         return System.currentTimeMillis() - lastPeriodicRunMs >= idleMs;
     }
@@ -133,7 +133,7 @@ public class ReconciliationWorker {
         try {
             return positionRepository.countOpen() > 0;
         } catch (RuntimeException e) {
-            log.warn("[RECON] open-position probe failed ({}) — держим частую каденцию", e.getMessage());
+            log.warn("[RECON] open-position probe failed ({}) — keeping the frequent cadence", e.getMessage());
             return true;
         }
     }

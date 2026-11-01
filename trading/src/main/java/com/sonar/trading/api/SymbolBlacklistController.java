@@ -31,7 +31,7 @@ public class SymbolBlacklistController {
     public ResponseEntity<?> add(@RequestBody AddRequest req) {
         String symbol = Symbols.normalize(req.symbol());
         if (symbol == null) {
-            return ResponseEntity.badRequest().body(Map.of("error", "symbol: некорректный тикер"));
+            return ResponseEntity.badRequest().body(Map.of("error", "symbol: invalid ticker"));
         }
         return ResponseEntity.ok(repository.save(new SymbolBlacklistEntity(symbol, req.reason())));
     }
