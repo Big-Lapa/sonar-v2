@@ -45,15 +45,23 @@ class PionexAccountParserTest {
     /** Price lookup that records which coins were asked for; unknown coins have no USDT pair. */
     private static final class Prices implements Function<String, CoinPrice> {
         private final Map<String, String> bids;
+        private final Map<String, String> asks;
         final List<String> asked = new ArrayList<>();
 
-        Prices(Map<String, String> bids) { this.bids = bids; }
+        /** Tight market: ask equals bid. */
+        Prices(Map<String, String> bids) { this(bids, bids); }
+
+        Prices(Map<String, String> bids, Map<String, String> asks) {
+            this.bids = bids;
+            this.asks = asks;
+        }
 
         @Override
         public CoinPrice apply(String coin) {
             asked.add(coin);
             String bid = bids.get(coin);
-            return bid == null ? new CoinPrice.NoPair() : new CoinPrice.Bid(new BigDecimal(bid));
+            return bid == null ? new CoinPrice.NoPair()
+                    : new CoinPrice.Quote(new BigDecimal(bid), new BigDecimal(asks.get(coin)));
         }
     }
 
@@ -129,6 +137,44 @@ class PionexAccountParserTest {
     }
 
     @Test
+    void aDebtInACoinWithNoUsdtPairMakesTheWalletUnknownInsteadOfBeingDropped() {
+        // Dropping dust (positive qty) is harmless, dropping a liability overstates equity — the
+        // dangerous direction (sizing and the drawdown rule would never fire).
+        Map<String, Object> resp = Map.of("result", true, "data", Map.of("balances", List.of(
+                Map.of("coin", "BTC", "free", "0.003", "frozen", "0", "debts", "0"),
+                Map.of("coin", "DUSTCOIN", "free", "1", "frozen", "0", "debts", "5"))));
+
+        assertThatThrownBy(() -> PionexAccountParser.valueWallet(resp, new Prices(Map.of("BTC", "78000"))))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("DUSTCOIN");
+    }
+
+    @Test
+    void aSmallPositiveBalanceInACoinWithNoPairIsStillJustDust() {
+        Map<String, Object> resp = Map.of("result", true, "data", Map.of("balances", List.of(
+                Map.of("coin", "DUSTCOIN", "free", "0.0001", "frozen", "0", "debts", "0"))));
+
+        WalletValue value = PionexAccountParser.valueWallet(resp, new Prices(Map.of())).orElseThrow();
+
+        assertThat(value.total()).isEqualByComparingTo("0");
+        assertThat(value.unpricedCoins()).containsExactly("DUSTCOIN");
+    }
+
+    @Test
+    void assetsAreValuedAtTheBidAndLiabilitiesAtTheAsk() {
+        // Net-borrowed BTC (qty < 0) costs the ask to buy back; pricing it at the bid would
+        // understate the liability. Holdings stay at the bid (what they can be sold for).
+        Map<String, Object> held = Map.of("result", true, "data", Map.of("balances", List.of(
+                Map.of("coin", "BTC", "free", "0.002", "frozen", "0", "debts", "0"))));
+        Map<String, Object> owed = Map.of("result", true, "data", Map.of("balances", List.of(
+                Map.of("coin", "BTC", "free", "0", "frozen", "0", "debts", "0.002"))));
+        Prices wide = new Prices(Map.of("BTC", "78000"), Map.of("BTC", "78100"));
+
+        assertThat(PionexAccountParser.valueWallet(held, wide).orElseThrow().total()).isEqualByComparingTo("156");
+        assertThat(PionexAccountParser.valueWallet(owed, wide).orElseThrow().total()).isEqualByComparingTo("-156.2");
+    }
+
+    @Test
     void aFailedPriceLookupMakesTheWholeWalletUnknown() {
         // A transient ticker failure must not yield a confidently low equity (BTC silently
         // dropped -> $234 becomes $0 -> ANOMALY_EQUITY, a fake drawdown).
@@ -163,14 +209,23 @@ class PionexAccountParserTest {
     // ---- Book ticker: GET /api/v1/market/bookTickers?symbol=<COIN>_USDT (public, live shapes) ----
 
     @Test
-    void readsTheBidOutOfTheBookTicker() {
+    void readsTheBidAndAskOutOfTheBookTicker() {
         Map<String, Object> resp = Map.of("result", true, "data", Map.of("tickers", List.of(
                 Map.of("symbol", "BTC_USDT", "bidPrice", "78080.00", "bidSize", "18.689360",
                         "askPrice", "78080.01", "askSize", "7.624851", "timestamp", 1793555221596L))),
                 "timestamp", 1793555221973L);
 
         assertThat(PionexAccountParser.parseBookTicker(resp))
-                .isEqualTo(new CoinPrice.Bid(new BigDecimal("78080.00")));
+                .isEqualTo(new CoinPrice.Quote(new BigDecimal("78080.00"), new BigDecimal("78080.01")));
+    }
+
+    @Test
+    void aMissingAskFallsBackToTheBidSoLiabilitiesAreNeverPricedAtZero() {
+        Map<String, Object> resp = Map.of("result", true, "data", Map.of("tickers", List.of(
+                Map.of("symbol", "BTC_USDT", "bidPrice", "78080.00"))));
+
+        assertThat(PionexAccountParser.parseBookTicker(resp))
+                .isEqualTo(new CoinPrice.Quote(new BigDecimal("78080.00"), new BigDecimal("78080.00")));
     }
 
     @Test

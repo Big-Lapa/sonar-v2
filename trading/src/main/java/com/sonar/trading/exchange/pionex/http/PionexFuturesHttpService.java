@@ -76,6 +76,8 @@ public class PionexFuturesHttpService implements PionexFuturesClient {
             throw e;
         } catch (IOException ioe) {
             throw new ExchangeException(new ExchangeError("IO_ERROR", ioe.getMessage()), ioe);
+        } catch (Exception e) {
+            throw new ExchangeException(new ExchangeError("PIONEX_HTTP_ERROR", e.getMessage()), e);
         }
     }
 

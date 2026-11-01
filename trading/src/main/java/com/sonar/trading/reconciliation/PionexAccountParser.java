@@ -25,7 +25,7 @@ import java.util.function.Function;
  * The wallet is valued in USDT coin by coin ({@link #valueWallet}, non-stable coins at the public
  * {@code /api/v1/market/bookTickers} bid — {@link #parseBookTicker}).
  * Since {@code balances} carries no PnL, {@link PionexAccountReader#getBalance()} sums
- * {@code unrealizedPnL} across positions itself and folds it into {@link ExchangeBalance}, so the
+ * {@code unrealizedPnL} across positions itself and folds it into {@link com.sonar.trading.reconciliation.model.ExchangeBalance}, so the
  * existing {@code balance + unrealizedPnl} equity fallback ({@code MinutePoller.pollAccount}) still
  * works the same way it does for BingX/Bybit.
  */
@@ -115,9 +115,9 @@ public final class PionexAccountParser {
     /** Pionex's paper-trading pool (~500k sits next to the real coins) — never real money. */
     private static final String PAPER_COIN = "PUSD";
 
-    /** A coin's USDT price: the book-ticker bid, or "this coin has no {@code <COIN>_USDT} pair". */
+    /** A coin's USDT price: the book-ticker bid/ask, or "this coin has no {@code <COIN>_USDT} pair". */
     public sealed interface CoinPrice {
-        record Bid(BigDecimal price) implements CoinPrice {}
+        record Quote(BigDecimal bid, BigDecimal ask) implements CoinPrice {}
         record NoPair() implements CoinPrice {}
     }
 
@@ -131,9 +131,11 @@ public final class PionexAccountParser {
     public record WalletValue(BigDecimal total, BigDecimal freeUsdt, List<String> unpricedCoins) {}
 
     /**
-     * Values every coin except {@code PUSD}: stablecoins 1:1, anything else at {@code priceOf(coin)}.
-     * Zero rows are skipped without asking for a price. A coin with no USDT pair ({@link
-     * CoinPrice.NoPair}, e.g. dust) is left out and reported; a failing {@code priceOf} propagates —
+     * Values every coin except {@code PUSD}: stablecoins 1:1, anything else at {@code priceOf(coin)}
+     * (holdings at the bid, debts at the ask).
+     * Zero rows are skipped without asking for a price. A positive balance in a coin with no USDT pair
+     * ({@link CoinPrice.NoPair}, e.g. dust) is left out and reported; a <em>debt</em> in such a coin
+     * throws, since dropping it would overstate equity. A failing {@code priceOf} propagates —
      * a transiently missing BTC price must make the balance unknown, not silently drop $200 out of
      * equity (that would read as an ANOMALY_EQUITY drop and a fake drawdown). Rows without a coin
      * field are ignored rather than counted as some asset. Empty when the wallet has no rows at all.
@@ -168,8 +170,17 @@ public final class PionexAccountParser {
                 continue;
             }
             switch (priceOf.apply(coin)) {
-                case CoinPrice.Bid bid -> total = total.add(qty.multiply(bid.price()));
-                case CoinPrice.NoPair noPair -> unpriced.add(coin);
+                // Holdings at the bid (what they sell for), liabilities at the ask (what buying
+                // them back costs) — the valuation stays conservative on both sides.
+                case CoinPrice.Quote quote -> total = total.add(qty.multiply(qty.signum() > 0 ? quote.bid() : quote.ask()));
+                case CoinPrice.NoPair noPair -> {
+                    // Leaving dust out is harmless; leaving a debt out would overstate equity.
+                    if (qty.signum() < 0) {
+                        throw new IllegalStateException("Pionex wallet owes " + qty.negate() + " " + coin
+                                + " but it has no " + coin + "_USDT pair to price the debt");
+                    }
+                    unpriced.add(coin);
+                }
             }
         }
         return Optional.of(new WalletValue(total, freeUsdt, List.copyOf(unpriced)));
@@ -178,7 +189,8 @@ public final class PionexAccountParser {
     // ---- Book ticker: GET /api/v1/market/bookTickers?symbol=<COIN>_USDT → data.tickers[] ----
 
     /**
-     * The bid out of a raw book-ticker response. {@code result:false} with {@code
+     * The bid/ask out of a raw book-ticker response (a missing or non-positive ask falls back to the
+     * bid, so a liability is never priced at zero). {@code result:false} with {@code
      * MARKET_INVALID_SYMBOL} (confirmed live) means the pair does not exist → {@link CoinPrice.NoPair}.
      * Any other error, an empty ticker list or a non-positive bid is a failed call, not a missing pair,
      * and throws.
@@ -200,7 +212,8 @@ public final class PionexAccountParser {
         if (bid == null || bid.signum() <= 0) {
             throw new IllegalStateException("Pionex book ticker has no usable bid: " + resp);
         }
-        return new CoinPrice.Bid(bid);
+        BigDecimal ask = dec(tickers.get(0), "askPrice");
+        return new CoinPrice.Quote(bid, ask != null && ask.signum() > 0 ? ask : bid);
     }
 
     private static BigDecimal orZero(BigDecimal v) {
