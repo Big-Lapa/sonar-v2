@@ -5,7 +5,7 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 
-/** A candidate trade awaiting human confirmation in Telegram (5). LONG-only in v1. */
+/** A candidate trade awaiting human confirmation in Telegram. LONG-only in v1. */
 @Entity
 @Table(name = "proposals", schema = "trading")
 public class ProposalEntity {

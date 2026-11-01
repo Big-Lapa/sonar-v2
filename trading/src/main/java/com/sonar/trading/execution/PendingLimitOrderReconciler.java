@@ -33,10 +33,9 @@ import java.math.RoundingMode;
  * time — {@link ProposalExecutionService#executeLeg} places it and moves on, reporting
  * {@code limitWorking} rather than blocking. Nothing else in the system was watching for it to
  * actually fill: {@link MinutePoller#pollAccount} only reconciles {@code PositionEntity} rows that
- * already exist, so a LIMIT order filling on the exchange never became a position at all (found in
- * PR #2 follow-up review — the code that shipped this claimed "the reconciliation poller picks
- * this up", which was never true; the real reconciliation service lives uncompiled in
- * {@code trading/src/_stage3-pending/}).
+ * already exist, so a LIMIT order filling on the exchange never became a position at all (the code that
+ * originally shipped LIMIT entries claimed "the reconciliation poller picks this up", which was
+ * never true).
  *
  * <p>This is that missing piece, scoped to exactly the gap: poll every still-active OPEN-action
  * order once a minute, and once it reaches a terminal state, fold whatever actually filled into

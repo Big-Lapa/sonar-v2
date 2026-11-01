@@ -6,7 +6,7 @@ import java.math.BigDecimal;
 
 /**
  * Everything a {@link com.sonar.trading.risk.rules.RiskRule} may inspect for one account leg of
- * a proposal (4.2). {@code candidateRisk} is null for CLOSE/REDUCE actions, which never size a
+ * a proposal. {@code candidateRisk} is null for CLOSE/REDUCE actions, which never size a
  * new entry.
  */
 public record RiskContext(

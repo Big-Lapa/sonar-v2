@@ -5,7 +5,7 @@ import org.springframework.stereotype.Service;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * v2 has no market-data stream or Kafka consumer lag to track (4.0) — this only mirrors each
+ * v2 has no market-data stream or Kafka consumer lag to track — this only mirrors each
  * account's execution circuit-breaker state, which {@link com.sonar.trading.execution.gateway
  * .ResilientExecutionGateway} needs so an open circuit can be surfaced to an operator. Not a risk
  * gate itself in v2 (no SystemHealthGateRule — reconsidered and dropped per 3.1).

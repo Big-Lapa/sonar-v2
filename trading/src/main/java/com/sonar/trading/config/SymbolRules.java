@@ -2,7 +2,7 @@ package com.sonar.trading.config;
 
 import java.math.BigDecimal;
 
-/** Exchange contract constraints for one symbol (ADR-0009 equivalent clamp inputs). */
+/** Exchange contract constraints for one symbol (clamp inputs). */
 public record SymbolRules(BigDecimal stepSize, BigDecimal minQty, BigDecimal minNotional, BigDecimal tickSize) {
 
     public static final SymbolRules DEFAULT =

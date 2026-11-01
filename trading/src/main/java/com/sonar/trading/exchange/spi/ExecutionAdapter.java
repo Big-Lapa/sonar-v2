@@ -66,7 +66,7 @@ public interface ExecutionAdapter {
     /** Place a standalone reduce-only conditional take-profit order (move). */
     void placeReduceOnlyTakeProfit(String symbol, BigDecimal qty, BigDecimal price);
 
-    /** Current mark price for the symbol (drift gate on confirm — 4.6 step 1). */
+    /** Current mark price for the symbol (drift gate on confirm). */
     BigDecimal getMarkPrice(String symbol);
 
     String adapterName();

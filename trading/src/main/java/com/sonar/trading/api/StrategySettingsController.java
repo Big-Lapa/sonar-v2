@@ -9,7 +9,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.Set;
 
-/** 4.8/6: {@code GET/PUT /api/v1/strategy/settings} — gates/thresholds `strategy` reads before searching. */
+/** {@code GET/PUT /api/v1/strategy/settings} — gates/thresholds `strategy` reads before searching. */
 @RestController
 @RequestMapping("/api/v1/strategy/settings")
 public class StrategySettingsController {

@@ -6,7 +6,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import jakarta.persistence.Version;
 
-/** Single row (id=1), strategy-wide gates/thresholds (4.1). Owned by `strategy`; trading only reads it. */
+/** Single row (id=1), strategy-wide gates/thresholds. Owned by `strategy`; trading only reads it. */
 @Entity
 @Table(name = "strategy_settings", schema = "trading")
 public class StrategySettingsEntity {

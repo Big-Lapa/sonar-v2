@@ -6,7 +6,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.Optional;
 
-/** Rejects new OPEN signals when the account's open position count meets its limit (4.2). */
+/** Rejects new OPEN signals when the account's open position count meets its limit. */
 @Component
 public class MaxOpenPositionsRule implements RiskRule {
 

@@ -361,7 +361,7 @@ export class TelegramBotService implements OnModuleInit {
   }
 
   // ---- Minute tick: notification relay only (trading's own poller stays the only *trading-side*
-  // periodic poll — 4.7; the LLM search-prompt gate that used to piggyback this tick is retired
+  // periodic poll; the LLM search-prompt gate that used to piggyback this tick is retired
   // along with the rest of the search pipeline) ----
 
   @Interval(60_000)

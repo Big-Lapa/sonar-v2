@@ -22,9 +22,8 @@ export interface SearchRunResult {
 }
 
 /**
- * Stage 5: universe -> setup gates -> LLM -> levels -> setup gates -> log. No Telegram here
- * (stage 6) — this is the pipeline itself, callable directly so stage 6 wires it behind the
- * PROMPT_PENDING -> SEARCHING transition without rewriting any of this.
+ * Universe -> setup gates -> LLM -> levels -> setup gates -> log. No Telegram here — this is
+ * the pipeline itself, callable directly so any trigger can drive it without rewriting any of this.
  */
 @Injectable()
 export class SearchOrchestratorService {

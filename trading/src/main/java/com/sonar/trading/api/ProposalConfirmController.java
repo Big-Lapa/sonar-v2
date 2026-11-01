@@ -12,8 +12,8 @@ import org.springframework.web.bind.annotation.RestController;
 import java.util.List;
 
 /**
- * 4.8: {@code POST /api/v1/strategy/proposals/{id}/confirm} — executes 4.6 across every tradable
- * BingX account. Idempotent: a repeated tap on an already-CONFIRMED proposal returns the
+ * {@code POST /api/v1/strategy/proposals/{id}/confirm} — executes the multi-venue flow across every
+ * tradable account. Idempotent: a repeated tap on an already-CONFIRMED proposal returns the
  * original report instead of placing a second order.
  */
 @RestController

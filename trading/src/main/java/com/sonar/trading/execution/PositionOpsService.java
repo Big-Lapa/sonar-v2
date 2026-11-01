@@ -25,7 +25,7 @@ import java.util.List;
 import java.util.UUID;
 
 /**
- * {@code /closeall}, {@code /be}, {@code /move} (4.7/5) — manual operator actions on an
+ * {@code /closeall}, {@code /be}, {@code /move} — manual operator actions on an
  * already-open position.
  *
  * <p>Venue-agnostic (grilled Q5): resolves the right {@link ExecutionAdapter} per account via
@@ -199,7 +199,7 @@ public class PositionOpsService {
         }
     }
 
-    /** Cancel the old SL, place a new one at entry price, free the position's portfolio-risk slot (4.2). */
+    /** Cancel the old SL, place a new one at entry price, free the position's portfolio-risk slot. */
     public OpResult breakeven(Long positionId) {
         PositionEntity position = positionRepository.findById(positionId).orElse(null);
         if (position == null || !"OPEN".equals(position.getStatus())) {
@@ -237,7 +237,7 @@ public class PositionOpsService {
             if (wantsSl) {
                 position.setSlPrice(price.toPlainString());
                 if (isBreakeven) {
-                    position.setPlannedRiskAmount(null); // frees portfolio-risk headroom, 4.2
+                    position.setPlannedRiskAmount(null); // frees portfolio-risk headroom
                 }
             } else {
                 position.setTpPrice(price.toPlainString());

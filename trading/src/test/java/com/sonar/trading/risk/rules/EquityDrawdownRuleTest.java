@@ -8,7 +8,7 @@ import java.math.BigDecimal;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** 4.2: drawdown from historical peak equity, NOT a daily measure. */
+/** drawdown from historical peak equity, NOT a daily measure. */
 class EquityDrawdownRuleTest {
 
     private final EquityDrawdownRule rule = new EquityDrawdownRule();

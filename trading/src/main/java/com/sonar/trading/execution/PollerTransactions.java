@@ -30,7 +30,7 @@ public class PollerTransactions {
         this.positionRepository = positionRepository;
     }
 
-    /** 4.2: get-or-create today's row; equity_at_open is NEVER rewritten once created. */
+    /** get-or-create today's row; equity_at_open is NEVER rewritten once created. */
     @Transactional
     public void upsertDailyBaseline(String accountId, LocalDate today, BigDecimal equity, BigDecimal realizedToday) {
         var existing = dailyBaselineRepository.findForUpdate(accountId, today);

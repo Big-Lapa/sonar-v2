@@ -18,7 +18,7 @@ const MAX_WEB_SEARCHES = 12;
 const ADAPTIVE_THINKING_MODELS = new Set(['claude-opus-5', 'claude-sonnet-5']);
 
 /**
- * 4.5: one Sonnet 5 call over the whole prefiltered universe. The model picks symbols with a
+ * one Sonnet 5 call over the whole prefiltered universe. The model picks symbols with a
  * bullish news backdrop where price hasn't moved yet — it NEVER computes price/qty/levels (1st
  * invariant), only names symbols (validated against the allowlist) and writes Russian rationale.
  */
@@ -92,7 +92,7 @@ export class CandidateSearchService {
     return { candidates: validated, cost };
   }
 
-  /** 4.5: a failed web_search_tool_result arrives HTTP 200 with `content` as an object, not an array. */
+  /** a failed web_search_tool_result arrives HTTP 200 with `content` as an object, not an array. */
   private checkForFailedSearches(content: any[]): void {
     for (const block of content) {
       if (block.type === 'web_search_tool_result' && !Array.isArray(block.content)) {

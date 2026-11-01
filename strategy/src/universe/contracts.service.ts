@@ -9,10 +9,9 @@ interface Cache<T> {
 const TTL_MS = 60 * 60 * 1000; // 1h — matches the venue contract-spec cache convention (trading's SymbolRulesCache)
 
 /**
- * 4.4: universe = Binance USDT-M perps ∩ contracts of every venue with a tradable account. Right
- * now that's BingX only (Binance execution isn't wired yet, stage 3 scope) — intersecting with an
- * empty/never-checked Binance-account set would be wrong, so this intersects Binance perps with
- * BingX contracts specifically. No hardcoded symbol lists — both fetched live and cached.
+ * universe = Binance USDT-M perps ∩ contracts of every venue with a tradable account. Right
+ * now only BingX is factored in (other venues' contract lists aren't fetched yet), so this
+ * intersects Binance perps with BingX contracts specifically. No hardcoded symbol lists — both fetched live and cached.
  */
 @Injectable()
 export class ContractsService {

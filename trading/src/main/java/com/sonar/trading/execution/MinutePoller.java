@@ -32,12 +32,12 @@ import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * 4.7: the ONE periodic poll in the system. Per <b>active</b> account (not "tradable" — an
+ * the ONE periodic poll in the system. Per <b>active</b> account (not "tradable" — an
  * account can be watched without Sonar being allowed to trade it): pulls balance + positions,
  * adopts positions opened directly on the exchange that have no DB row yet (the exchange is the
  * source of truth for "is this open", not our own execution history), detects closes, verifies
  * stops, flags DB/exchange qty drift, reminds on long holds, and maintains {@code daily_baseline}
- * (4.2 — not a separate scheduler, this tick owns it).
+ * (not a separate scheduler, this tick owns it).
  *
  * <p>Venue-agnostic (grilled Q5/full multi-venue routing): resolves the account's
  * {@link AccountReader} via {@link AccountReaderRegistry} instead of a hardcoded BingX-only
@@ -85,7 +85,7 @@ public class MinutePoller {
         for (AccountProps account : accountRegistry.all()) {
             Optional<AccountReader> reader = accountReaders.forAccount(account.id());
             if (reader.isEmpty()) {
-                continue; // venue not wired (e.g. Binance — parked in _stage3-pending) or PAPER mode
+                continue; // venue without an account reader, or PAPER mode
             }
             // active gates monitoring (balance/positions/stop-verify/close-notify); tradable is a
             // separate, narrower gate checked only where Sonar itself might open a position

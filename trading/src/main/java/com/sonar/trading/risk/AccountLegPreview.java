@@ -5,7 +5,7 @@ import com.sonar.trading.i18n.Msg;
 import java.math.BigDecimal;
 import java.util.Map;
 
-/** One account's line in the proposal preview report (4.8: POST /api/v1/strategy/proposals). */
+/** One account's line in the proposal preview report (POST /api/v1/strategy/proposals). */
 public record AccountLegPreview(
         String accountId,
         boolean approved,

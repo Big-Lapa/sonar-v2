@@ -22,17 +22,17 @@ export interface SetupGateInputs {
 export type PickResult = { ok: true; levels: TradeLevels } | { ok: false; reason: string };
 
 /**
- * 4.3.3 (level selection) + 4.4 (setup gates). LONG only:
+ * Level selection + setup gates. LONG only:
  *   sl = nearest support/LVN below entry that clears the minimum distance gate
  *   tp = nearest HVN/resistance above entry that ALSO clears the same minimum distance gate
  * Gates: distSL >= max(minSlDistancePct, roundTripCost * minSlCostMult); distSL <= maxSlDistancePct;
  * RR = (tp-entry)/(entry-sl) >= minRr.
  *
- * The TP-side minimum distance isn't in the original spec text (4.3.3 only gates SL's minimum),
+ * The TP-side minimum distance wasn't in the original design (only SL's minimum was gated),
  * but live testing surfaced why it has to be symmetric: on a low-volatility symbol (TRXUSDT) the
  * "nearest resistance above entry" was a swing high sitting fractions of a percent away, giving
- * R:R ≈ 0.03 — a target so close it isn't a target. Confirmed with the user 2026-08-21 rather than
- * silently reinterpreting the spec.
+ * R:R ≈ 0.03 — a target so close it isn't a target. Made symmetric on purpose rather than
+ * silently reinterpreting the original rule.
  */
 export function pickLongLevels(
   entry: number,

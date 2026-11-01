@@ -9,7 +9,7 @@ import java.util.Optional;
 
 /**
  * Rejects an OPEN when the sum of planned risk on already-open positions plus this candidate's
- * risk would exceed {@code maxPortfolioRiskPct} of current equity (4.2). Portfolio risk is
+ * risk would exceed {@code maxPortfolioRiskPct} of current equity. Portfolio risk is
  * counted from the PLANNED figure fixed at each position's open time, not current price — so a
  * favorable move never silently frees up portfolio headroom.
  */

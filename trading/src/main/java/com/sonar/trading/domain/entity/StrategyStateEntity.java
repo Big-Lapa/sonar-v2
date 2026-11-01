@@ -5,7 +5,7 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 
-/** Single row (id=1) — `strategy` is stateless, its phase lives here (5). */
+/** Single row (id=1) — `strategy` is stateless, its phase lives here. */
 @Entity
 @Table(name = "strategy_state", schema = "trading")
 public class StrategyStateEntity {

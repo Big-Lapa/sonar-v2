@@ -16,7 +16,7 @@ import java.util.concurrent.ConcurrentHashMap;
 /**
  * Exchange contract specs (stepSize/minQty/minNotional/tickSize), fetched directly from each
  * venue's public REST (no config-service in v2 — decided 2026-08-21). Cached in memory with a 1h
- * TTL, same pattern as the universe cache (4.4): these endpoints are unauthenticated and change
+ * TTL, same pattern as the universe cache: these endpoints are unauthenticated and change
  * rarely, so a per-call fetch would be wasteful and adds latency to sizing.
  *
  * <p><b>Keyed by resolved HOST, not by venue name.</b> Credentials and base URL moved to being
@@ -152,7 +152,7 @@ public class SymbolRulesCache {
     }
 
     /** BingX canonical symbol form is {@code BASE-QUOTE}; keyed here by the platform's canonical
-     *  Binance form ({@code BASEQUOTE}, 4.0) so callers never juggle two symbol spellings. */
+     *  Binance form ({@code BASEQUOTE}) so callers never juggle two symbol spellings. */
     @SuppressWarnings("unchecked")
     private Map<String, SymbolRules> fetchBingx(RestClient client) {
         Map<String, Object> body = client.get().uri("/openApi/swap/v2/quote/contracts")

@@ -5,7 +5,7 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 
-/** Symbols excluded from the universe before the LLM ever sees them (4.4). */
+/** Symbols excluded from the universe before the LLM ever sees them. */
 @Entity
 @Table(name = "symbol_blacklist", schema = "trading")
 public class SymbolBlacklistEntity {

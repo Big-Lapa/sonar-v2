@@ -6,9 +6,8 @@ import { buildVolumeProfile, findLvnNear } from './volume-profile';
 import { PickResult, pickLongLevels, SetupGateInputs } from './pick-trade-levels';
 
 /**
- * Binance USDT-M taker round-trip fee estimate (2 legs). Not a `strategy_settings` field (4.1
- * has no such column) — root CLAUDE.md's admin-backtest convention already pins Binance taker at
- * ~5bps/leg, so 2x5bps=0.1% round trip is the consistent default here too.
+ * Binance USDT-M taker round-trip fee estimate (2 legs). Not a `strategy_settings` field (there
+ * is no such column): taker is ~5bps/leg, so 2x5bps=0.1% round trip is a consistent default.
  */
 const ROUND_TRIP_COST_PCT = 0.001;
 

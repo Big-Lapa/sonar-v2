@@ -3,8 +3,7 @@ import { createHash, timingSafeEqual } from 'crypto';
 import { SearchOrchestratorService } from './search-orchestrator.service';
 
 /**
- * Stage 5 trigger — no Telegram yet (stage 6 wires PROMPT_PENDING -> SEARCHING to this same
- * orchestrator). Manual trigger for now:
+ * Manual trigger for the search pipeline (no Telegram involved):
  * `curl -X POST -H "X-Admin-Token: $ADMIN_TOKEN" http://localhost:3000/internal/search/run`.
  *
  * Gated by the same ADMIN_TOKEN as trading's /api/v1: each run spends Anthropic API money, and

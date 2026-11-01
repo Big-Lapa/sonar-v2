@@ -10,7 +10,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 
 /**
- * Risk-based sizing (4.2) — the strict order matters, do not reshuffle:
+ * Risk-based sizing — the strict order matters, do not reshuffle:
  * <pre>
  * riskUsd  = equity × riskPctPerTrade
  * qty      = riskUsd / |entry − sl|

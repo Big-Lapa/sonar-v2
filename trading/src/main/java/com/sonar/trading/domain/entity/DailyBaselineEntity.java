@@ -11,7 +11,7 @@ import java.time.LocalDate;
 import java.util.Objects;
 
 /**
- * Daily accounting baseline (4.2). MUST live in DB — a restart mid-day must not reset the
+ * Daily accounting baseline. MUST live in DB — a restart mid-day must not reset the
  * daily-loss limit or forget the running peak equity. One row per (account, UTC trading day).
  */
 @Entity

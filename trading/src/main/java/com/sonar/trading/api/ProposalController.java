@@ -13,12 +13,11 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * 4.8: {@code POST /api/v1/strategy/proposals} — creates a candidate LONG entry targeted at ONE
+ * {@code POST /api/v1/strategy/proposals} — creates a candidate LONG entry targeted at ONE
  * account and returns its risk preview (qty/riskUsd or a rejection reason). Manual multi-exchange
  * management: {@code accountId} is required — a proposal always executes on exactly the account
  * the caller picked, never a fan-out across every tradable one (that mode existed only for the
- * now-retired LLM auto-search path). Confirming/executing a proposal is stage 3 — not implemented
- * here.
+ * now-retired LLM auto-search path). Confirming a proposal is {@link ProposalConfirmController}'s job.
  */
 @RestController
 @RequestMapping("/api/v1/strategy/proposals")

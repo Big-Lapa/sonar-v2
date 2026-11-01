@@ -138,7 +138,7 @@ export interface OpResult {
  */
 const OP_RESULT_CONFIG = { validateStatus: (s: number) => (s >= 200 && s < 300) || s === 409 };
 
-/** REST client to `trading` (4.8) — X-Admin-Token on every call. */
+/** REST client to `trading` — X-Admin-Token on every call. */
 @Injectable()
 export class TradingApiService {
   private readonly client: AxiosInstance;

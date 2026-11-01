@@ -8,7 +8,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
-/** 4.8: {@code GET/PUT /api/v1/strategy/state} — `strategy` is stateless, phase lives here (5). */
+/** {@code GET/PUT /api/v1/strategy/state} — `strategy` is stateless, phase lives here. */
 @RestController
 @RequestMapping("/api/v1/strategy/state")
 public class StrategyStateController {

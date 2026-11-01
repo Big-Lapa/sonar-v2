@@ -8,7 +8,7 @@ let connecting = null;
 /**
  * TradingView Desktop exposes a Chrome DevTools Protocol debug port (same one the coin-analysis
  * skill's tooling uses — verified live against the real internal chart-widget API before writing
- * this file, see stage 8 commit message). We reconnect lazily; TradingView Desktop is not always
+ * this file). We reconnect lazily; TradingView Desktop is not always
  * running, and a dead connection must not crash the bridge — callers see a clear error instead.
  */
 async function getClient() {

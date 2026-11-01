@@ -8,7 +8,7 @@ import java.util.Optional;
 
 /**
  * Triggers auto-pause when today's realized loss (closed trades + fees + funding, NOT open
- * unrealized PnL) exceeds {@code maxDailyRealizedLossPct} of the equity at 00:00 UTC (4.2).
+ * unrealized PnL) exceeds {@code maxDailyRealizedLossPct} of the equity at 00:00 UTC.
  * Risk-reducing actions (CLOSE/REDUCE) are always allowed.
  */
 @Component
