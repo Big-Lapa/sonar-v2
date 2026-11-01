@@ -1,6 +1,5 @@
 package com.sonar.trading.reconciliation;
 
-import com.sonar.trading.reconciliation.model.ExchangeBalance;
 import com.sonar.trading.reconciliation.model.ExchangePosition;
 
 import java.math.BigDecimal;
@@ -9,6 +8,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.function.Function;
 
 /**
  * Pure parsing of Pionex account responses into typed reconciliation models — mirrors
@@ -21,6 +22,8 @@ import java.util.Optional;
  * GET /uapi/v1/account/positions → data.positions[]: {symbol, positionSide, netSize, avgPrice,
  *   markPrice, unrealizedPnL (capital L), leverage, liquidationPrice, ...}
  * </pre>
+ * The wallet is valued in USDT coin by coin ({@link #valueWallet}, non-stable coins at the public
+ * {@code /api/v1/market/bookTickers} bid — {@link #parseBookTicker}).
  * Since {@code balances} carries no PnL, {@link PionexAccountReader#getBalance()} sums
  * {@code unrealizedPnL} across positions itself and folds it into {@link ExchangeBalance}, so the
  * existing {@code balance + unrealizedPnl} equity fallback ({@code MinutePoller.pollAccount}) still
@@ -107,56 +110,101 @@ public final class PionexAccountParser {
     // summary — {coin, free, frozen, debts}; no equity/PnL here, see the unrealized-PnL fold-in
     // done by PionexAccountReader.getBalance()) ----
 
-    /** Quote-like assets worth falling back to when the requested one is absent — see the fallback
-     *  comment below for why this list exists at all instead of "any row". */
-    private static final java.util.Set<String> FALLBACK_ASSETS = java.util.Set.of("USDT", "PUSD", "USDC");
+    /** Counted 1:1 in USDT, never priced. */
+    private static final Set<String> STABLECOINS = Set.of("USDT", "USDC");
+    /** Pionex's paper-trading pool (~500k sits next to the real coins) — never real money. */
+    private static final String PAPER_COIN = "PUSD";
 
-    public static Optional<ExchangeBalance> parseBalance(Map<String, Object> resp, String asset) {
-        List<Map<String, Object>> rows = rowsUnder(resp, "balances");
-        String want = asset == null ? null : asset.toUpperCase(Locale.ROOT);
-
-        for (Map<String, Object> row : rows) {
-            String a = str(row, "coin", "asset", "currency");
-            // a == null used to match here too, which meant a malformed row with no coin field at
-            // all silently impersonated whatever asset was requested — worse than admitting we
-            // don't know, since the number then flows into equity/daily_baseline/% sizing as if it
-            // were real USDT.
-            if (a != null && want != null && want.equals(a.toUpperCase(Locale.ROOT))) {
-                return Optional.of(parseBalanceRow(a, row));
-            }
-        }
-        // Requested asset absent — fall back only to another quote-like asset (this account holds
-        // a separate PUSD paper-trading pool alongside real USDT), never to "whichever row happens
-        // to be first". Unlike BingX's VST fallback (a same-scale demo twin of the requested
-        // asset), Pionex's balances are a plain coin wallet — rows.get(0) can just as easily be
-        // 0.003 BTC, and reporting that as "equity" would size a % position off a number two
-        // orders of magnitude away from the truth.
-        for (Map<String, Object> row : rows) {
-            String a = str(row, "coin", "asset", "currency");
-            if (a != null && FALLBACK_ASSETS.contains(a.toUpperCase(Locale.ROOT))) {
-                return Optional.of(parseBalanceRow(a, row));
-            }
-        }
-        return Optional.empty();
+    /** A coin's USDT price: the book-ticker bid, or "this coin has no {@code <COIN>_USDT} pair". */
+    public sealed interface CoinPrice {
+        record Bid(BigDecimal price) implements CoinPrice {}
+        record NoPair() implements CoinPrice {}
     }
 
     /**
-     * {@code balance}/{@code equity} both start as {@code free} (available, unlocked) — the wallet
-     * has no margin-account "total equity" field, and {@code frozen} here read 0 even with open
-     * cross-margin positions live, so it isn't "margin currently in use" either. {@code equity} gets
-     * corrected upstream in {@code PionexAccountReader.getBalance()} once position PnL is folded in
-     * (equity = free + Σ unrealizedPnL, the same shape {@code MinutePoller}'s own fallback uses).
+     * The futures wallet valued in USDT.
+     *
+     * @param total         Σ (free + frozen − debts) × price over every counted coin
+     * @param freeUsdt      free USDT only — the money actually spendable as margin right now
+     * @param unpricedCoins non-zero coins left out because they have no USDT pair
      */
-    private static ExchangeBalance parseBalanceRow(String asset, Map<String, Object> row) {
-        BigDecimal free = dec(row, "free", "balance", "walletBalance", "total");
-        return new ExchangeBalance(
-                asset,
-                free,
-                free,
-                null,
-                free,
-                dec(row, "frozen", "used", "usedBalance", "locked")
-        );
+    public record WalletValue(BigDecimal total, BigDecimal freeUsdt, List<String> unpricedCoins) {}
+
+    /**
+     * Values every coin except {@code PUSD}: stablecoins 1:1, anything else at {@code priceOf(coin)}.
+     * Zero rows are skipped without asking for a price. A coin with no USDT pair ({@link
+     * CoinPrice.NoPair}, e.g. dust) is left out and reported; a failing {@code priceOf} propagates —
+     * a transiently missing BTC price must make the balance unknown, not silently drop $200 out of
+     * equity (that would read as an ANOMALY_EQUITY drop and a fake drawdown). Rows without a coin
+     * field are ignored rather than counted as some asset. Empty when the wallet has no rows at all.
+     */
+    public static Optional<WalletValue> valueWallet(Map<String, Object> resp, Function<String, CoinPrice> priceOf) {
+        List<Map<String, Object>> rows = rowsUnder(resp, "balances");
+        if (rows.isEmpty()) {
+            return Optional.empty();
+        }
+        BigDecimal total = BigDecimal.ZERO;
+        BigDecimal freeUsdt = BigDecimal.ZERO;
+        List<String> unpriced = new ArrayList<>();
+        for (Map<String, Object> row : rows) {
+            String raw = str(row, "coin", "asset", "currency");
+            if (raw == null) {
+                continue;
+            }
+            String coin = raw.toUpperCase(Locale.ROOT);
+            if (PAPER_COIN.equals(coin)) {
+                continue;
+            }
+            BigDecimal free = orZero(dec(row, "free"));
+            if ("USDT".equals(coin)) {
+                freeUsdt = freeUsdt.add(free);
+            }
+            BigDecimal qty = free.add(orZero(dec(row, "frozen"))).subtract(orZero(dec(row, "debts")));
+            if (qty.signum() == 0) {
+                continue;
+            }
+            if (STABLECOINS.contains(coin)) {
+                total = total.add(qty);
+                continue;
+            }
+            switch (priceOf.apply(coin)) {
+                case CoinPrice.Bid bid -> total = total.add(qty.multiply(bid.price()));
+                case CoinPrice.NoPair noPair -> unpriced.add(coin);
+            }
+        }
+        return Optional.of(new WalletValue(total, freeUsdt, List.copyOf(unpriced)));
+    }
+
+    // ---- Book ticker: GET /api/v1/market/bookTickers?symbol=<COIN>_USDT → data.tickers[] ----
+
+    /**
+     * The bid out of a raw book-ticker response. {@code result:false} with {@code
+     * MARKET_INVALID_SYMBOL} (confirmed live) means the pair does not exist → {@link CoinPrice.NoPair}.
+     * Any other error, an empty ticker list or a non-positive bid is a failed call, not a missing pair,
+     * and throws.
+     */
+    public static CoinPrice parseBookTicker(Map<String, Object> resp) {
+        if (resp == null) {
+            throw new IllegalStateException("Pionex book ticker: empty response");
+        }
+        Object result = resp.get("result");
+        if (!Boolean.TRUE.equals(result) && !"true".equals(String.valueOf(result))) {
+            if ("MARKET_INVALID_SYMBOL".equals(String.valueOf(resp.get("code")))) {
+                return new CoinPrice.NoPair();
+            }
+            throw new IllegalStateException("Pionex book ticker failed: code=" + resp.get("code")
+                    + " message=" + resp.get("message"));
+        }
+        List<Map<String, Object>> tickers = rowsUnder(resp, "tickers");
+        BigDecimal bid = tickers.isEmpty() ? null : dec(tickers.get(0), "bidPrice");
+        if (bid == null || bid.signum() <= 0) {
+            throw new IllegalStateException("Pionex book ticker has no usable bid: " + resp);
+        }
+        return new CoinPrice.Bid(bid);
+    }
+
+    private static BigDecimal orZero(BigDecimal v) {
+        return v == null ? BigDecimal.ZERO : v;
     }
 
     // ---- Low-level helpers ----

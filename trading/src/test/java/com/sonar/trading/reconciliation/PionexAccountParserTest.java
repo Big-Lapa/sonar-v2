@@ -1,14 +1,18 @@
 package com.sonar.trading.reconciliation;
 
-import com.sonar.trading.reconciliation.model.ExchangeBalance;
+import com.sonar.trading.reconciliation.PionexAccountParser.CoinPrice;
+import com.sonar.trading.reconciliation.PionexAccountParser.WalletValue;
 import com.sonar.trading.reconciliation.model.ExchangePosition;
 import org.junit.jupiter.api.Test;
 
+import java.math.BigDecimal;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Optional;
+import java.util.function.Function;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /**
  * Fixtures copied verbatim from a live Pionex account (2026-09-07) — the field names here were
@@ -36,53 +40,158 @@ class PionexAccountParserTest {
                         "liquidationPrice", "37472.3", "unrealizedPnL", "-1.80752"))));
     }
 
-    @Test
-    void parsesTheRequestedAssetOutOfTheCoinWallet() {
-        Optional<ExchangeBalance> balance = PionexAccountParser.parseBalance(balancesResponse(), "USDT");
+    // ---- Wallet valuation: every coin except the PUSD paper pool, in USDT ----
 
-        assertThat(balance).isPresent();
-        assertThat(balance.get().asset()).isEqualTo("USDT");
-        assertThat(balance.get().balance()).isEqualByComparingTo("135.75090540");
-        assertThat(balance.get().available()).isEqualByComparingTo("135.75090540");
+    /** Price lookup that records which coins were asked for; unknown coins have no USDT pair. */
+    private static final class Prices implements Function<String, CoinPrice> {
+        private final Map<String, String> bids;
+        final List<String> asked = new ArrayList<>();
+
+        Prices(Map<String, String> bids) { this.bids = bids; }
+
+        @Override
+        public CoinPrice apply(String coin) {
+            asked.add(coin);
+            String bid = bids.get(coin);
+            return bid == null ? new CoinPrice.NoPair() : new CoinPrice.Bid(new BigDecimal(bid));
+        }
     }
 
     @Test
-    void fallsBackToAnotherQuoteAssetWhenTheRequestedOneIsAbsent() {
-        // The account also holds a separate PUSD paper-trading pool; an unknown requested asset
-        // must not yield "no balance at all" when the venue clearly returned rows. But the
-        // fallback is deliberately narrow (PR review fix): it picks USDT here, NOT the first row
-        // (BTC) — a coin wallet's row order is arbitrary, and reporting 0.003 BTC as "equity" would
-        // size a % position off a number two orders of magnitude away from the truth.
-        Optional<ExchangeBalance> balance = PionexAccountParser.parseBalance(balancesResponse(), "EUR");
+    void valuesNonStableCoinsAtTheirBidAndStablecoinsOneToOne() {
+        Map<String, Object> resp = Map.of("result", true, "data", Map.of("balances", List.of(
+                Map.of("coin", "BTC", "free", "0.003", "frozen", "0", "debts", "0"),
+                Map.of("coin", "USDT", "free", "100", "frozen", "0", "debts", "0"),
+                Map.of("coin", "USDC", "free", "5", "frozen", "0", "debts", "0"))));
+        Prices prices = new Prices(Map.of("BTC", "78000"));
 
-        assertThat(balance).isPresent();
-        assertThat(balance.get().asset()).isEqualTo("USDT");
+        WalletValue value = PionexAccountParser.valueWallet(resp, prices).orElseThrow();
+
+        // 0.003 * 78000 + 100 + 5
+        assertThat(value.total()).isEqualByComparingTo("339");
+        assertThat(value.freeUsdt()).isEqualByComparingTo("100");
+        assertThat(value.unpricedCoins()).isEmpty();
+        assertThat(prices.asked).containsExactly("BTC"); // stablecoins never hit the ticker
     }
 
     @Test
-    void emptyWhenNoRowMatchesEitherTheRequestedOrAFallbackAsset() {
+    void thePusdPaperPoolIsNeverCounted() {
+        // The live wallet carries ~500k PUSD of paper-trading money next to the real coins.
+        Prices prices = new Prices(Map.of("BTC", "78000"));
+
+        WalletValue value = PionexAccountParser.valueWallet(balancesResponse(), prices).orElseThrow();
+
+        // 0.003 * 78000 + 135.75090540 — no PUSD
+        assertThat(value.total()).isEqualByComparingTo("369.75090540");
+        assertThat(prices.asked).doesNotContain("PUSD");
+    }
+
+    @Test
+    void quantityIsFreePlusFrozenMinusDebtsForEveryCoinIncludingUsdt() {
+        Map<String, Object> resp = Map.of("result", true, "data", Map.of("balances", List.of(
+                Map.of("coin", "BTC", "free", "0.002", "frozen", "0.001", "debts", "0.0005"),
+                Map.of("coin", "USDT", "free", "100", "frozen", "20", "debts", "10"))));
+
+        WalletValue value = PionexAccountParser.valueWallet(resp, new Prices(Map.of("BTC", "80000"))).orElseThrow();
+
+        // (0.002 + 0.001 - 0.0005) * 80000 + (100 + 20 - 10)
+        assertThat(value.total()).isEqualByComparingTo("310");
+        // available money is the free USDT only — frozen is tied up, debts are not spendable
+        assertThat(value.freeUsdt()).isEqualByComparingTo("100");
+    }
+
+    @Test
+    void zeroRowsAreSkippedWithoutAskingForAPrice() {
+        // The live wallet today: USDT row present but 0, the money sits in BTC.
+        Map<String, Object> resp = Map.of("result", true, "data", Map.of("balances", List.of(
+                Map.of("coin", "USDT", "free", "0", "frozen", "0", "debts", "0"),
+                Map.of("coin", "ETH", "free", "0", "frozen", "0", "debts", "0"),
+                Map.of("coin", "BTC", "free", "0.003", "frozen", "0", "debts", "0"))));
+        Prices prices = new Prices(Map.of("BTC", "78000"));
+
+        WalletValue value = PionexAccountParser.valueWallet(resp, prices).orElseThrow();
+
+        assertThat(value.total()).isEqualByComparingTo("234");
+        assertThat(value.freeUsdt()).isEqualByComparingTo("0");
+        assertThat(prices.asked).containsExactly("BTC");
+    }
+
+    @Test
+    void aCoinWithNoUsdtPairIsLeftOutAndReportedRatherThanBreakingTheWholeWallet() {
+        Map<String, Object> resp = Map.of("result", true, "data", Map.of("balances", List.of(
+                Map.of("coin", "BTC", "free", "0.003", "frozen", "0", "debts", "0"),
+                Map.of("coin", "DUSTCOIN", "free", "12.5", "frozen", "0", "debts", "0"))));
+
+        WalletValue value = PionexAccountParser.valueWallet(resp, new Prices(Map.of("BTC", "78000"))).orElseThrow();
+
+        assertThat(value.total()).isEqualByComparingTo("234");
+        assertThat(value.unpricedCoins()).containsExactly("DUSTCOIN");
+    }
+
+    @Test
+    void aFailedPriceLookupMakesTheWholeWalletUnknown() {
+        // A transient ticker failure must not yield a confidently low equity (BTC silently
+        // dropped -> $234 becomes $0 -> ANOMALY_EQUITY, a fake drawdown).
         Map<String, Object> resp = Map.of("result", true, "data", Map.of("balances", List.of(
                 Map.of("coin", "BTC", "free", "0.003", "frozen", "0", "debts", "0"))));
+        Function<String, CoinPrice> failing = coin -> { throw new IllegalStateException("ticker down"); };
 
-        assertThat(PionexAccountParser.parseBalance(resp, "EUR")).isEmpty();
+        assertThatThrownBy(() -> PionexAccountParser.valueWallet(resp, failing))
+                .isInstanceOf(IllegalStateException.class);
     }
 
     @Test
-    void aRowWithNoCoinFieldNeverImpersonatesTheRequestedAsset() {
-        // A malformed row (missing "coin") used to match ANY requested asset via a `a == null`
-        // wildcard — worse than an empty result, since the number then flows into
-        // equity/daily_baseline/% sizing as if it were real.
+    void aRowWithNoCoinFieldIsIgnored() {
+        // A malformed row (missing "coin") must never be counted as some asset.
         Map<String, Object> resp = Map.of("result", true, "data", Map.of("balances", List.of(
-                Map.of("free", "999999", "frozen", "0", "debts", "0"))));
+                Map.of("free", "999999", "frozen", "0", "debts", "0"),
+                Map.of("coin", "USDT", "free", "10", "frozen", "0", "debts", "0"))));
 
-        assertThat(PionexAccountParser.parseBalance(resp, "USDT")).isEmpty();
+        WalletValue value = PionexAccountParser.valueWallet(resp, new Prices(Map.of())).orElseThrow();
+
+        assertThat(value.total()).isEqualByComparingTo("10");
     }
 
     @Test
-    void emptyResponseYieldsNoBalance() {
-        assertThat(PionexAccountParser.parseBalance(Map.of("result", true, "data",
-                Map.of("balances", List.of())), "USDT")).isEmpty();
-        assertThat(PionexAccountParser.parseBalance(null, "USDT")).isEmpty();
+    void emptyOrMissingWalletYieldsNoValue() {
+        Prices prices = new Prices(Map.of());
+        assertThat(PionexAccountParser.valueWallet(Map.of("result", true, "data",
+                Map.of("balances", List.of())), prices)).isEmpty();
+        assertThat(PionexAccountParser.valueWallet(null, prices)).isEmpty();
+    }
+
+    // ---- Book ticker: GET /api/v1/market/bookTickers?symbol=<COIN>_USDT (public, live shapes) ----
+
+    @Test
+    void readsTheBidOutOfTheBookTicker() {
+        Map<String, Object> resp = Map.of("result", true, "data", Map.of("tickers", List.of(
+                Map.of("symbol", "BTC_USDT", "bidPrice", "78080.00", "bidSize", "18.689360",
+                        "askPrice", "78080.01", "askSize", "7.624851", "timestamp", 1793555221596L))),
+                "timestamp", 1793555221973L);
+
+        assertThat(PionexAccountParser.parseBookTicker(resp))
+                .isEqualTo(new CoinPrice.Bid(new BigDecimal("78080.00")));
+    }
+
+    @Test
+    void anInvalidSymbolMeansTheCoinHasNoUsdtPair() {
+        Map<String, Object> resp = Map.of("result", false, "code", "MARKET_INVALID_SYMBOL",
+                "message", "symbol error", "timestamp", 1793556443L);
+
+        assertThat(PionexAccountParser.parseBookTicker(resp)).isInstanceOf(CoinPrice.NoPair.class);
+    }
+
+    @Test
+    void anyOtherErrorOrAMalformedTickerIsAFailureNotAMissingPair() {
+        assertThatThrownBy(() -> PionexAccountParser.parseBookTicker(Map.of("result", false,
+                "code", "SERVER_BUSY", "message", "busy"))).isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> PionexAccountParser.parseBookTicker(Map.of("result", true,
+                "data", Map.of("tickers", List.of())))).isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> PionexAccountParser.parseBookTicker(Map.of("result", true,
+                "data", Map.of("tickers", List.of(Map.of("symbol", "BTC_USDT", "bidPrice", "0"))))))
+                .isInstanceOf(IllegalStateException.class);
+        assertThatThrownBy(() -> PionexAccountParser.parseBookTicker(null))
+                .isInstanceOf(IllegalStateException.class);
     }
 
     @Test

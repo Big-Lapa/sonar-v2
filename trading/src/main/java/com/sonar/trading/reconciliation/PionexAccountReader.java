@@ -3,11 +3,15 @@ package com.sonar.trading.reconciliation;
 import com.sonar.trading.exchange.pionex.PionexFuturesClient;
 import com.sonar.trading.reconciliation.model.ExchangeBalance;
 import com.sonar.trading.reconciliation.model.ExchangePosition;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Venue-agnostic account reads for Pionex — mirrors {@link BingxAccountReader}. Read-only
@@ -17,7 +21,10 @@ import java.util.Optional;
  */
 public class PionexAccountReader implements AccountReader {
 
+    private static final Logger log = LoggerFactory.getLogger(PionexAccountReader.class);
+
     private final PionexFuturesClient client;
+    private final Set<String> warnedUnpriced = ConcurrentHashMap.newKeySet();
 
     public PionexAccountReader(PionexFuturesClient client) {
         this.client = client;
@@ -36,17 +43,37 @@ public class PionexAccountReader implements AccountReader {
      * fallback already uses when a venue balance has no venue-reported equity) — costing one extra
      * signed call per balance read, which the panel's throttling / poller's minute cadence both
      * already amortize fine.
+     *
+     * <p>{@code balance} is the whole wallet valued in USDT ({@link PionexAccountParser#valueWallet}):
+     * the account's money can sit in BTC rather than USDT, and counting the USDT row alone reported
+     * equity 0 for a ~$230 account. {@code available} stays the free USDT only. A failed price
+     * lookup throws — the poller then skips the tick instead of recording a falsely low equity.
      */
     @Override
     public Optional<ExchangeBalance> getBalance() {
-        Optional<ExchangeBalance> wallet = PionexAccountParser.parseBalance(client.getBalances(), "USDT");
+        Optional<PionexAccountParser.WalletValue> wallet =
+                PionexAccountParser.valueWallet(client.getBalances(), this::priceInUsdt);
         if (wallet.isEmpty()) {
-            return wallet;
+            return Optional.empty();
         }
-        ExchangeBalance b = wallet.get();
+        PionexAccountParser.WalletValue w = wallet.get();
+        warnUnpricedOnce(w.unpricedCoins());
         BigDecimal pnl = sumUnrealizedPnl();
-        BigDecimal equity = pnl != null && b.balance() != null ? b.balance().add(pnl) : b.balance();
-        return Optional.of(new ExchangeBalance(b.asset(), b.balance(), equity, pnl, b.available(), b.used()));
+        BigDecimal equity = pnl != null ? w.total().add(pnl) : w.total();
+        return Optional.of(new ExchangeBalance("USDT", w.total(), equity, pnl, w.freeUsdt(), null));
+    }
+
+    private PionexAccountParser.CoinPrice priceInUsdt(String coin) {
+        return PionexAccountParser.parseBookTicker(client.getBookTicker(coin + "_USDT"));
+    }
+
+    /** A coin with no USDT pair stays unpriced forever — say so once per run, not every minute. */
+    private void warnUnpricedOnce(List<String> coins) {
+        for (String coin : coins) {
+            if (warnedUnpriced.add(coin)) {
+                log.warn("[PIONEX] {} has no {}_USDT pair — left out of the account balance", coin, coin);
+            }
+        }
     }
 
     /** Null (not zero) if the positions call itself failed — the caller then falls back to plain

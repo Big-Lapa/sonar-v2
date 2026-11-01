@@ -14,6 +14,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -60,6 +61,24 @@ public class PionexFuturesHttpService implements PionexFuturesClient {
         return parseJsonToMap(executeSigned("GET", "/uapi/v1/account/positions", q, null));
     }
 
+    @Override
+    public Map<String, Object> getBookTicker(String symbol) {
+        String urlStr = props.getBaseUrl() + "/api/v1/market/bookTickers?symbol="
+                + URLEncoder.encode(symbol, StandardCharsets.UTF_8);
+        try {
+            String body = sendHttp("GET", urlStr, null, null);
+            if (body.isBlank()) {
+                return Collections.emptyMap();
+            }
+            // No requireOk: result:false + MARKET_INVALID_SYMBOL is a valid answer ("no such pair").
+            return mapper.readValue(body, new TypeReference<Map<String, Object>>() {});
+        } catch (ExchangeException e) {
+            throw e;
+        } catch (IOException ioe) {
+            throw new ExchangeException(new ExchangeError("IO_ERROR", ioe.getMessage()), ioe);
+        }
+    }
+
     // ---- Signed HTTP helpers ----
 
     private String executeSigned(String method, String path, Map<String, String> query, String jsonBody) {
@@ -87,8 +106,10 @@ public class PionexFuturesHttpService implements PionexFuturesClient {
             conn.setRequestMethod(method);
             conn.setConnectTimeout(props.getConnectTimeoutMs());
             conn.setReadTimeout(props.getReadTimeoutMs());
-            conn.setRequestProperty("PIONEX-KEY", nullToEmpty(props.getApiKey()));
-            conn.setRequestProperty("PIONEX-SIGNATURE", signature);
+            if (signature != null) { // null = public market endpoint, sent without credentials
+                conn.setRequestProperty("PIONEX-KEY", nullToEmpty(props.getApiKey()));
+                conn.setRequestProperty("PIONEX-SIGNATURE", signature);
+            }
 
             if (jsonBody != null) {
                 conn.setDoOutput(true);
