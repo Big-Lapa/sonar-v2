@@ -41,6 +41,17 @@ Exchanges: Binance, Bybit and BingX are fully wired (reader and execution adapte
 read-only because its futures API exposes no TP/SL, so the platform refuses to pretend it can
 protect a position there.
 
+## The admin panel
+
+Screenshots are from demo and testnet accounts. Opening a position creates one proposal per
+selected account and previews its size and risk before anything is sent to an exchange.
+
+![Trading tab: balances per account, chart and the new-position ticket](docs/screenshots/trading-overview.png)
+
+![Risk preview: each account approved or rejected with quantity and risk in dollars](docs/screenshots/risk-preview.png)
+
+![Management tab: per-account risk profile, strategy gates and blacklist](docs/screenshots/management.png)
+
 ## Engineering notes
 
 The decisions that took the most thought, with pointers into the code.
@@ -117,6 +128,7 @@ codes it renders.
   the advice to use a PIN longer than four digits.
 - The LLM candidate-search pipeline (klines, levels, universe filters, Anthropic API) is still in
   `strategy/src` but not wired into the Nest module, so the running service makes no model calls.
+  The Management tab still shows that pipeline's settings (LLM model, candidate count, gates).
 - Next: a transactional outbox for order commands, automatic reconciliation of local state with
   the exchange, and an execution adapter for Pionex if its API gains TP/SL.
 
