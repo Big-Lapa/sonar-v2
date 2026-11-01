@@ -118,6 +118,19 @@ describe('TelegramBotService interface language', () => {
     expect(last()).toBe('plain message');
   });
 
+  it('/status and /positions labels follow the language', async () => {
+    api.getAccounts = jest.fn(async () => [{ id: 'acc1' }]);
+    api.getBalance = jest.fn(async () => ({ equity: '100', asset: 'USDT', unrealizedPnl: '5' }));
+    api.getLivePositions = jest.fn(async () => ({
+      positions: [{ symbol: 'BTCUSDT', side: 'LONG', qty: '1', avgPrice: '10', markPrice: '11', unrealizedPnl: '1' }],
+    }));
+    await say('/lang ru');
+    await say('/status');
+    expect(last()).toBe(t('ru', 'fmt.status', { account: 'acc1', equity: '100', asset: 'USDT', pnl: '5' }));
+    await say('/positions acc1');
+    expect(last()).toContain(t('ru', 'fmt.live_position', { symbol: 'BTCUSDT', side: 'LONG', qty: '1', price: '10', mark: '11', pnl: '1' }));
+  });
+
   describe('notification relay', () => {
     const event = {
       id: 5,
@@ -144,6 +157,24 @@ describe('TelegramBotService interface language', () => {
       const text = (chat: number) => sent.find((m) => String(m.chat) === String(chat))!.text;
       expect(text(CHAT)).toBe(`[POSITION_ADOPTED] acc1 BTCUSDT: ${t('ru', 'msg.POSITION_ADOPTED', event.params)}`);
       expect(text(OTHER_CHAT)).toBe(`[POSITION_ADOPTED] acc1 BTCUSDT: ${t('en', 'msg.POSITION_ADOPTED', event.params)}`);
+    });
+
+    it('follows the language detected from the sender of the chat when /lang was never used', async () => {
+      await say('/foo', { languageCode: 'ru' });
+      sent = [];
+      await relay([event]);
+      const text = (chat: number) => sent.find((m) => String(m.chat) === String(chat))!.text;
+      expect(text(CHAT)).toBe(`[POSITION_ADOPTED] acc1 BTCUSDT: ${t('ru', 'msg.POSITION_ADOPTED', event.params)}`);
+      // a chat nobody has written in yet has nothing detected: English
+      expect(text(OTHER_CHAT)).toBe(`[POSITION_ADOPTED] acc1 BTCUSDT: ${t('en', 'msg.POSITION_ADOPTED', event.params)}`);
+    });
+
+    it('an explicit /lang beats the detected language', async () => {
+      await say('/lang en', { languageCode: 'ru' });
+      sent = [];
+      await relay([event]);
+      const text = sent.find((m) => String(m.chat) === String(CHAT))!.text;
+      expect(text).toBe(`[POSITION_ADOPTED] acc1 BTCUSDT: ${t('en', 'msg.POSITION_ADOPTED', event.params)}`);
     });
 
     it('falls back to the stored message for an unknown or missing code', async () => {

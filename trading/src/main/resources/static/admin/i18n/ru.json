@@ -128,7 +128,7 @@
   "msg.ALREADY_PROCESSED": "уже обработано (идемпотентность)",
   "msg.ORDER_PLACE_FAILED": "не удалось выставить ордер: {error}",
   "msg.ORDER_NOT_FILLED": "ордер не подтвердился как FILLED после 5 попыток (state={state})",
-  "msg.NOTIONAL_CAP_EXCEEDED": "превысит лимит нотионала аккаунта: открыто ${open} + зарезервировано (отложенные limit) ${pending} + новый ${added} > лимит ${limit}",
+  "msg.NOTIONAL_CAP_EXCEEDED": "превысит лимит нотионала аккаунта: открыто ${open} + зарезервировано (отложенные limit) ${pending} + новый ${added} = ${total} > лимит ${limit}",
   "msg.LEVERAGE_CAP_EXCEEDED": "превысит лимит плеча аккаунта: итоговый нотионал ${notional} > equity x макс. плечо ${limit}",
   "msg.PREVIOUSLY_FINISHED": "ранее завершено со статусом {status}",
   "msg.ORDER_NOT_FOUND": "ордер не найден",
@@ -191,5 +191,11 @@
   "s.error": "ошибка: {error}",
   "s.positions.mismatch": "расхождение с биржей",
   "s.positions.none": "нет открытых позиций",
-  "s.age": "обновлено {sec} сек назад"
+  "s.age": "обновлено {sec} сек назад",
+  "msg.ORDER_CANCELLED": "ордер {orderId} отменён",
+  "msg.ORDER_CANCEL_FAILED": "не удалось отменить ордер",
+  "msg.ACCOUNT_NOT_TRADABLE": "аккаунт исключён из торговли (tradable=false)",
+  "msg.NO_EQUITY_DATA": "нет данных по equity за сегодня — дождись минутного поллера (этап 4)",
+  "msg.POSITION_CLOSED_PNL_PENDING": "{symbol} закрыта, PnL уточняется, удерживалась {hours}ч{minutes}м",
+  "msg.POSITION_CLOSED_DETECTED_PNL_PENDING": "{symbol} закрыта, PnL уточняется (с момента обнаружения, не с открытия), удерживалась {hours}ч{minutes}м"
 }

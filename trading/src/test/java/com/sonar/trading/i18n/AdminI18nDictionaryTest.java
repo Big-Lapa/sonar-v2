@@ -80,6 +80,17 @@ class AdminI18nDictionaryTest {
     }
 
     @Test
+    void englishDictionaryMatchesTheBackendTemplateOfEveryCode() throws IOException {
+        Map<String, String> en = load("en");
+        Map<String, String> ru = load("ru");
+        for (MessageCode code : MessageCode.values()) {
+            String key = "msg." + code.name();
+            assertThat(en.get(key)).as("en[%s] is the code's English template", key).isEqualTo(code.template());
+            assertThat(placeholders(ru.get(key))).as("ru placeholders of %s", key).isEqualTo(placeholders(code.template()));
+        }
+    }
+
+    @Test
     void everyKeyUsedInTheMarkupExists() throws IOException {
         Map<String, String> en = load("en");
         Matcher m = DATA_I18N.matcher(indexHtml());

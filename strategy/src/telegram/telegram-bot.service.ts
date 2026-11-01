@@ -3,7 +3,7 @@ import { Interval } from '@nestjs/schedule';
 import { TelegramClientService } from './telegram-client.service';
 import { isAllowedSender, pinConfigured, pinMatches, TICKER_RE } from './access-guard';
 import { TradingApiService } from '../trading-client/trading-api.service';
-import { hasKey, isLang, Lang, langFromTelegram, Params, t } from '../i18n';
+import { DEFAULT_LANG, isLang, Lang, langFromTelegram, Params, t, tMsg } from '../i18n';
 
 interface PendingPin {
   description: string;
@@ -43,6 +43,8 @@ export class TelegramBotService implements OnModuleInit {
   /** Interface language chosen with /lang, per chat. In-memory like the PIN state — after a restart a
    *  chat falls back to its Telegram client language. */
   private readonly chatLangs = new Map<string, Lang>();
+  /** Last language detected from a chat's sender, so notifications (no sender) follow it too. */
+  private readonly detectedLangs = new Map<string, Lang>();
   /** Seeded to "now" on first tick so a restart never replays old notifications. */
   private notifAfterId: number | null = null;
 
@@ -87,6 +89,7 @@ export class TelegramBotService implements OnModuleInit {
     const text: string = (msg.text ?? '').trim();
     if (!text) return;
     const lang = this.langOf(chatId, msg.from?.language_code);
+    this.detectedLangs.set(String(chatId), langFromTelegram(msg.from?.language_code));
 
     // Keyed by chat AND sender, so in a group only the person who asked can answer the PIN prompt.
     const pinKey = `${chatId}:${msg.from?.id ?? ''}`;
@@ -158,7 +161,7 @@ export class TelegramBotService implements OnModuleInit {
           await this.cmdLang(chatId, msg.from?.language_code, args[0]);
           break;
         case '/status':
-          await this.cmdStatus(chatId);
+          await this.cmdStatus(chatId, lang);
           break;
         case '/positions':
           await this.cmdPositions(chatId, lang, args[0]);
@@ -178,14 +181,16 @@ export class TelegramBotService implements OnModuleInit {
     }
   }
 
-  /** Language of a chat: its /lang choice, else the sender's Telegram client language. */
+  /** Language of a chat: its /lang choice, else the sender's Telegram client language (the last one seen when there is no sender, e.g. notifications). */
   private langOf(chatId: number | string, telegramCode?: string): Lang {
-    return this.chatLangs.get(String(chatId)) ?? langFromTelegram(telegramCode);
+    const key = String(chatId);
+    const detected = telegramCode !== undefined ? langFromTelegram(telegramCode) : this.detectedLangs.get(key);
+    return this.chatLangs.get(key) ?? detected ?? DEFAULT_LANG;
   }
 
   /** A backend result: translated by its code when it has one, else its plain message. */
   private opText(lang: Lang, r: { message: string; code?: string | null; params?: Params | null }): string {
-    return r.code && hasKey(lang, `msg.${r.code}`) ? t(lang, `msg.${r.code}`, r.params ?? {}) : r.message;
+    return tMsg(lang, r.code, r.params, r.message);
   }
 
   private async cmdLang(chatId: number, telegramCode: string | undefined, arg?: string): Promise<void> {
@@ -203,13 +208,13 @@ export class TelegramBotService implements OnModuleInit {
     await this.telegram.sendMessage(chatId, t(lang, 'help.text'));
   }
 
-  private async cmdStatus(chatId: number): Promise<void> {
+  private async cmdStatus(chatId: number, lang: Lang): Promise<void> {
     const accounts = await this.tradingApi.getAccounts();
     const lines = await Promise.all(
       accounts.map(async (a) => {
         const b = await this.tradingApi.getBalance(a.id);
         if (b.error) return `${a.id}: ${b.error}`;
-        return `${a.id}: equity ${b.equity ?? b.balance} ${b.asset ?? ''} (unrealPnL ${b.unrealizedPnl ?? '—'})`;
+        return t(lang, 'fmt.status', { account: a.id, equity: b.equity ?? b.balance, asset: b.asset ?? '', pnl: b.unrealizedPnl ?? '—' });
       }),
     );
     await this.telegram.sendMessage(chatId, lines.join('\n'));
@@ -230,7 +235,7 @@ export class TelegramBotService implements OnModuleInit {
       return;
     }
     const lines = result.positions.map(
-      (p) => `${p.symbol} ${p.side} ${p.qty} @ ${p.avgPrice} · mark ${p.markPrice} · PnL ${p.unrealizedPnl}`,
+      (p) => t(lang, 'fmt.live_position', { symbol: p.symbol, side: p.side, qty: p.qty, price: p.avgPrice, mark: p.markPrice, pnl: p.unrealizedPnl }),
     );
     await this.telegram.sendMessage(chatId, `${account}:\n${lines.join('\n')}`);
   }
@@ -379,7 +384,7 @@ export class TelegramBotService implements OnModuleInit {
         // Rendered per chat, in the language chosen there. Rows written before message codes existed
         // (or a code this bot doesn't know) show the stored English message.
         const lang = this.langOf(chatId);
-        const body = ev.code && hasKey(lang, `msg.${ev.code}`) ? t(lang, `msg.${ev.code}`, ev.params ?? {}) : ev.message;
+        const body = tMsg(lang, ev.code, ev.params, ev.message);
         await this.telegram.sendMessage(chatId, `[${ev.kind}] ${ev.accountId ?? ''} ${ev.symbol ?? ''}: ${body}`);
       }
     }

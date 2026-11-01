@@ -41,9 +41,9 @@ public class ProposalConfirmController {
                             .body(new ConfirmResponse(id, "ABORTED", List.of(), aborted.msg().text(),
                                     aborted.msg().code().name(), aborted.msg().params()));
             case ProposalExecutionService.ConfirmOutcome.AlreadyProcessed already ->
-                    ResponseEntity.ok(new ConfirmResponse(id, "ALREADY_PROCESSED", already.legs(), null, null, null));
+                    ResponseEntity.ok(new ConfirmResponse(id, "ALREADY_PROCESSED", already.legs(), null, null, java.util.Map.of()));
             case ProposalExecutionService.ConfirmOutcome.Executed executed ->
-                    ResponseEntity.ok(new ConfirmResponse(id, "EXECUTED", executed.legs(), null, null, null));
+                    ResponseEntity.ok(new ConfirmResponse(id, "EXECUTED", executed.legs(), null, null, java.util.Map.of()));
         };
     }
 }

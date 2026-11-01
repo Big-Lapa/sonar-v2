@@ -40,10 +40,14 @@ public enum MessageCode {
     ALREADY_PROCESSED("already processed (idempotency)"),
     ORDER_PLACE_FAILED("order placement failed: {error}"),
     ORDER_NOT_FILLED("order did not confirm as FILLED after 5 attempts (state={state})"),
-    NOTIONAL_CAP_EXCEEDED("would exceed the account notional cap: open ${open} + reserved (pending limit) ${pending} + new ${added} > limit ${limit}"),
+    NOTIONAL_CAP_EXCEEDED("would exceed the account notional cap: open ${open} + reserved (pending limit) ${pending} + new ${added} = ${total} > limit ${limit}"),
     LEVERAGE_CAP_EXCEEDED("would exceed the account leverage cap: resulting notional ${notional} > equity x max leverage ${limit}"),
     PREVIOUSLY_FINISHED("previously finished with status {status}"),
     ORDER_NOT_FOUND("order not found"),
+    ORDER_CANCELLED("order {orderId} cancelled"),
+    ORDER_CANCEL_FAILED("order cancellation failed"),
+    ACCOUNT_NOT_TRADABLE("account is excluded from trading (tradable=false)"),
+    NO_EQUITY_DATA("no equity data for today — wait for the minute poller (stage 4)"),
     LIMIT_ORDER_WORKING("limit order placed on the exchange, waiting to fill"),
 
     EQUITY_UNAVAILABLE("equity is unavailable or not positive"),
@@ -61,6 +65,8 @@ public enum MessageCode {
     LIMIT_FILLED_NO_STOP("limit order filled ({qty} @ {price}), but no stop found on the exchange — check the position's protection"),
     POSITION_CLOSED("{symbol} closed, [PnL={pnl}, ]held {hours}h{minutes}m"),
     POSITION_CLOSED_DETECTED("{symbol} closed, [PnL={pnl} (since detection, not since open), ]held {hours}h{minutes}m"),
+    POSITION_CLOSED_PNL_PENDING("{symbol} closed, PnL pending, held {hours}h{minutes}m"),
+    POSITION_CLOSED_DETECTED_PNL_PENDING("{symbol} closed, PnL pending (since detection, not since open), held {hours}h{minutes}m"),
     HOLD_REMINDER("{symbol} held for {days} d. (threshold {threshold})");
 
     private final String template;

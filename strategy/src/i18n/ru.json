@@ -32,6 +32,8 @@
   "fmt.exec_rejected": "{account} ✗ отклонён: {reason}",
   "fmt.exec_ok": "{account} ✓ {qty} @ {price} · SL {sl} · TP {tp} · риск ${risk}",
   "fmt.stop_unverified": " ⚠️ СТОП НЕ ПОДТВЕРЖДЁН",
+  "fmt.status": "{account}: equity {equity} {asset} (нереал. PnL {pnl})",
+  "fmt.live_position": "{symbol} {side} {qty} @ {price} · марк. {mark} · PnL {pnl}",
   "msg.NO_OPEN_POSITIONS": "нет открытых позиций[ по {symbol}]",
   "msg.VENUE_NOT_CONNECTED": "биржа аккаунта '{account}' не подключена",
   "msg.VENUE_UNSUPPORTED": "биржа '{venue}' не подключена в этой версии",
@@ -60,7 +62,7 @@
   "msg.ALREADY_PROCESSED": "уже обработано (идемпотентность)",
   "msg.ORDER_PLACE_FAILED": "не удалось выставить ордер: {error}",
   "msg.ORDER_NOT_FILLED": "ордер не подтвердился как FILLED после 5 попыток (state={state})",
-  "msg.NOTIONAL_CAP_EXCEEDED": "превысит лимит нотионала аккаунта: открыто ${open} + зарезервировано (отложенные limit) ${pending} + новый ${added} > лимит ${limit}",
+  "msg.NOTIONAL_CAP_EXCEEDED": "превысит лимит нотионала аккаунта: открыто ${open} + зарезервировано (отложенные limit) ${pending} + новый ${added} = ${total} > лимит ${limit}",
   "msg.LEVERAGE_CAP_EXCEEDED": "превысит лимит плеча аккаунта: итоговый нотионал ${notional} > equity x макс. плечо ${limit}",
   "msg.PREVIOUSLY_FINISHED": "ранее завершено со статусом {status}",
   "msg.ORDER_NOT_FOUND": "ордер не найден",
@@ -79,5 +81,11 @@
   "msg.LIMIT_FILLED_NO_STOP": "limit-ордер исполнен ({qty} @ {price}), но стоп на бирже не найден — проверь защиту позиции",
   "msg.POSITION_CLOSED": "{symbol} закрыта, [PnL={pnl}, ]удерживалась {hours}ч{minutes}м",
   "msg.POSITION_CLOSED_DETECTED": "{symbol} закрыта, [PnL={pnl} (с момента обнаружения, не с открытия), ]удерживалась {hours}ч{minutes}м",
-  "msg.HOLD_REMINDER": "{symbol} удерживается {days} д. (порог {threshold})"
+  "msg.HOLD_REMINDER": "{symbol} удерживается {days} д. (порог {threshold})",
+  "msg.ORDER_CANCELLED": "ордер {orderId} отменён",
+  "msg.ORDER_CANCEL_FAILED": "не удалось отменить ордер",
+  "msg.ACCOUNT_NOT_TRADABLE": "аккаунт исключён из торговли (tradable=false)",
+  "msg.NO_EQUITY_DATA": "нет данных по equity за сегодня — дождись минутного поллера (этап 4)",
+  "msg.POSITION_CLOSED_PNL_PENDING": "{symbol} закрыта, PnL уточняется, удерживалась {hours}ч{minutes}м",
+  "msg.POSITION_CLOSED_DETECTED_PNL_PENDING": "{symbol} закрыта, PnL уточняется (с момента обнаружения, не с открытия), удерживалась {hours}ч{minutes}м"
 }

@@ -1,10 +1,5 @@
 import { AccountLegPreview, ExecutionLegResult } from '../trading-client/trading-api.service';
-import { DEFAULT_LANG, hasKey, Lang, t } from '../i18n';
-
-/** A leg's failure text: translated by its backend code when known, else the stored English reason. */
-function reasonText(lang: Lang, code: string | null | undefined, params: Record<string, string> | null | undefined, fallback: string | null): string {
-  return code && hasKey(lang, `msg.${code}`) ? t(lang, `msg.${code}`, params ?? {}) : (fallback ?? '');
-}
+import { DEFAULT_LANG, Lang, t, tMsg } from '../i18n';
 
 export function formatProposalMessage(
   symbol: string,
@@ -28,7 +23,7 @@ export function formatProposalMessage(
         ? t(lang, 'fmt.leg_ok', { account: l.accountId, risk: parseFloat(l.riskUsd!).toFixed(2), qty: l.qty })
         : t(lang, 'fmt.leg_rejected', {
             account: l.accountId,
-            reason: reasonText(lang, l.rejectCode, l.rejectParams, l.rejectReason),
+            reason: tMsg(lang, l.rejectCode, l.rejectParams, l.rejectReason),
           }),
     ),
     '',
@@ -45,7 +40,7 @@ export function formatExecutionReport(legs: ExecutionLegResult[], lang: Lang = D
       if (!l.success) {
         return t(lang, 'fmt.exec_rejected', {
           account: l.accountId,
-          reason: reasonText(lang, l.errorCode, l.errorParams, l.errorReason),
+          reason: tMsg(lang, l.errorCode, l.errorParams, l.errorReason),
         });
       }
       const stopNote = l.stopVerified ? '' : t(lang, 'fmt.stop_unverified');

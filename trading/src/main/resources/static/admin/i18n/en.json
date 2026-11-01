@@ -128,7 +128,7 @@
   "msg.ALREADY_PROCESSED": "already processed (idempotency)",
   "msg.ORDER_PLACE_FAILED": "order placement failed: {error}",
   "msg.ORDER_NOT_FILLED": "order did not confirm as FILLED after 5 attempts (state={state})",
-  "msg.NOTIONAL_CAP_EXCEEDED": "would exceed the account notional cap: open ${open} + reserved (pending limit) ${pending} + new ${added} > limit ${limit}",
+  "msg.NOTIONAL_CAP_EXCEEDED": "would exceed the account notional cap: open ${open} + reserved (pending limit) ${pending} + new ${added} = ${total} > limit ${limit}",
   "msg.LEVERAGE_CAP_EXCEEDED": "would exceed the account leverage cap: resulting notional ${notional} > equity x max leverage ${limit}",
   "msg.PREVIOUSLY_FINISHED": "previously finished with status {status}",
   "msg.ORDER_NOT_FOUND": "order not found",
@@ -191,5 +191,11 @@
   "s.error": "error: {error}",
   "s.positions.mismatch": "differs from exchange",
   "s.positions.none": "no open positions",
-  "s.age": "updated {sec} s ago"
+  "s.age": "updated {sec} s ago",
+  "msg.ORDER_CANCELLED": "order {orderId} cancelled",
+  "msg.ORDER_CANCEL_FAILED": "order cancellation failed",
+  "msg.ACCOUNT_NOT_TRADABLE": "account is excluded from trading (tradable=false)",
+  "msg.NO_EQUITY_DATA": "no equity data for today — wait for the minute poller (stage 4)",
+  "msg.POSITION_CLOSED_PNL_PENDING": "{symbol} closed, PnL pending, held {hours}h{minutes}m",
+  "msg.POSITION_CLOSED_DETECTED_PNL_PENDING": "{symbol} closed, PnL pending (since detection, not since open), held {hours}h{minutes}m"
 }

@@ -123,7 +123,7 @@ public class ProposalExecutionService {
         if (!isLimit) {
             Msg driftReason = checkPriceDrift(proposal.getSymbol(), entry);
             if (driftReason != null) {
-                log.warn("[{}] confirm aborted: {}", proposalId, driftReason);
+                log.warn("[{}] confirm aborted: {}", proposalId, driftReason.text());
                 return new ConfirmOutcome.Aborted(driftReason);
             }
         }
@@ -415,6 +415,7 @@ public class ProposalExecutionService {
                     "open", existingNotional.setScale(2, java.math.RoundingMode.HALF_UP),
                     "pending", pendingNotional.setScale(2, java.math.RoundingMode.HALF_UP),
                     "added", legNotional.setScale(2, java.math.RoundingMode.HALF_UP),
+                    "total", committedNotional.setScale(2, java.math.RoundingMode.HALF_UP),
                     "limit", profile.maxPositionNotional().setScale(2, java.math.RoundingMode.HALF_UP));
         }
 

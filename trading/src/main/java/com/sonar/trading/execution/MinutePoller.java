@@ -313,8 +313,12 @@ public class MinutePoller {
         // invisible to sumIncomeSince, so the PnL figure below understates the true result for
         // EXCHANGE-origin positions. Flagging that in the message beats a confidently wrong number.
         boolean fromDetection = "EXCHANGE".equals(dbPosition.getOpenedVia());
+        // pnl == null: not computed yet — say so explicitly rather than silently omitting it.
+        MessageCode closedCode = pnl == null
+                ? (fromDetection ? MessageCode.POSITION_CLOSED_DETECTED_PNL_PENDING : MessageCode.POSITION_CLOSED_PNL_PENDING)
+                : (fromDetection ? MessageCode.POSITION_CLOSED_DETECTED : MessageCode.POSITION_CLOSED);
         notify(NotificationEntity.POSITION_CLOSED, accountId, dbPosition.getSymbol(),
-                Msg.of(fromDetection ? MessageCode.POSITION_CLOSED_DETECTED : MessageCode.POSITION_CLOSED,
+                Msg.of(closedCode,
                         "symbol", dbPosition.getSymbol(), "pnl", pnl,
                         "hours", held.toHours(), "minutes", held.toMinutesPart()));
         log.info("[poller] {} {} detected closed (pnl={}, held={})", accountId, dbPosition.getSymbol(), pnl, held);

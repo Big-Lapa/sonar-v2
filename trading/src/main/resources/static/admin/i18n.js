@@ -68,6 +68,13 @@
     return tpl == null ? key : render(tpl, params);
   }
 
+  // Like t(), but null when the key is in no dictionary, so applyDom keeps the default text from
+  // the markup instead of overwriting it with a raw key (dictionary fetch failed, typo in a key).
+  function tOrNull(key, params) {
+    var tpl = lookup(key);
+    return tpl == null ? null : render(tpl, params);
+  }
+
   function tm(msg) {
     if (!msg) return '';
     if (msg.code && lookup('msg.' + msg.code) != null) return t('msg.' + msg.code, msg.params);
@@ -85,20 +92,16 @@
     root = root || document;
     var q = function (sel) { return root.querySelectorAll(sel); };
     q('[data-i18n]').forEach(function (el) {
-      el.textContent = t(el.getAttribute('data-i18n'), parseArgs(el, 'data-args'));
+      var text = tOrNull(el.getAttribute('data-i18n'), parseArgs(el, 'data-args'));
+      if (text != null) el.textContent = text;
     });
-    q('[data-i18n-placeholder]').forEach(function (el) {
-      el.setAttribute('placeholder', t(el.getAttribute('data-i18n-placeholder')));
-    });
-    q('[data-i18n-title]').forEach(function (el) {
-      el.setAttribute('title', t(el.getAttribute('data-i18n-title')));
-    });
-    q('[data-i18n-tip]').forEach(function (el) {
-      el.setAttribute('data-tip', t(el.getAttribute('data-i18n-tip')));
-    });
-    q('[data-i18n-aria]').forEach(function (el) {
-      el.setAttribute('aria-label', t(el.getAttribute('data-i18n-aria')));
-    });
+    [['data-i18n-placeholder', 'placeholder'], ['data-i18n-title', 'title'], ['data-i18n-tip', 'data-tip'], ['data-i18n-aria', 'aria-label']]
+      .forEach(function (pair) {
+        q('[' + pair[0] + ']').forEach(function (el) {
+          var text = tOrNull(el.getAttribute(pair[0]));
+          if (text != null) el.setAttribute(pair[1], text);
+        });
+      });
     q('[data-msg]').forEach(function (el) {
       var text = tm({
         code: el.getAttribute('data-msg'),

@@ -10,6 +10,8 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.Map;
 
@@ -21,6 +23,9 @@ import java.util.Map;
 @Entity
 @Table(name = "notifications", schema = "trading")
 public class NotificationEntity {
+    private static final Logger log = LoggerFactory.getLogger(NotificationEntity.class);
+    private static final ObjectMapper JSON = new ObjectMapper();
+
 
     public static final String POSITION_CLOSED = "POSITION_CLOSED";
     public static final String MISSING_STOP = "MISSING_STOP";
@@ -71,8 +76,6 @@ public class NotificationEntity {
         this.createdAt = System.currentTimeMillis();
     }
 
-    private static final ObjectMapper JSON = new ObjectMapper();
-
     private static String writeParams(Map<String, String> params) {
         try {
             return JSON.writeValueAsString(params);
@@ -93,6 +96,7 @@ public class NotificationEntity {
         try {
             return JSON.readValue(paramsJson, new TypeReference<Map<String, String>>() {});
         } catch (Exception e) {
+            log.warn("notification {} has unreadable params, rendering without them: {}", id, e.toString());
             return Map.of();
         }
     }

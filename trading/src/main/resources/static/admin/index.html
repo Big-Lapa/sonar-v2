@@ -1390,7 +1390,9 @@
     b.addEventListener('click', () => I18N.setLang(b.dataset.lang)));
   // Static markup and everything rendered with data-i18n / data-msg is re-translated by I18N itself
   // before this event fires; what is left is the switcher highlight and the TradingView widget
-  // (its locale is a URL parameter, so it has to be reloaded).
+  // (its locale is a URL parameter, so it has to be reloaded). Known trade-off: re-creating the
+  // widget drops chart state that lives only in it (zoom, hand-drawn shapes, added indicators);
+  // acceptable because a language switch is rare.
   window.addEventListener('langchange', () => {
     paintLangSwitch();
     renderChart(currentSymbol, currentTf);

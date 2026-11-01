@@ -9,6 +9,8 @@ import com.sonar.trading.domain.repository.AccountRiskRepository;
 import com.sonar.trading.domain.repository.CooldownRepository;
 import com.sonar.trading.domain.repository.DailyBaselineRepository;
 import com.sonar.trading.domain.repository.PositionRepository;
+import com.sonar.trading.i18n.MessageCode;
+import com.sonar.trading.i18n.Msg;
 import com.sonar.trading.sizing.RiskBasedPositionSizer;
 import com.sonar.trading.sizing.SizingResult;
 import org.springframework.stereotype.Service;
@@ -70,7 +72,7 @@ public class ProposalPreviewService {
         if (accountId != null) {
             return accountRegistry.byId(accountId)
                     .<List<AccountLegPreview>>map(account -> List.of(previewOne(account, symbol, entry, sl, manualNotional)))
-                    .orElseGet(() -> List.of(AccountLegPreview.rejected(accountId, "account not found in the registry")));
+                    .orElseGet(() -> List.of(AccountLegPreview.rejected(accountId, Msg.of(MessageCode.ACCOUNT_NOT_FOUND))));
         }
         List<AccountLegPreview> legs = new ArrayList<>();
         for (AccountProps account : accountRegistry.all()) {
@@ -85,15 +87,14 @@ public class ProposalPreviewService {
         AccountRiskEntity riskEntity = accountRiskRepository.findById(accountId)
                 .orElseGet(() -> accountRiskRepository.save(AccountRiskEntity.defaultsFor(accountId)));
         if (!riskEntity.isTradable()) {
-            return AccountLegPreview.rejected(accountId, "account is excluded from trading (tradable=false)");
+            return AccountLegPreview.rejected(accountId, Msg.of(MessageCode.ACCOUNT_NOT_TRADABLE));
         }
         AccountRiskProfile profile = AccountRiskProfile.from(riskEntity);
 
         LocalDate today = LocalDate.now(ZoneOffset.UTC);
         var baseline = dailyBaselineRepository.findByIdAccountIdAndIdTradingDay(accountId, today);
         if (baseline.isEmpty()) {
-            return AccountLegPreview.rejected(accountId,
-                    "no equity data for today — wait for the minute poller (stage 4)");
+            return AccountLegPreview.rejected(accountId, Msg.of(MessageCode.NO_EQUITY_DATA));
         }
         DailyBaselineEntity b = baseline.get();
         BigDecimal equity = new BigDecimal(b.getEquityAtOpen());

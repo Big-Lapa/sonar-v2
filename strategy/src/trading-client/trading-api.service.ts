@@ -131,12 +131,17 @@ export interface OpResult {
   params?: Record<string, string> | null;
 }
 
+/** Ops endpoints return 409 with a structured OpResult body on a business failure — not an exception. */
+const OP_RESULT_CONFIG = { validateStatus: (s: number) => (s >= 200 && s < 300) || s === 409 };
+
 /** REST client to `trading` (4.8) — X-Admin-Token on every call. */
 @Injectable()
 export class TradingApiService {
   private readonly client: AxiosInstance;
 
   constructor() {
+    // Manual-ops endpoints answer 409 with a structured {ok:false, code, params, message} body;
+    // the bot must read it (and translate by code) instead of seeing an axios exception.
     this.client = axios.create({
       baseURL: process.env.TRADING_URL ?? 'http://trading:8080',
       timeout: 10_000,
@@ -195,17 +200,17 @@ export class TradingApiService {
   }
 
   async closeAll(account: string, symbol?: string) {
-    const resp = await this.client.post<OpResult>('/api/v1/trade/close-all', { account, symbol });
+    const resp = await this.client.post<OpResult>('/api/v1/trade/close-all', { account, symbol }, OP_RESULT_CONFIG);
     return resp.data;
   }
 
   async breakeven(positionId: number) {
-    const resp = await this.client.post<OpResult>(`/api/v1/positions/${positionId}/breakeven`);
+    const resp = await this.client.post<OpResult>(`/api/v1/positions/${positionId}/breakeven`, undefined, OP_RESULT_CONFIG);
     return resp.data;
   }
 
   async moveStop(positionId: number, type: 'sl' | 'tp', price: string) {
-    const resp = await this.client.post<OpResult>(`/api/v1/positions/${positionId}/stops`, { type, price });
+    const resp = await this.client.post<OpResult>(`/api/v1/positions/${positionId}/stops`, { type, price }, OP_RESULT_CONFIG);
     return resp.data;
   }
 

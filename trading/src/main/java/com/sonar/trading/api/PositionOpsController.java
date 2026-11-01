@@ -21,11 +21,6 @@ public class PositionOpsController {
     public record MoveStopRequest(String type, String price) {}
     /** @param type MARKET or LIMIT. @param price required for LIMIT, ignored for MARKET. */
     public record ClosePartialRequest(String type, String qty, String price) {}
-    public record OpResponse(boolean ok, String message, String code, java.util.Map<String, String> params) {
-        static OpResponse plain(boolean ok, String message) {
-            return new OpResponse(ok, message, null, java.util.Map.of());
-        }
-    }
 
     @PostMapping("/api/v1/trade/close-all")
     public ResponseEntity<OpResponse> closeAll(@RequestBody CloseAllRequest req) {

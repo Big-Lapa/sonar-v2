@@ -77,6 +77,15 @@ $('#btn-token').onclick = (e) => {
   if (t !== null) { setToken(t); location.reload(); }
 };
 
+// Status line under a form: tagged with its key so a language switch re-translates it in place
+// (I18N.applyDom) — the forms are never rebuilt, so unsaved edits survive.
+function setStatus(sel, key, version) {
+  const el = $(sel);
+  el.setAttribute('data-i18n', key);
+  el.setAttribute('data-args', JSON.stringify({ version }));
+  el.textContent = I18N.t(key, { version });
+}
+
 function toast(msg, ok) {
   const el = $('#toast');
   el.textContent = msg;
@@ -142,14 +151,14 @@ async function loadRisk() {
   form.innerHTML = RISK_FIELDS.map(([key, kind]) => {
     const label = I18N.t('s.field.' + key);
     if (kind === 'checkbox') {
-      return `<div class="form-row"><label>${label}</label><input type="checkbox" id="f-${key}" ${riskEntity[key] ? 'checked' : ''}></div>`;
+      return `<div class="form-row"><label data-i18n="s.field.${key}">${label}</label><input type="checkbox" id="f-${key}" ${riskEntity[key] ? 'checked' : ''}></div>`;
     }
     if (kind === 'pct') {
-      return `<div class="form-row"><label>${label}</label><span class="pct-wrap"><input class="num" id="f-${key}" value="${esc(fractionToPctDisplay(riskEntity[key]))}"></span></div>`;
+      return `<div class="form-row"><label data-i18n="s.field.${key}">${label}</label><span class="pct-wrap"><input class="num" id="f-${key}" value="${esc(fractionToPctDisplay(riskEntity[key]))}"></span></div>`;
     }
-    return `<div class="form-row"><label>${label}</label><input class="num" id="f-${key}" value="${esc(riskEntity[key])}"></div>`;
+    return `<div class="form-row"><label data-i18n="s.field.${key}">${label}</label><input class="num" id="f-${key}" value="${esc(riskEntity[key])}"></div>`;
   }).join('');
-  $('#risk-status').textContent = I18N.t('s.status.version', { version: riskEntity.version });
+  setStatus('#risk-status', 's.status.version', riskEntity.version);
 }
 
 $('#risk-save').onclick = async () => {
@@ -163,7 +172,7 @@ $('#risk-save').onclick = async () => {
   }
   try {
     riskEntity = await api(`/api/v1/accounts/${encodeURIComponent(id)}/risk`, { method: 'PUT', body: JSON.stringify(body) });
-    $('#risk-status').textContent = I18N.t('s.status.saved', { version: riskEntity.version });
+    setStatus('#risk-status', 's.status.saved', riskEntity.version);
     toast(I18N.t('s.toast.risk_saved'), true);
   } catch (e) {
     toast(I18N.t('s.toast.save_error', { error: e.message }), false);
@@ -203,7 +212,7 @@ async function loadStrategy() {
   form.innerHTML = STRATEGY_FIELDS.map(([key, kind]) => {
     const label = I18N.t('s.field.' + key);
     if (key === 'alwaysDrawTv') {
-      return `<div class="form-row"><label>${label}</label><input type="checkbox" id="s-${key}" ${settingsEntity[key] ? 'checked' : ''}></div>`;
+      return `<div class="form-row"><label data-i18n="s.field.${key}">${label}</label><input type="checkbox" id="s-${key}" ${settingsEntity[key] ? 'checked' : ''}></div>`;
     }
     if (kind === 'select' && key === 'llmModel') {
       const current = settingsEntity[key];
@@ -211,18 +220,18 @@ async function loadStrategy() {
       // replaced by the first option — show it as selected; save will hit ALLOWED_MODELS.
       const known = LLM_MODELS.some(([value]) => value === current);
       const unknownOption = known ? ''
-        : `<option value="${esc(current)}" selected>${esc(I18N.t('s.model.unknown', { model: current }))}</option>`;
+        : `<option value="${esc(current)}" selected data-i18n="s.model.unknown" data-args='${esc(JSON.stringify({ model: current }))}'>${esc(I18N.t('s.model.unknown', { model: current }))}</option>`;
       const options = LLM_MODELS.map(([value, optLabel]) =>
         `<option value="${value}" ${current === value ? 'selected' : ''}>${optLabel}</option>`
       ).join('');
-      return `<div class="form-row"><label>${label}</label><select id="s-${key}">${unknownOption}${options}</select></div>`;
+      return `<div class="form-row"><label data-i18n="s.field.${key}">${label}</label><select id="s-${key}">${unknownOption}${options}</select></div>`;
     }
     if (kind === 'pct') {
-      return `<div class="form-row"><label>${label}</label><span class="pct-wrap"><input class="num" id="s-${key}" value="${esc(fractionToPctDisplay(settingsEntity[key]))}" style="width:200px"></span></div>`;
+      return `<div class="form-row"><label data-i18n="s.field.${key}">${label}</label><span class="pct-wrap"><input class="num" id="s-${key}" value="${esc(fractionToPctDisplay(settingsEntity[key]))}" style="width:200px"></span></div>`;
     }
-    return `<div class="form-row"><label>${label}</label><input class="num" id="s-${key}" value="${esc(settingsEntity[key])}" style="width:200px"></div>`;
+    return `<div class="form-row"><label data-i18n="s.field.${key}">${label}</label><input class="num" id="s-${key}" value="${esc(settingsEntity[key])}" style="width:200px"></div>`;
   }).join('');
-  $('#strategy-status').textContent = I18N.t('s.status.version', { version: settingsEntity.version });
+  setStatus('#strategy-status', 's.status.version', settingsEntity.version);
   await loadBlacklist();
 }
 
@@ -237,7 +246,7 @@ $('#strategy-save').onclick = async () => {
   }
   try {
     settingsEntity = await api('/api/v1/strategy/settings', { method: 'PUT', body: JSON.stringify(body) });
-    $('#strategy-status').textContent = I18N.t('s.status.saved', { version: settingsEntity.version });
+    setStatus('#strategy-status', 's.status.saved', settingsEntity.version);
     toast(I18N.t('s.toast.strategy_saved'), true);
   } catch (e) {
     toast(I18N.t('s.toast.save_error', { error: e.message }), false);
@@ -338,9 +347,11 @@ function tickAge(id) {
 
 // ---- boot ----
 
-// The language switcher lives in index.html (this page is embedded there); a language change in
-// another document reloads this page so every label is rebuilt.
-window.addEventListener('langchange', () => location.reload());
+// The language switcher lives in index.html (this page is embedded there). A switch fires
+// 'langchange' here via the storage event, and I18N.applyDom has already re-translated every
+// data-i18n label (form labels and status lines included). The page is deliberately NOT reloaded:
+// that would silently discard unsaved edits to the risk / strategy forms. Transient texts
+// (positions "loading…" / "updated N s ago") refresh on their next poll.
 
 (async () => {
   await I18N.ready;
