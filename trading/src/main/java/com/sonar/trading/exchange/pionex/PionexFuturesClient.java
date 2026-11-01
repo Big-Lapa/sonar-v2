@@ -19,4 +19,9 @@ public interface PionexFuturesClient {
     /** Current positions ({@code data.positions[]}), optionally scoped to a Pionex-form symbol
      *  (e.g. {@code BTC_USDT_PERP}); null/blank returns all. */
     Map<String, Object> getPositions(String symbol);
+
+    /** Public spot book ticker ({@code GET /api/v1/market/bookTickers}, unsigned) for a Pionex-form
+     *  pair such as {@code BTC_USDT}. Returned raw, envelope NOT checked: a {@code result:false}
+     *  answer ({@code MARKET_INVALID_SYMBOL} = no such pair) is for the caller to classify. */
+    Map<String, Object> getBookTicker(String symbol);
 }
